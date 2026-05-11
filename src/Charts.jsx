@@ -233,20 +233,39 @@ const buildComposite = (candles, selectedCycles, tweaks, anchorIdx, slopeMult = 
   // anchor (trough) maps to raw=-numCyc → anchorPrice
   const midPrice = anchorPrice + numCyc * amplitude;
 
-  // Skew: bottoms stay fixed, tops shift up/down
-  // raw is in [-numCyc, +numCyc]. Normalize to [-1, +1], then apply skew only to positive part.
-  // skewMult > 1 = taller peaks, skewMult < 1 = flatter peaks, = 1 symmetric sine
-  return raw.map((v, t) => {
-    const norm = v / numCyc; // [-1, +1]
-    const skewed = norm < 0
-      ? norm                          // trough unchanged
-      : norm * slopeMult;             // crest scaled by slopeMult
-    return {
-      t,
-      v: anchorPrice + (1 + skewed) * numCyc * amplitude,
-      isFuture: t >= n,
-    };
-  });
+  // Phase skew: shift where the HIGH occurs on the X axis
+  // slopeMult=1 → symmetric (high at midpoint between lows)
+  // slopeMult<1 → high shifted left (fast rise, slow fall)
+  // slopeMult>1 → high shifted right (slow rise, fast fall)
+  // Implementation: use a distorted time axis per cycle
+  const skewed = Array(totalBars).fill(0);
+  for (const cyc of selectedCycles) {
+    const tw = tweaks[cyc.period] || {};
+    const period = cyc.period * (tw.periodMult || 1);
+    for (let t = 0; t < totalBars; t++) {
+      // Map t into [0,1] within current cycle relative to anchor
+      const phase = ((t - anchor) % period + period) % period / period; // 0→1 within cycle
+      // Distort: compress/expand the rising part
+      // phase < slopeMult/(1+slopeMult) = rising, rest = falling
+      const split = slopeMult / (1 + slopeMult); // where the peak sits (0..1)
+      let distorted;
+      if (phase < split) {
+        // Rising half: 0 → π  mapped over [0, split]
+        distorted = (phase / split) * Math.PI;
+      } else {
+        // Falling half: π → 2π mapped over [split, 1]
+        distorted = Math.PI + ((phase - split) / (1 - split)) * Math.PI;
+      }
+      skewed[t] += -Math.cos(distorted); // -cos: trough=0, peak=π
+    }
+  }
+
+  // skewed in [-numCyc, +numCyc], anchor (t=anchor, phase=0) = trough = -numCyc
+  return skewed.map((v, t) => ({
+    t,
+    v: anchorPrice + (v + numCyc) * amplitude,
+    isFuture: t >= n,
+  }));
 };
 
 // ── BAR CHART ─────────────────────────────────────────────────────────────────
@@ -1095,8 +1114,8 @@ export default function App() {
                       </div>
                       {/* Slope control */}
                       <div style={{ padding: "10px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Skew</span>
-                        <input type="range" min="0.1" max="4" step="0.05" value={cycleSlopeMult}
+                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Peak Shift</span>
+                        <input type="range" min="0.2" max="5" step="0.05" value={cycleSlopeMult}
                           onChange={e => setCycleSlopeMult(parseFloat(e.target.value))}
                           style={{ flex: 1, accentColor: "#d4af37", height: 2, cursor: "pointer" }} />
                         <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 36, textAlign: "right", whiteSpace: "nowrap" }}>{cycleSlopeMult.toFixed(2)}x</span>
