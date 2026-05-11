@@ -152,23 +152,24 @@ function BarChart({ data, title, width }) {
 // ── PRICE CHART (zoom/pan) ────────────────────────────────────────────────────
 function PriceChart({ candles, interval }) {
   const svgRef = useRef(null);
-  const [view, setView] = useState({ startIdx: 0, endIdx: 0 });
+  const viewRef = useRef({ startIdx: 0, endIdx: Math.max(0, candles.length - 1) });
+  const [viewVersion, setViewVersion] = useState(0); // trigger re-render
   const [hover, setHover] = useState(null);
-  const [isPanning, setIsPanning] = useState(false);
+  const isPanningRef = useRef(false);
   const panStart = useRef(null);
-  const viewRef = useRef(view);
-  viewRef.current = view;
+  const candlesRef = useRef(candles);
+  candlesRef.current = candles;
 
   const W = 1000, H = 340, PAD = { top: 20, right: 20, bottom: 40, left: 80 };
   const iW = W - PAD.left - PAD.right;
   const iH = H - PAD.top - PAD.bottom;
 
-  const fmtLabel = useCallback((ts) => {
+  const fmtLabel = (ts) => {
     const d = new Date(ts);
     return interval === "1d"
       ? d.toLocaleDateString([], { month: "short", day: "numeric" })
       : d.toLocaleDateString([], { month: "short", year: "2-digit" });
-  }, [interval]);
+  };
 
   const fmtPrice = (p) => {
     if (p < 0.01) return p.toFixed(6);
@@ -177,14 +178,17 @@ function PriceChart({ candles, interval }) {
     return p.toLocaleString("en-US", { maximumFractionDigits: 0 });
   };
 
+  // Reset view when candles change
   useEffect(() => {
     if (candles.length > 0) {
       const defaultShow = Math.min(candles.length, interval === "1d" ? 365 : 104);
-      setView({ startIdx: candles.length - defaultShow, endIdx: candles.length - 1 });
+      viewRef.current = { startIdx: candles.length - defaultShow, endIdx: candles.length - 1 };
+      setViewVersion(v => v + 1);
     }
   }, [candles, interval]);
 
-  const zoom = useCallback((delta, centerFrac = 0.5) => {
+  // All interaction via refs — no state for zoom/pan so no re-render glitches
+  const doZoom = useCallback((delta, centerFrac = 0.5) => {
     const { startIdx, endIdx } = viewRef.current;
     const len = endIdx - startIdx;
     const step = Math.max(1, Math.round(len * 0.15));
@@ -194,27 +198,35 @@ function PriceChart({ candles, interval }) {
     let ne = endIdx - delta * rightStep;
     if (ne - ns < 5) return;
     ns = Math.max(0, ns);
-    ne = Math.min(candles.length - 1, ne);
-    setView({ startIdx: ns, endIdx: ne });
-  }, [candles.length]);
+    ne = Math.min(candlesRef.current.length - 1, ne);
+    viewRef.current = { startIdx: ns, endIdx: ne };
+    setViewVersion(v => v + 1);
+  }, []);
 
+  // Wheel on SVG element — non-passive via ref
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const onWheel = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const rect = el.getBoundingClientRect();
+      const frac = (e.clientX - rect.left - PAD.left * (rect.width / W)) / (iW * (rect.width / W));
+      doZoom(e.deltaY > 0 ? -1 : 1, Math.max(0, Math.min(1, frac)));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }); // no deps — re-attach every render so ref is always fresh
 
-
-  // Use ref for isPanning to avoid stale closure issues
-  const isPanningRef = useRef(false);
-
-  const handleMouseDown = useCallback((e) => {
+  const handleMouseDown = (e) => {
+    e.preventDefault();
     isPanningRef.current = true;
-    setIsPanning(true);
     panStart.current = { x: e.clientX, start: viewRef.current.startIdx, end: viewRef.current.endIdx };
-  }, []);
+  };
 
-  const handleMouseUp = useCallback(() => {
-    isPanningRef.current = false;
-    setIsPanning(false);
-  }, []);
+  const handleMouseUp = () => { isPanningRef.current = false; };
 
-  const handleMouseMove = useCallback((e) => {
+  const handleMouseMove = (e) => {
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
@@ -223,46 +235,34 @@ function PriceChart({ candles, interval }) {
     const visLen = endIdx - startIdx + 1;
     const idx = Math.max(0, Math.min(visLen - 1, Math.round((x - PAD.left) / iW * (visLen - 1))));
     const absIdx = startIdx + idx;
-    if (candles[absIdx]) {
-      const xPos = PAD.left + (idx / Math.max(visLen - 1, 1)) * iW;
-      const prices2 = candles.slice(startIdx, endIdx + 1).flatMap(c => [c.h, c.l]);
+    const c = candlesRef.current[absIdx];
+    if (c) {
+      const slice = candlesRef.current.slice(startIdx, endIdx + 1);
+      const prices2 = slice.flatMap(c => [c.h, c.l]);
       const minP2 = Math.min(...prices2), maxP2 = Math.max(...prices2);
       const r2 = maxP2 - minP2 || 1, p2 = r2 * 0.05;
-      const yPos = PAD.top + iH - ((candles[absIdx].c - (minP2 - p2)) / (r2 + p2 * 2)) * iH;
-      setHover({ x: xPos, y: yPos, candle: candles[absIdx] });
+      const xPos = PAD.left + (idx / Math.max(visLen - 1, 1)) * iW;
+      const yPos = PAD.top + iH - ((c.c - (minP2 - p2)) / (r2 + p2 * 2)) * iH;
+      setHover({ x: xPos, y: yPos, candle: c });
     }
     if (isPanningRef.current && panStart.current) {
       const dx = e.clientX - panStart.current.x;
-      const { startIdx: ps, endIdx: pe } = panStart.current;
+      const { start: ps, end: pe } = panStart.current;
       const pixPerCandle = iW * (rect.width / W) / Math.max(pe - ps, 1);
       const shift = Math.round(-dx / pixPerCandle);
       const len = pe - ps;
       let ns = ps + shift, ne = pe + shift;
       if (ns < 0) { ns = 0; ne = len; }
-      if (ne >= candles.length) { ne = candles.length - 1; ns = ne - len; }
-      setView({ startIdx: ns, endIdx: ne });
+      if (ne >= candlesRef.current.length) { ne = candlesRef.current.length - 1; ns = ne - len; }
+      viewRef.current = { startIdx: ns, endIdx: ne };
+      setViewVersion(v => v + 1);
     }
-  }, [candles, iW, iH]);
-
-  // Wheel listener — attach to window so it always works even before SVG mounts
-  useEffect(() => {
-    const onWheel = (e) => {
-      const svg = svgRef.current;
-      if (!svg) return;
-      const rect = svg.getBoundingClientRect();
-      if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
-      e.preventDefault();
-      const frac = (e.clientX - rect.left - PAD.left * (rect.width / W)) / (iW * (rect.width / W));
-      zoom(e.deltaY > 0 ? -1 : 1, Math.max(0, Math.min(1, frac)));
-    };
-    window.addEventListener("wheel", onWheel, { passive: false });
-    return () => window.removeEventListener("wheel", onWheel);
-  }, [zoom]);
+  };
 
   // ALL hooks done — early return safe here
   if (!candles.length) return null;
 
-  const { startIdx, endIdx } = view;
+  const { startIdx, endIdx } = viewRef.current;
   const visible = candles.slice(startIdx, endIdx + 1);
   if (visible.length < 2) return null;
 
@@ -289,11 +289,11 @@ function PriceChart({ candles, interval }) {
   return (
     <div style={{ position: "relative", userSelect: "none" }}>
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
-        style={{ width: "100%", height: "auto", display: "block", cursor: isPanning ? "grabbing" : "crosshair" }}
+        style={{ width: "100%", height: "auto", display: "block", cursor: "crosshair" }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={() => { isPanningRef.current = false; setIsPanning(false); setHover(null); }}>
+        onMouseLeave={() => { isPanningRef.current = false; setHover(null); }}>
 
         <defs>
           <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
@@ -541,4 +541,46 @@ export default function App() {
           <div className="empty-label">Enter a crypto ticker</div>
           <div className="empty-sub">BTC · ETH · SOL · HYPE · any USDT pair</div>
         </div>
- 
+      ) : error ? (
+        <div className="empty">
+          <div className="empty-label" style={{ color: "#ef4444" }}>Could not load {ticker}</div>
+          <div className="empty-sub">Check ticker and try again</div>
+        </div>
+      ) : candles.length > 0 ? (
+        <>
+          <div className="section">
+            <div className="section-header">
+              <div className="section-title">{ticker} · {interval === "1d" ? "DAILY" : "WEEKLY"}</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button className="btn btn-outline" style={{ padding: "6px 14px", fontSize: 9 }}
+                  onClick={() => {/* zoom handled in component */}}>SCROLL TO ZOOM · DRAG TO PAN</button>
+              </div>
+            </div>
+            <div className="section-body" style={{ padding: "12px 8px 4px" }}>
+              <PriceChart candles={candles} interval={interval} />
+            </div>
+          </div>
+
+          {/* SEASONALITY */}
+          {seasonality && (
+            <div className="section">
+              <div className="section-header">
+                <div className="section-title">SEASONALITY · {activeYears.length === availableYears.length ? "ALL YEARS" : activeYears.join(", ")}</div>
+                <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#444" }}>
+                  {activeYears.length} year{activeYears.length !== 1 ? "s" : ""} · avg return per period
+                </div>
+              </div>
+              <div className="section-body">
+                <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+                  <BarChart data={seasonality.weekdays} title="Avg Return by Weekday (%)" />
+                  <BarChart data={seasonality.months} title="Avg Return by Month (%)" />
+                </div>
+              </div>
+            </div>
+          )}
+          <div style={{ height: 48 }} />
+        </>
+      ) : loading ? null : null}
+    </div>
+  );
+}
