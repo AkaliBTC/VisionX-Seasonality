@@ -438,9 +438,8 @@ function PriceChart({ candles, interval, activeIndicators, indSettings }) {
           </text>
         ))}
 
-        {/* Area + Line */}
-        <path d={areaD} fill="url(#priceGrad)" />
-        <path d={pathD} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+        {/* Line only */}
+        <path d={pathD} fill="none" stroke={color} strokeWidth="1" strokeLinejoin="round" strokeLinecap="round" />
 
         {/* ── INDICATORS ── */}
         {(() => {
