@@ -144,19 +144,46 @@ const calcSeasonality = (candles, years) => {
 
 // ── CYCLE ANALYSIS — bottom detection + inter-low spacing ────────────────────
 const findSignificantLows = (candles, lookback) => {
-  const lows = [];
-  for (let i = lookback; i < candles.length - lookback; i++) {
-    const slice = candles.slice(i - lookback, i + lookback + 1);
-    const minL = Math.min(...slice.map(c => c.l));
-    if (candles[i].l <= minL) lows.push(i);
+  const n = candles.length;
+  const lows_map = candles.map(c => c.l);
+
+  // Multi-scale: detect local minima at multiple lookback windows
+  const scales = [
+    Math.max(3, Math.floor(lookback * 0.4)),
+    lookback,
+    Math.min(n / 4, Math.floor(lookback * 2)),
+  ];
+
+  const candidates = new Set();
+  for (const lb of scales) {
+    for (let i = lb; i < n - lb; i++) {
+      const win = lows_map.slice(i - lb, i + lb + 1);
+      const minV = Math.min(...win);
+      if (lows_map[i] <= minV) candidates.add(i);
+    }
   }
-  // Deduplicate: keep only one per lookback window (the deepest)
+
+  // Prominence filter: a low is significant if it drops at least X% from surrounding highs
+  const minProminence = 0.03; // 3% drop from surrounding structure
+  const prominent = [...candidates].filter(i => {
+    const price = lows_map[i];
+    // Find highest high within 2*lookback on each side
+    const leftHigh = Math.max(...lows_map.slice(Math.max(0, i - lookback * 2), i).map((_, j, a) => candles[Math.max(0, i - lookback * 2) + j].h));
+    const rightHigh = Math.max(...lows_map.slice(i + 1, Math.min(n, i + lookback * 2 + 1)).map((_, j) => candles[i + 1 + j].h));
+    const refHigh = Math.min(leftHigh, rightHigh); // more conservative
+    return refHigh > 0 && (refHigh - price) / refHigh >= minProminence;
+  });
+
+  prominent.sort((a, b) => a - b);
+
+  // Deduplicate: within lookback distance keep only the deepest
   const deduped = [];
-  for (const idx of lows) {
-    if (!deduped.length || idx - deduped[deduped.length - 1] > lookback)
+  for (const idx of prominent) {
+    if (!deduped.length || idx - deduped[deduped.length - 1] > lookback) {
       deduped.push(idx);
-    else if (candles[idx].l < candles[deduped[deduped.length - 1]].l)
+    } else if (lows_map[idx] < lows_map[deduped[deduped.length - 1]]) {
       deduped[deduped.length - 1] = idx;
+    }
   }
   return deduped;
 };
@@ -1115,7 +1142,7 @@ export default function App() {
                       {/* Slope control */}
                       <div style={{ padding: "10px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", gap: 10 }}>
                         <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Peak Shift</span>
-                        <input type="range" min="0.2" max="5" step="0.05" value={cycleSlopeMult}
+                        <input type="range" min="0.5" max="1.5" step="0.01" value={cycleSlopeMult}
                           onChange={e => setCycleSlopeMult(parseFloat(e.target.value))}
                           style={{ flex: 1, accentColor: "#d4af37", height: 2, cursor: "pointer" }} />
                         <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 36, textAlign: "right", whiteSpace: "nowrap" }}>{cycleSlopeMult.toFixed(2)}x</span>
