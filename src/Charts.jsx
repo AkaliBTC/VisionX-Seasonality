@@ -552,7 +552,8 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
     let ne = endIdx - delta * rightStep;
     if (ne - ns < 5) return;
     ns = Math.max(0, ns);
-    ne = Math.min(candlesRef.current.length - 1, ne);
+    const maxEnd = candlesRef.current.length - 1 + Math.ceil(candlesRef.current.length * 0.5);
+    ne = Math.min(maxEnd, ne);
     viewRef.current = { startIdx: ns, endIdx: ne };
     setViewVersion(v => v + 1);
   }, []);
@@ -619,11 +620,9 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
       const shift = Math.round(-dx / pixPerCandle);
       const len = pe - ps;
       let ns = ps + shift, ne = pe + shift;
-      if (ns < 0) { ns = 0; ne = len; }
-      // Allow panning into future (up to 50% of candle count beyond last candle)
       const maxEnd = candlesRef.current.length - 1 + Math.ceil(candlesRef.current.length * 0.5);
-      if (ne > maxEnd) { ne = maxEnd; ns = ne - len; }
-      if (ns < 0) { ns = 0; }
+      if (ns < 0) { ns = 0; ne = Math.min(len, maxEnd); }
+      if (ne > maxEnd) { ne = maxEnd; ns = Math.max(0, ne - len); }
       viewRef.current = { startIdx: ns, endIdx: ne };
       setViewVersion(v => v + 1);
     }
@@ -633,8 +632,12 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   if (!candles.length) return null;
 
   const { startIdx, endIdx } = viewRef.current;
-  const visible = candles.slice(startIdx, endIdx + 1);
+  // Build visible array including virtual future bars (null candles for future)
+  const realEnd = Math.min(endIdx, candles.length - 1);
+  const visible = candles.slice(startIdx, realEnd + 1);
   if (visible.length < 2) return null;
+  // Total slots including future virtual bars
+  const totalSlots = endIdx - startIdx + 1;
 
   const prices = visible.flatMap(c => [c.h, c.l]);
   // Include composite wave values in auto-scale
@@ -647,16 +650,18 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   const range = maxP - minP || 1;
   const pad = range * 0.05;
 
-  const xScale = (i) => PAD.left + (i / (visible.length - 1)) * iW;
+  const xScale = (i) => PAD.left + (i / (totalSlots - 1)) * iW;
   const yScale = (v) => PAD.top + iH - ((v - (minP - pad)) / (range + pad * 2)) * iH;
 
   const pathD = visible.map((c, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${yScale(c.c)}`).join(" ");
   const areaD = pathD + ` L ${xScale(visible.length - 1)} ${PAD.top + iH} L ${PAD.left} ${PAD.top + iH} Z`;
+  // Future zone marker
+  const futureX = xScale(visible.length - 1);
 
   const isUp = visible[visible.length - 1].c >= visible[0].c;
   const color = isUp ? "#22c55e" : "#ef4444";
 
-  const xStep = Math.max(1, Math.floor(visible.length / 7));
+  const xStep = Math.max(1, Math.floor(totalSlots / 7));
   const xLabels = visible.filter((_, i) => i % xStep === 0);
   const yTicks = 5;
   const yLabels = Array.from({ length: yTicks }, (_, i) => minP - pad + ((range + pad * 2) / (yTicks - 1)) * i);
