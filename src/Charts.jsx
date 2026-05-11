@@ -198,26 +198,20 @@ function PriceChart({ candles, interval }) {
     setView({ startIdx: ns, endIdx: ne });
   }, [candles.length]);
 
-  const handleWheel = useCallback((e) => {
-    e.preventDefault();
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const frac = (e.clientX - rect.left - PAD.left * (rect.width / W)) / (iW * (rect.width / W));
-    zoom(e.deltaY > 0 ? -1 : 1, Math.max(0, Math.min(1, frac)));
-  }, [zoom]);
 
-  // Non-passive wheel listener — prevents page scroll while zooming chart
-  useEffect(() => {
-    const el = svgRef.current;
-    if (!el) return;
-    el.addEventListener("wheel", handleWheel, { passive: false });
-    return () => el.removeEventListener("wheel", handleWheel);
-  }, [handleWheel]);
+
+  // Use ref for isPanning to avoid stale closure issues
+  const isPanningRef = useRef(false);
 
   const handleMouseDown = useCallback((e) => {
+    isPanningRef.current = true;
     setIsPanning(true);
     panStart.current = { x: e.clientX, start: viewRef.current.startIdx, end: viewRef.current.endIdx };
+  }, []);
+
+  const handleMouseUp = useCallback(() => {
+    isPanningRef.current = false;
+    setIsPanning(false);
   }, []);
 
   const handleMouseMove = useCallback((e) => {
@@ -237,7 +231,7 @@ function PriceChart({ candles, interval }) {
       const yPos = PAD.top + iH - ((candles[absIdx].c - (minP2 - p2)) / (r2 + p2 * 2)) * iH;
       setHover({ x: xPos, y: yPos, candle: candles[absIdx] });
     }
-    if (isPanning && panStart.current) {
+    if (isPanningRef.current && panStart.current) {
       const dx = e.clientX - panStart.current.x;
       const { startIdx: ps, endIdx: pe } = panStart.current;
       const pixPerCandle = iW * (rect.width / W) / Math.max(pe - ps, 1);
@@ -248,7 +242,22 @@ function PriceChart({ candles, interval }) {
       if (ne >= candles.length) { ne = candles.length - 1; ns = ne - len; }
       setView({ startIdx: ns, endIdx: ne });
     }
-  }, [candles, isPanning, iW, iH]);
+  }, [candles, iW, iH]);
+
+  // Wheel listener — attach to window so it always works even before SVG mounts
+  useEffect(() => {
+    const onWheel = (e) => {
+      const svg = svgRef.current;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
+      e.preventDefault();
+      const frac = (e.clientX - rect.left - PAD.left * (rect.width / W)) / (iW * (rect.width / W));
+      zoom(e.deltaY > 0 ? -1 : 1, Math.max(0, Math.min(1, frac)));
+    };
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
+  }, [zoom]);
 
   // ALL hooks done — early return safe here
   if (!candles.length) return null;
@@ -283,8 +292,8 @@ function PriceChart({ candles, interval }) {
         style={{ width: "100%", height: "auto", display: "block", cursor: isPanning ? "grabbing" : "crosshair" }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onMouseUp={() => setIsPanning(false)}
-        onMouseLeave={() => { setIsPanning(false); setHover(null); }}>
+        onMouseUp={handleMouseUp}
+        onMouseLeave={() => { isPanningRef.current = false; setIsPanning(false); setHover(null); }}>
 
         <defs>
           <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
@@ -532,46 +541,4 @@ export default function App() {
           <div className="empty-label">Enter a crypto ticker</div>
           <div className="empty-sub">BTC · ETH · SOL · HYPE · any USDT pair</div>
         </div>
-      ) : error ? (
-        <div className="empty">
-          <div className="empty-label" style={{ color: "#ef4444" }}>Could not load {ticker}</div>
-          <div className="empty-sub">Check ticker and try again</div>
-        </div>
-      ) : candles.length > 0 ? (
-        <>
-          <div className="section">
-            <div className="section-header">
-              <div className="section-title">{ticker} · {interval === "1d" ? "DAILY" : "WEEKLY"}</div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button className="btn btn-outline" style={{ padding: "6px 14px", fontSize: 9 }}
-                  onClick={() => {/* zoom handled in component */}}>SCROLL TO ZOOM · DRAG TO PAN</button>
-              </div>
-            </div>
-            <div className="section-body" style={{ padding: "12px 8px 4px" }}>
-              <PriceChart candles={candles} interval={interval} />
-            </div>
-          </div>
-
-          {/* SEASONALITY */}
-          {seasonality && (
-            <div className="section">
-              <div className="section-header">
-                <div className="section-title">SEASONALITY · {activeYears.length === availableYears.length ? "ALL YEARS" : activeYears.join(", ")}</div>
-                <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#444" }}>
-                  {activeYears.length} year{activeYears.length !== 1 ? "s" : ""} · avg return per period
-                </div>
-              </div>
-              <div className="section-body">
-                <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-                  <BarChart data={seasonality.weekdays} title="Avg Return by Weekday (%)" />
-                  <BarChart data={seasonality.months} title="Avg Return by Month (%)" />
-                </div>
-              </div>
-            </div>
-          )}
-          <div style={{ height: 48 }} />
-        </>
-      ) : loading ? null : null}
-    </div>
-  );
-}
+ 
