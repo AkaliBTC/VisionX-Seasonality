@@ -250,6 +250,8 @@ const analyzeCycles = (candles, topN = 20, anchorIdx = null) => {
       selected.push(s);
     if (selected.length >= topN) break;
   }
+  // Final sort: by accuracy descending
+  selected.sort((a, b) => b.accuracy - a.accuracy);
   return selected;
 };
 
@@ -1180,11 +1182,14 @@ export default function App() {
                             const raw = parseFloat(e.target.value);
                             const snapped = Math.round(raw * 10) / 10;
                             const dist = Math.abs(raw - snapped);
-                            // Rubber-band: within 0.08 → pull strongly toward snap point
-                            // gives a gummy elastic feel before locking in
-                            if (dist < 0.08) {
-                              const pull = snapped + (raw - snapped) * (dist / 0.08) * 0.3;
-                              setCycleSlopeMult(dist < 0.02 ? snapped : pull);
+                            if (dist < 0.035) {
+                              // Hard snap zone — lock immediately
+                              setCycleSlopeMult(snapped);
+                            } else if (dist < 0.08) {
+                              // Rubber band — pulls hard toward snap, exponential feel
+                              const t = (dist - 0.035) / (0.08 - 0.035); // 0→1
+                              const pull = snapped + (raw - snapped) * t * t * 0.25;
+                              setCycleSlopeMult(pull);
                             } else {
                               setCycleSlopeMult(raw);
                             }
