@@ -142,52 +142,62 @@ const calcSeasonality = (candles, years) => {
 };
 
 // ── BAR CHART ─────────────────────────────────────────────────────────────────
-function BarChart({ data, title, width }) {
+function BarChart({ data, title }) {
   const vals = data.map(d => d.val);
   const maxAbs = Math.max(...vals.map(Math.abs), 0.001);
-  const H = 180, PAD = { top: 28, bottom: 40, left: 48, right: 12 };
-  const W = width || 420;
+  const H = 240, PAD = { top: 40, bottom: 44, left: 52, right: 16 };
+  const W = 560;
   const iW = W - PAD.left - PAD.right;
   const iH = H - PAD.top - PAD.bottom;
-  const barW = Math.floor(iW / data.length * 0.6);
+  const slotW = iW / data.length;
+  const barW = Math.max(Math.floor(slotW * 0.55), 8);
   const zeroY = PAD.top + iH / 2;
   const yScale = (v) => zeroY - (v / maxAbs) * (iH / 2);
 
-  return (
-    <div style={{ flex: 1, minWidth: 320 }}>
-      <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11, fontWeight: 600, letterSpacing: "0.15em", color: "#555", textTransform: "uppercase", marginBottom: 8, textAlign: "center" }}>{title}</div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }}>
-        {/* Zero line */}
-        <line x1={PAD.left} x2={W - PAD.right} y1={zeroY} y2={zeroY} stroke="#2a2a2a" strokeWidth="1" />
+  // Y axis ticks — nice round numbers
+  const yTicks = [-maxAbs, -maxAbs/2, 0, maxAbs/2, maxAbs];
 
-        {/* Y ticks */}
-        {[-maxAbs, -maxAbs/2, 0, maxAbs/2, maxAbs].map((v, i) => (
-          <g key={i}>
-            <line x1={PAD.left - 4} x2={PAD.left} y1={yScale(v)} y2={yScale(v)} stroke="#333" strokeWidth="1" />
-            <text x={PAD.left - 8} y={yScale(v) + 4} textAnchor="end" fill="#444" fontSize="9" fontFamily="'DM Mono', monospace">
-              {v.toFixed(1)}%
-            </text>
-          </g>
+  return (
+    <div style={{ flex: 1, minWidth: 360 }}>
+      <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.22em", color: "#444", textTransform: "uppercase", marginBottom: 12, textAlign: "center" }}>{title}</div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }}>
+
+        {/* Grid lines */}
+        {yTicks.map((v, i) => (
+          <line key={i} x1={PAD.left} x2={W - PAD.right} y1={yScale(v)} y2={yScale(v)}
+            stroke={v === 0 ? "#2a2a2a" : "#181818"} strokeWidth={v === 0 ? 1 : 0.5} />
+        ))}
+
+        {/* Y labels */}
+        {yTicks.map((v, i) => (
+          <text key={i} x={PAD.left - 8} y={yScale(v) + 4} textAnchor="end"
+            fill={v === 0 ? "#333" : "#2a2a2a"} fontSize="9" fontFamily="'DM Mono', monospace">
+            {v >= 0 ? "+" : ""}{v.toFixed(1)}%
+          </text>
         ))}
 
         {/* Bars */}
         {data.map((d, i) => {
-          const slotW = iW / data.length;
           const x = PAD.left + slotW * i + (slotW - barW) / 2;
-          const barH = Math.abs(yScale(d.val) - zeroY);
+          const barH = Math.max(Math.abs(yScale(d.val) - zeroY), 1);
           const y = d.val >= 0 ? yScale(d.val) : zeroY;
           const color = d.val >= 0 ? "#22c55e" : "#ef4444";
-          const colorDim = d.val >= 0 ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)";
+          const colorFill = d.val >= 0 ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)";
+          // Label position: above bar if positive, below if negative
+          const labelY = d.val >= 0 ? yScale(d.val) - 6 : zeroY + barH + 14;
           return (
             <g key={i}>
-              <rect x={x} y={y} width={barW} height={Math.max(barH, 1)}
-                fill={colorDim} stroke={color} strokeWidth="1" rx="2" />
-              <text x={x + barW / 2} y={H - 8} textAnchor="middle" fill="#555" fontSize="10" fontFamily="'DM Mono', monospace">
-                {d.label}
-              </text>
-              <text x={x + barW / 2} y={d.val >= 0 ? yScale(d.val) - 4 : yScale(d.val) + barH + 12}
-                textAnchor="middle" fill={color} fontSize="8" fontFamily="'DM Mono', monospace">
+              <rect x={x} y={y} width={barW} height={barH}
+                fill={colorFill} stroke={color} strokeWidth="1" rx="2" />
+              {/* Value label */}
+              <text x={x + barW / 2} y={labelY} textAnchor="middle"
+                fill={color} fontSize="8.5" fontFamily="'DM Mono', monospace" fontWeight="600">
                 {d.val >= 0 ? "+" : ""}{d.val.toFixed(2)}%
+              </text>
+              {/* X label */}
+              <text x={x + barW / 2} y={H - 10} textAnchor="middle"
+                fill="#444" fontSize="9.5" fontFamily="'DM Mono', monospace">
+                {d.label}
               </text>
             </g>
           );
@@ -715,16 +725,27 @@ export default function App() {
         .section-title { font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 0.15em; color: #fdfdfd; }
         .section-body { padding: 20px 16px 12px; }
 
-        .year-filter { padding: 20px 48px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; border-bottom: 1px solid #1a1a1a; margin-bottom: 0; }
-        .year-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-        .year-chip { font-family: 'DM Mono', monospace; font-size: 10px; padding: 5px 10px; border-radius: 4px; border: 1px solid #222; color: #555; cursor: pointer; transition: all 0.15s; background: transparent; }
-        .year-chip:hover { border-color: #333; color: #888; }
-        .year-chip.active { border-color: #d4af37; color: #f8e49b; background: rgba(212,175,55,0.1); }
+        .year-filter { padding: 20px 48px 16px; border-bottom: 1px solid #1a1a1a; }
+        .year-filter-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+        .year-filter-label { font-size: 9px; color: #444; letter-spacing: 0.22em; font-weight: 700; text-transform: uppercase; white-space: nowrap; margin-right: 4px; }
+        .year-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+        .year-chip { font-family: 'DM Mono', monospace; font-size: 10px; padding: 4px 9px; border-radius: 4px; border: 1px solid #1e1e1e; color: #444; cursor: pointer; transition: all 0.15s; background: transparent; }
+        .year-chip:hover { border-color: #2a2a2a; color: #777; }
+        .year-chip.active { border-color: #d4af37; color: #f8e49b; background: rgba(212,175,55,0.08); }
+        .year-chip.all-chip { color: #555; border-color: #222; margin-right: 4px; }
+        .year-chip.all-chip.active { border-color: #d4af37; color: #f8e49b; }
 
-        .filter-input { background: #0a0a0a; border: 1px solid #222; color: #e8e8e8; font-family: 'DM Mono', monospace; font-size: 11px; padding: 8px 12px; border-radius: 6px; outline: none; width: 120px; transition: border-color 0.2s; }
-        .filter-input:focus { border-color: #d4af37; }
-        .filter-input::placeholder { color: #333; }
-        .filter-sep { color: #333; font-size: 10px; }
+        .year-filter-bottom { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+        .filter-group { display: flex; align-items: center; gap: 6px; background: #0d0d0d; border: 1px solid #1a1a1a; border-radius: 8px; padding: 6px 12px; }
+        .filter-group-label { font-size: 8px; color: #333; letter-spacing: 0.2em; font-weight: 700; text-transform: uppercase; white-space: nowrap; }
+        .filter-input { background: transparent; border: none; border-bottom: 1px solid #222; color: #e8e8e8; font-family: 'DM Mono', monospace; font-size: 11px; padding: 2px 4px; outline: none; width: 52px; transition: border-color 0.2s; text-align: center; }
+        .filter-input:focus { border-bottom-color: #d4af37; }
+        .filter-input::placeholder { color: #2a2a2a; }
+        .filter-sep { color: #2a2a2a; font-size: 10px; }
+        .filter-input-wide { background: transparent; border: none; border-bottom: 1px solid #222; color: #e8e8e8; font-family: 'DM Mono', monospace; font-size: 11px; padding: 2px 4px; outline: none; width: 140px; transition: border-color 0.2s; }
+        .filter-input-wide:focus { border-bottom-color: #d4af37; }
+        .filter-input-wide::placeholder { color: #2a2a2a; }
+        .active-years-tag { font-family: "DM Mono", monospace; font-size: 9px; color: #d4af37; letter-spacing: 0.06em; opacity: 0.7; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
         .spinner { width: 28px; height: 28px; border: 2px solid #1a1a1a; border-top-color: #d4af37; border-radius: 50%; animation: spin 0.8s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -784,35 +805,36 @@ export default function App() {
       {/* YEAR FILTER */}
       {candles.length > 0 && (
         <div className="year-filter">
-          <span style={{ fontSize: 9, color: "#444", letterSpacing: "0.2em", fontWeight: 700, textTransform: "uppercase", whiteSpace: "nowrap" }}>Filter Years</span>
-
-          {/* Year chips */}
-          <div className="year-chips">
-            <button className={`year-chip ${selectedYears.length === 0 ? "active" : ""}`} onClick={maxOut}>ALL</button>
-            {availableYears.map(y => (
-              <button key={y} className={`year-chip ${selectedYears.includes(y) ? "active" : ""}`} onClick={() => toggleYear(y)}>{y}</button>
-            ))}
+          {/* Top row: year chips */}
+          <div className="year-filter-top">
+            <span className="year-filter-label">Years</span>
+            <div className="year-chips">
+              <button className={`year-chip all-chip ${selectedYears.length === 0 ? "active" : ""}`} onClick={maxOut}>ALL</button>
+              {availableYears.map(y => (
+                <button key={y} className={`year-chip ${selectedYears.includes(y) ? "active" : ""}`} onClick={() => toggleYear(y)}>{y}</button>
+              ))}
+            </div>
           </div>
 
-          {/* Range */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <input className="filter-input" style={{ width: 64 }} placeholder="2018" value={rangeStart} onChange={e => setRangeStart(e.target.value)} />
-            <span className="filter-sep">→</span>
-            <input className="filter-input" style={{ width: 64 }} placeholder="2022" value={rangeEnd} onChange={e => setRangeEnd(e.target.value)} />
-            <button className="btn btn-outline" style={{ padding: "8px 14px" }} onClick={applyRange}>RANGE</button>
+          {/* Bottom row: range + manual + active display */}
+          <div className="year-filter-bottom">
+            <div className="filter-group">
+              <span className="filter-group-label">Range</span>
+              <input className="filter-input" placeholder="2018" value={rangeStart} onChange={e => setRangeStart(e.target.value)} />
+              <span className="filter-sep">→</span>
+              <input className="filter-input" placeholder="2024" value={rangeEnd} onChange={e => setRangeEnd(e.target.value)} />
+              <button className="btn btn-outline" style={{ padding: "5px 12px", fontSize: 9 }} onClick={applyRange}>GO</button>
+            </div>
+            <div className="filter-group">
+              <span className="filter-group-label">Manual</span>
+              <input className="filter-input-wide" placeholder="2016+2020+2024" value={yearInput}
+                onChange={e => setYearInput(e.target.value)} onKeyDown={e => e.key === "Enter" && applyManual()} />
+              <button className="btn btn-outline" style={{ padding: "5px 12px", fontSize: 9 }} onClick={applyManual}>APPLY</button>
+            </div>
+            {activeYears.length > 0 && selectedYears.length > 0 && (
+              <span className="active-years-tag">✦ {activeYears.join(" · ")}</span>
+            )}
           </div>
-
-          {/* Manual */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <input className="filter-input" style={{ width: 180 }} placeholder="2016+2020+2024" value={yearInput} onChange={e => setYearInput(e.target.value)} onKeyDown={e => e.key === "Enter" && applyManual()} />
-            <button className="btn btn-outline" style={{ padding: "8px 14px" }} onClick={applyManual}>APPLY</button>
-          </div>
-
-          {activeYears.length > 0 && (
-            <span style={{ fontSize: 9, color: "#d4af37", letterSpacing: "0.1em", fontFamily: "'DM Mono', monospace" }}>
-              {activeYears.join(", ")}
-            </span>
-          )}
         </div>
       )}
 
