@@ -42,6 +42,61 @@ const fetchBinanceHistory = async (ticker, interval) => {
   }));
 };
 
+// ── STOOQ HISTORY (TradFi) ───────────────────────────────────────────────────
+const PROXIES = [
+  (u) => fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(u)}`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(d => d.contents),
+  (u) => fetch(`https://corsproxy.io/?${encodeURIComponent(u)}`).then(r => { if (!r.ok) throw new Error(); return r.text(); }),
+  (u) => fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`).then(r => { if (!r.ok) throw new Error(); return r.text(); }),
+];
+
+const parseStooqCSV = (csv) => {
+  const lines = csv.trim().split("\n").slice(1); // skip header
+  const candles = [];
+  for (const line of lines) {
+    const parts = line.split(",");
+    if (parts.length < 5) continue;
+    const [date, open, high, low, close] = parts;
+    if (!date || date === "Date") continue;
+    const [y, m, d] = date.trim().split("-").map(Number);
+    if (!y || isNaN(y)) continue;
+    const t = new Date(y, m - 1, d).getTime();
+    const o = parseFloat(open), h = parseFloat(high), l = parseFloat(low), c = parseFloat(close);
+    if (isNaN(o) || isNaN(c)) continue;
+    candles.push({ t, o, h, l, c, date: new Date(t) });
+  }
+  return candles.sort((a, b) => a.t - b.t);
+};
+
+const fetchStooqHistory = async (ticker, interval) => {
+  // Stooq ticker mapping — weekly uses same ticker, Stooq handles period via d/w
+  const sym = ticker.trim().toLowerCase();
+  const period = interval === "1w" ? "w" : "d";
+  const url = `https://stooq.com/q/d/l/?s=${sym}&i=${period}`;
+
+  for (const px of PROXIES) {
+    try {
+      const text = await px(url);
+      if (!text || text.includes("No data") || text.length < 50) continue;
+      const candles = parseStooqCSV(text);
+      if (candles.length > 10) return candles;
+    } catch { continue; }
+  }
+  return null;
+};
+
+// ── DETECT SOURCE ─────────────────────────────────────────────────────────────
+const CRYPTO_LIST = ["BTC","ETH","SOL","BNB","XRP","ADA","AVAX","DOT","LINK","MATIC","DOGE","SHIB","UNI","ATOM","HYPE","SUI","APT","INJ","TIA","SEI","WIF","BONK","PEPE","ARB","OP","NEAR","FTM","ALGO","VET","SAND","MANA","AXS","GALA","ENJ","CHZ","LRC","CRV","AAVE","MKR","SNX","COMP","YFI","SUSHI","1INCH"];
+
+const isCrypto = (ticker) => {
+  const t = ticker.toUpperCase().replace("USDT", "").trim();
+  return CRYPTO_LIST.includes(t) || ticker.toUpperCase().endsWith("USDT");
+};
+
+const fetchHistory = async (ticker, interval) => {
+  if (isCrypto(ticker)) return await fetchBinanceHistory(ticker, interval);
+  return await fetchStooqHistory(ticker, interval);
+};
+
 // ── SEASONALITY CALC ──────────────────────────────────────────────────────────
 const calcSeasonality = (candles, years) => {
   const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
@@ -76,14 +131,17 @@ const calcSeasonality = (candles, years) => {
     byMonth[mo].push(pct);
   }
 
+  const hasWeekend = byWeekday[6].length > 0 || byWeekday[0].length > 0;
   const weekdays = [
     { label: "Mon", val: avg(byWeekday[1]), n: byWeekday[1].length },
     { label: "Tue", val: avg(byWeekday[2]), n: byWeekday[2].length },
     { label: "Wed", val: avg(byWeekday[3]), n: byWeekday[3].length },
     { label: "Thu", val: avg(byWeekday[4]), n: byWeekday[4].length },
     { label: "Fri", val: avg(byWeekday[5]), n: byWeekday[5].length },
-    { label: "Sat", val: avg(byWeekday[6]), n: byWeekday[6].length },
-    { label: "Sun", val: avg(byWeekday[0]), n: byWeekday[0].length },
+    ...(hasWeekend ? [
+      { label: "Sat", val: avg(byWeekday[6]), n: byWeekday[6].length },
+      { label: "Sun", val: avg(byWeekday[0]), n: byWeekday[0].length },
+    ] : []),
   ];
 
   const months = [
@@ -486,26 +544,30 @@ function PriceChart({ candles, interval, activeIndicators, indSettings }) {
           }
           if (activeIndicators.has("supertrend")) {
             const st = calcSupertrend(candles, indSettings.supertrend.period, indSettings.supertrend.mult).slice(startIdx, endIdx+1);
-            const vis = visible;
-            // Build filled areas between price and supertrend line
-            let bullArea = "", bearArea = "";
-            const bottomY = PAD.top + iH;
+            // Build separate segments, each closed individually between ST line and price
+            let seg = null;
+            const segments = [];
             st.forEach((s, i) => {
-              if (!s) return;
-              const x = xScale(i), stY = yScale(s.val), priceY = yScale(vis[i]?.c ?? s.val);
-              if (s.bull) bullArea += bullArea ? ` L ${x} ${stY}` : `M ${x} ${stY}`;
-              else bearArea += bearArea ? ` L ${x} ${stY}` : `M ${x} ${stY}`;
+              if (!s || !visible[i]) { if (seg) { segments.push(seg); seg = null; } return; }
+              if (!seg || seg.bull !== s.bull) {
+                if (seg) segments.push(seg);
+                seg = { bull: s.bull, points: [] };
+              }
+              seg.points.push({ i, stY: yScale(s.val), priceY: yScale(visible[i].c) });
             });
-            // Close areas along price line reversed
-            let bullClose = "", bearClose = "";
-            for (let i = st.length-1; i >= 0; i--) {
-              if (!st[i] || !vis[i]) continue;
-              const x = xScale(i), priceY = yScale(vis[i].c);
-              if (st[i].bull) bullClose += ` L ${x} ${priceY}`;
-              else bearClose += ` L ${x} ${priceY}`;
-            }
-            if (bullArea && bullClose) els.push(<path key="st-bull-fill" d={bullArea+bullClose+"Z"} fill="rgba(34,197,94,0.12)" stroke="#22c55e" strokeWidth="0.8" opacity="0.9"/>);
-            if (bearArea && bearClose) els.push(<path key="st-bear-fill" d={bearArea+bearClose+"Z"} fill="rgba(239,68,68,0.12)" stroke="#ef4444" strokeWidth="0.8" opacity="0.9"/>);
+            if (seg) segments.push(seg);
+
+            segments.forEach((seg, si) => {
+              if (seg.points.length < 2) return;
+              const color = seg.bull ? "#22c55e" : "#ef4444";
+              const fill = seg.bull ? "rgba(34,197,94,0.10)" : "rgba(239,68,68,0.10)";
+              // Top edge: ST line forward
+              let d = seg.points.map((p, j) => `${j===0?"M":"L"} ${xScale(p.i)} ${p.stY}`).join(" ");
+              // Bottom edge: price line reversed
+              d += " " + [...seg.points].reverse().map(p => `L ${xScale(p.i)} ${p.priceY}`).join(" ");
+              d += " Z";
+              els.push(<path key={"st"+si} d={d} fill={fill} stroke={color} strokeWidth="0.8" opacity="0.9"/>);
+            });
           }
           if (activeIndicators.has("resist")) {
             const levels = calcResistance(candles, visible, 20);
@@ -576,10 +638,11 @@ export default function App() {
 
   const load = async (t, iv) => {
     if (!t) return;
-    setLoading(true); setError(false); setCandles([]); setProgress("Fetching history…");
+    setLoading(true); setError(false); setCandles([]);
+    setProgress(isCrypto(t) ? "Fetching Binance history…" : "Fetching Stooq history…");
     try {
-      const data = await fetchBinanceHistory(t, iv);
-      if (data.length < 10) { setError(true); }
+      const data = await fetchHistory(t, iv);
+      if (!data || data.length < 10) { setError(true); }
       else { setCandles(data); }
     } catch { setError(true); }
     setLoading(false); setProgress("");
@@ -766,7 +829,10 @@ export default function App() {
       {!ticker ? (
         <div className="empty">
           <div className="empty-label">Enter a crypto ticker</div>
-          <div className="empty-sub">BTC · ETH · SOL · HYPE · any USDT pair</div>
+          <div className="empty-sub">Crypto: BTC · ETH · SOL · HYPE · any USDT pair</div>
+          <div className="empty-sub" style={{ marginTop: 6 }}>Stocks: AAPL.US · MSFT.US · ADS.DE · BAS.DE</div>
+          <div className="empty-sub" style={{ marginTop: 4 }}>Indices: ^SPX · ^NDX · ^DJI · ^DAX · ^FTSE</div>
+          <div className="empty-sub" style={{ marginTop: 4 }}>Commodities: GC.F · SI.F · CL.F · NG.F</div>
         </div>
       ) : error ? (
         <div className="empty">
@@ -777,7 +843,7 @@ export default function App() {
         <>
           <div className="section">
             <div className="section-header">
-              <div className="section-title">{ticker} · {interval === "1d" ? "DAILY" : "WEEKLY"}</div>
+              <div className="section-title">{ticker} · {interval === "1d" ? "DAILY" : "WEEKLY"} · {isCrypto(ticker) ? "BINANCE" : "STOOQ"}</div>
               <div style={{ display: "flex", gap: 6 }}>
                 <button className="btn btn-outline" style={{ padding: "6px 14px", fontSize: 9 }}
                   onClick={() => {/* zoom handled in component */}}>SCROLL TO ZOOM · DRAG TO PAN</button>
