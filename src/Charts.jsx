@@ -142,57 +142,92 @@ const calcSeasonality = (candles, years) => {
 };
 
 
-// ── CYCLE ANALYSIS (FFT-based) ────────────────────────────────────────────────
+// ── CYCLE ANALYSIS — proper spectral analysis with peak picking ───────────────
 const analyzeCycles = (candles, topN = 20) => {
   if (candles.length < 20) return [];
-  
-  // Detrend: use log returns normalized to zero mean
   const closes = candles.map(c => c.c);
-  const logPrices = closes.map(p => Math.log(p));
-  // Linear detrend
-  const n = logPrices.length;
-  const xMean = (n - 1) / 2;
-  const yMean = logPrices.reduce((a, b) => a + b, 0) / n;
-  let num = 0, den = 0;
-  for (let i = 0; i < n; i++) { num += (i - xMean) * (logPrices[i] - yMean); den += (i - xMean) ** 2; }
-  const slope = den ? num / den : 0;
-  const intercept = yMean - slope * xMean;
-  const detrended = logPrices.map((v, i) => v - (slope * i + intercept));
+  const n = closes.length;
 
-  // DFT — find dominant frequencies
-  const results = [];
-  const maxPeriod = Math.floor(n / 2);
-  const minPeriod = 4;
+  // 1. Detrend via first differences (returns), then smooth slightly
+  const returns = closes.map((c, i) => i === 0 ? 0 : (c - closes[i-1]) / closes[i-1]);
+
+  // 2. Zero-mean
+  const mean = returns.reduce((a, b) => a + b, 0) / n;
+  const signal = returns.map(v => v - mean);
+
+  // 3. Apply Hann window to reduce spectral leakage
+  const windowed = signal.map((v, i) => v * 0.5 * (1 - Math.cos(2 * Math.PI * i / (n - 1))));
+
+  // 4. DFT with fine resolution — compute power spectrum
+  const minPeriod = 5;
+  const maxPeriod = Math.floor(n / 2.5); // need at least 2.5 cycles to detect
+  const spectrum = [];
 
   for (let period = minPeriod; period <= maxPeriod; period++) {
     const freq = 1 / period;
     let re = 0, im = 0;
     for (let t = 0; t < n; t++) {
       const angle = 2 * Math.PI * freq * t;
-      re += detrended[t] * Math.cos(angle);
-      im += detrended[t] * Math.sin(angle);
+      re += windowed[t] * Math.cos(angle);
+      im -= windowed[t] * Math.sin(angle);
     }
-    re /= n; im /= n;
-    const amplitude = 2 * Math.sqrt(re * re + im * im);
+    const power = re * re + im * im;
+    const amplitude = 2 * Math.sqrt(power) / n;
     const phase = Math.atan2(im, re);
-
-    // Accuracy: correlation between synthetic sine and detrended price
-    const synth = Array.from({ length: n }, (_, t) => amplitude * Math.sin(2 * Math.PI * freq * t + phase));
-    const synthMean = synth.reduce((a, b) => a + b, 0) / n;
-    const detMean = detrended.reduce((a, b) => a + b, 0) / n;
-    let covNum = 0, synthVar = 0, detVar = 0;
-    for (let t = 0; t < n; t++) {
-      covNum += (synth[t] - synthMean) * (detrended[t] - detMean);
-      synthVar += (synth[t] - synthMean) ** 2;
-      detVar += (detrended[t] - detMean) ** 2;
-    }
-    const corr = (synthVar && detVar) ? Math.abs(covNum / Math.sqrt(synthVar * detVar)) : 0;
-    results.push({ period, amplitude, phase, accuracy: corr * 100 });
+    spectrum.push({ period, power, amplitude, phase });
   }
 
-  // Sort by amplitude × accuracy (power), take topN
-  results.sort((a, b) => (b.amplitude * b.accuracy) - (a.amplitude * a.accuracy));
-  return results.slice(0, topN);
+  // 5. Peak picking — only keep local maxima (no adjacent periods)
+  // A peak must be larger than its neighbors on both sides
+  const peaks = [];
+  for (let i = 1; i < spectrum.length - 1; i++) {
+    const prev = spectrum[i - 1].power;
+    const cur = spectrum[i].power;
+    const next = spectrum[i + 1].power;
+    if (cur > prev && cur > next) {
+      peaks.push(spectrum[i]);
+    }
+  }
+
+  // 6. For each peak, compute accuracy via R² of sine fit to original signal
+  const withAccuracy = peaks.map(p => {
+    const freq = 1 / p.period;
+    // Fit amplitude and phase via least squares
+    let sumSS = 0, sumSC = 0, sumCC = 0, sumCS = 0, sumSig = 0, sumSigS = 0, sumSigC = 0;
+    for (let t = 0; t < n; t++) {
+      const s = Math.sin(2 * Math.PI * freq * t);
+      const c = Math.cos(2 * Math.PI * freq * t);
+      sumSS += s * s; sumCC += c * c; sumSC += s * c;
+      sumSigS += signal[t] * s; sumSigC += signal[t] * c;
+    }
+    const det = sumSS * sumCC - sumSC * sumSC;
+    const A = det ? (sumSigS * sumCC - sumSigC * sumSC) / det : 0;
+    const B = det ? (sumSigC * sumSS - sumSigS * sumSC) / det : 0;
+    const amp = Math.sqrt(A * A + B * B);
+    const phase = Math.atan2(B, A);
+
+    // R² against signal
+    const sigMean = signal.reduce((a, b) => a + b, 0) / n;
+    let ssTot = 0, ssRes = 0;
+    for (let t = 0; t < n; t++) {
+      const pred = amp * Math.sin(2 * Math.PI * freq * t + phase);
+      ssTot += (signal[t] - sigMean) ** 2;
+      ssRes += (signal[t] - pred) ** 2;
+    }
+    const r2 = ssTot > 0 ? Math.max(0, 1 - ssRes / ssTot) : 0;
+    return { period: p.period, amplitude: amp, phase, power: p.power, accuracy: r2 * 100 };
+  });
+
+  // 7. Sort by power descending, deduplicate (min 3 period gap between selected cycles)
+  withAccuracy.sort((a, b) => b.power - a.power);
+  const selected = [];
+  for (const cyc of withAccuracy) {
+    const tooClose = selected.some(s => Math.abs(s.period - cyc.period) < 3);
+    if (!tooClose) selected.push(cyc);
+    if (selected.length >= topN) break;
+  }
+
+  return selected;
 };
 
 // Build composite sine wave — arithmetic, auto-scaled to visible price range
