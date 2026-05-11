@@ -868,12 +868,28 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
                 stroke="#333" strokeWidth="1" strokeDasharray="4,3" />
               {/* Dot on price line */}
               {hover.candle && <circle cx={hover.x} cy={hover.y} r="3" fill={color} stroke="#0a0a0a" strokeWidth="2" />}
-              {/* Y-axis price tag */}
-              <rect x={0} y={tagY - 10} width={PAD.left - 4} height={20} fill="#1a1a1a" rx="3" />
-              <text x={PAD.left - 8} y={tagY + 4} textAnchor="end"
-                fill="#f8e49b" fontSize="10" fontFamily="'DM Mono', monospace" fontWeight="600">
-                {tagPrice ? fmtPrice(tagPrice) : ""}
-              </text>
+              {/* X-axis time tag */}
+              {(() => {
+                const slotIdx = Math.round((hover.x - PAD.left) / iW * (totalSlots - 1));
+                const isFut = slotIdx >= visible.length;
+                const msPerBar = interval === "1d" ? 86400000 : 604800000;
+                const ts = isFut
+                  ? visible[visible.length-1].t + (slotIdx - (visible.length-1)) * msPerBar
+                  : visible[Math.max(0, Math.min(slotIdx, visible.length-1))]?.t;
+                const label = ts ? fmtLabel(ts) : "";
+                const tagW = label.length * 6.5 + 12;
+                const tagX = Math.max(PAD.left, Math.min(hover.x - tagW/2, W - PAD.right - tagW));
+                return (
+                  <>
+                    <rect x={tagX} y={H - PAD.bottom + 2} width={tagW} height={18} fill="#1a1a1a" rx="3" />
+                    <text x={tagX + tagW/2} y={H - PAD.bottom + 14} textAnchor="middle"
+                      fill={isFut ? "#d4af37" : "#f8e49b"} fontSize="10"
+                      fontFamily="'DM Mono', monospace" fontWeight="600">
+                      {label}
+                    </text>
+                  </>
+                );
+              })()}
             </>
           );
         })()}
