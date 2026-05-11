@@ -141,6 +141,96 @@ const calcSeasonality = (candles, years) => {
   return { weekdays, months };
 };
 
+
+// ── CYCLE ANALYSIS (FFT-based) ────────────────────────────────────────────────
+const analyzeCycles = (candles, topN = 20) => {
+  if (candles.length < 20) return [];
+  
+  // Detrend: use log returns normalized to zero mean
+  const closes = candles.map(c => c.c);
+  const logPrices = closes.map(p => Math.log(p));
+  // Linear detrend
+  const n = logPrices.length;
+  const xMean = (n - 1) / 2;
+  const yMean = logPrices.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) { num += (i - xMean) * (logPrices[i] - yMean); den += (i - xMean) ** 2; }
+  const slope = den ? num / den : 0;
+  const intercept = yMean - slope * xMean;
+  const detrended = logPrices.map((v, i) => v - (slope * i + intercept));
+
+  // DFT — find dominant frequencies
+  const results = [];
+  const maxPeriod = Math.floor(n / 2);
+  const minPeriod = 4;
+
+  for (let period = minPeriod; period <= maxPeriod; period++) {
+    const freq = 1 / period;
+    let re = 0, im = 0;
+    for (let t = 0; t < n; t++) {
+      const angle = 2 * Math.PI * freq * t;
+      re += detrended[t] * Math.cos(angle);
+      im += detrended[t] * Math.sin(angle);
+    }
+    re /= n; im /= n;
+    const amplitude = 2 * Math.sqrt(re * re + im * im);
+    const phase = Math.atan2(im, re);
+
+    // Accuracy: correlation between synthetic sine and detrended price
+    const synth = Array.from({ length: n }, (_, t) => amplitude * Math.sin(2 * Math.PI * freq * t + phase));
+    const synthMean = synth.reduce((a, b) => a + b, 0) / n;
+    const detMean = detrended.reduce((a, b) => a + b, 0) / n;
+    let covNum = 0, synthVar = 0, detVar = 0;
+    for (let t = 0; t < n; t++) {
+      covNum += (synth[t] - synthMean) * (detrended[t] - detMean);
+      synthVar += (synth[t] - synthMean) ** 2;
+      detVar += (detrended[t] - detMean) ** 2;
+    }
+    const corr = (synthVar && detVar) ? Math.abs(covNum / Math.sqrt(synthVar * detVar)) : 0;
+    results.push({ period, amplitude, phase, accuracy: corr * 100 });
+  }
+
+  // Sort by amplitude × accuracy (power), take topN
+  results.sort((a, b) => (b.amplitude * b.accuracy) - (a.amplitude * a.accuracy));
+  return results.slice(0, topN);
+};
+
+// Build composite sine wave from selected cycles (tweaked)
+const buildComposite = (candles, selectedCycles, tweaks) => {
+  if (!candles.length || !selectedCycles.length) return [];
+  const closes = candles.map(c => c.c);
+  const logPrices = closes.map(p => Math.log(p));
+  const n = logPrices.length;
+  // Detrend
+  const xMean = (n - 1) / 2;
+  const yMean = logPrices.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) { num += (i - xMean) * (logPrices[i] - yMean); den += (i - xMean) ** 2; }
+  const slope = den ? num / den : 0;
+  const intercept = yMean - slope * xMean;
+
+  // Project extra 20% forward
+  const fwdBars = Math.ceil(n * 0.25);
+  const totalBars = n + fwdBars;
+
+  const composite = Array(totalBars).fill(0);
+  for (const cyc of selectedCycles) {
+    const tw = tweaks[cyc.period] || { periodMult: 1, ampMult: 1 };
+    const period = cyc.period * tw.periodMult;
+    const amp = cyc.amplitude * tw.ampMult;
+    const freq = 1 / period;
+    for (let t = 0; t < totalBars; t++) {
+      composite[t] += amp * Math.sin(2 * Math.PI * freq * t + cyc.phase);
+    }
+  }
+
+  // Re-trend: add back linear trend and convert from log to price space
+  return composite.map((v, t) => {
+    const logP = v + (slope * t + intercept);
+    return { t, v: Math.exp(logP), isFuture: t >= n };
+  });
+};
+
 // ── BAR CHART ─────────────────────────────────────────────────────────────────
 function BarChart({ data, title }) {
   const vals = data.map(d => d.val);
@@ -325,7 +415,7 @@ const DEFAULT_SETTINGS = {
 };
 
 // ── PRICE CHART (zoom/pan) ────────────────────────────────────────────────────
-function PriceChart({ candles, interval, activeIndicators, indSettings }) {
+function PriceChart({ candles, interval, activeIndicators, indSettings, compositeWave }) {
   const svgRef = useRef(null);
   const viewRef = useRef({ startIdx: 0, endIdx: Math.max(0, candles.length - 1) });
   const [viewVersion, setViewVersion] = useState(0); // trigger re-render
@@ -581,6 +671,46 @@ function PriceChart({ candles, interval, activeIndicators, indSettings }) {
           return els;
         })()}
 
+        {/* ── COMPOSITE CYCLE WAVE ── */}
+        {compositeWave && compositeWave.length > 1 && (() => {
+          // Map composite wave values to visible range
+          const histPoints = compositeWave.filter(p => !p.isFuture);
+          const futPoints = compositeWave.filter(p => p.isFuture);
+
+          // Scale: map index within visible range
+          const buildPath = (pts, offset) => {
+            let d = "";
+            pts.forEach((p, i) => {
+              const absIdx = offset + i;
+              if (absIdx < startIdx || absIdx > endIdx) return;
+              const xi = absIdx - startIdx;
+              const x = xScale(xi);
+              const y = yScale(p.v);
+              d += d ? ` L ${x} ${y}` : `M ${x} ${y}`;
+            });
+            return d;
+          };
+
+          const histPath = buildPath(histPoints, 0);
+          const futPath = (() => {
+            let d = "";
+            futPoints.forEach((p, i) => {
+              const x = xScale(visible.length + i);
+              const y = yScale(p.v);
+              if (x > W - PAD.right + 60) return;
+              d += d ? ` L ${x} ${y}` : `M ${x} ${y}`;
+            });
+            return d;
+          })();
+
+          return (
+            <g>
+              {histPath && <path d={histPath} fill="none" stroke="#d4af37" strokeWidth="1.5" opacity="0.85" strokeLinejoin="round" />}
+              {futPath && <path d={futPath} fill="none" stroke="#d4af37" strokeWidth="1.5" opacity="0.45" strokeDasharray="6 4" strokeLinejoin="round" />}
+            </g>
+          );
+        })()}
+
         {/* Hover */}
         {hover && (
           <>
@@ -625,6 +755,11 @@ export default function App() {
   const [activeIndicators, setActiveIndicators] = useState(new Set());
   const [indSettings, setIndSettings] = useState(DEFAULT_SETTINGS);
   const [editingInd, setEditingInd] = useState(null);
+  const [cycles, setCycles] = useState([]);
+  const [selectedCycles, setSelectedCycles] = useState(new Set());
+  const [cycleTweaks, setCycleTweaks] = useState({});
+  const [showCycles, setShowCycles] = useState(false);
+  const [cyclesPanelOpen, setCyclesPanelOpen] = useState(false);
 
   const availableYears = [...new Set(candles.map(c => c.date.getFullYear()))].sort();
 
@@ -647,6 +782,20 @@ export default function App() {
     } catch { setError(true); }
     setLoading(false); setProgress("");
   };
+
+  // Compute cycles whenever candles change
+  useEffect(() => {
+    if (candles.length > 20) {
+      setProgress("Analyzing cycles…");
+      setTimeout(() => {
+        const c = analyzeCycles(candles, 20);
+        setCycles(c);
+        setSelectedCycles(new Set());
+        setCycleTweaks({});
+        setProgress("");
+      }, 50);
+    }
+  }, [candles]);
 
   const submit = () => {
     const raw = input.trim();
@@ -679,6 +828,19 @@ export default function App() {
   };
 
   const maxOut = () => setSelectedYears([]);
+
+  const toggleCycle = (period) => {
+    setSelectedCycles(prev => {
+      const next = new Set(prev);
+      next.has(period) ? next.delete(period) : next.add(period);
+      return next;
+    });
+  };
+
+  const selectedCycleObjs = cycles.filter(c => selectedCycles.has(c.period));
+  const compositeWave = (showCycles && selectedCycleObjs.length > 0)
+    ? buildComposite(candles, selectedCycleObjs, cycleTweaks)
+    : [];
 
   const toggleIndicator = (id) => setActiveIndicators(prev => {
     const next = new Set(prev);
@@ -862,8 +1024,86 @@ export default function App() {
                   onClick={() => {/* zoom handled in component */}}>SCROLL TO ZOOM · DRAG TO PAN</button>
               </div>
             </div>
-            <div className="section-body" style={{ padding: "12px 8px 4px" }}>
-              <PriceChart candles={candles} interval={interval} activeIndicators={activeIndicators} indSettings={indSettings} />
+            <div style={{ display: "flex", position: "relative" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="section-body" style={{ padding: "12px 8px 4px" }}>
+                  <PriceChart candles={candles} interval={interval} activeIndicators={activeIndicators} indSettings={indSettings} compositeWave={compositeWave} />
+                </div>
+              </div>
+              {/* Cycle Panel Toggle */}
+              {cycles.length > 0 && (
+                <div style={{ position: "relative" }}>
+                  <button onClick={() => setCyclesPanelOpen(o => !o)}
+                    style={{ position: "absolute", top: 12, right: -1, background: cyclesPanelOpen ? "#1a1a1a" : "#111", border: "1px solid #222", borderRight: "none", color: cyclesPanelOpen ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", padding: "8px 10px", cursor: "pointer", borderRadius: "6px 0 0 6px", writingMode: "vertical-rl", textTransform: "uppercase", transition: "all 0.2s" }}>
+                    {cyclesPanelOpen ? "◀ Cycles" : "▶ Cycles"}
+                  </button>
+                  {cyclesPanelOpen && (
+                    <div style={{ width: 280, background: "#0d0d0d", borderLeft: "1px solid #1a1a1a", display: "flex", flexDirection: "column" }}>
+                      {/* Panel header */}
+                      <div style={{ padding: "12px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 14, letterSpacing: "0.1em", color: "#e8e8e8" }}>Cycle Analysis</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#444" }}>{selectedCycles.size} selected</span>
+                          <button onClick={() => setShowCycles(s => !s)}
+                            style={{ background: showCycles ? "rgba(212,175,55,0.15)" : "transparent", border: `1px solid ${showCycles ? "#d4af37" : "#222"}`, color: showCycles ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", padding: "4px 10px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase" }}>
+                            {showCycles ? "ON" : "OFF"}
+                          </button>
+                        </div>
+                      </div>
+                      {/* Table header */}
+                      <div style={{ display: "grid", gridTemplateColumns: "40px 1fr 1fr 32px", gap: 0, padding: "6px 16px", borderBottom: "1px solid #1a1a1a" }}>
+                        {["#","Period","Accuracy",""].map((h, i) => (
+                          <span key={i} style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.18em", color: "#333", textTransform: "uppercase" }}>{h}</span>
+                        ))}
+                      </div>
+                      {/* Cycle rows */}
+                      <div style={{ overflowY: "auto", flex: 1, maxHeight: 320 }}>
+                        {cycles.map((cyc, i) => {
+                          const isOn = selectedCycles.has(cyc.period);
+                          const tw = cycleTweaks[cyc.period] || { periodMult: 1, ampMult: 1 };
+                          return (
+                            <div key={cyc.period}>
+                              <div onClick={() => toggleCycle(cyc.period)}
+                                style={{ display: "grid", gridTemplateColumns: "40px 1fr 1fr 32px", gap: 0, padding: "7px 16px", borderBottom: "1px solid #111", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.04)" : "transparent", transition: "background 0.15s" }}>
+                                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#333" }}>{i + 1}</span>
+                                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: isOn ? "#f8e49b" : "#555" }}>{cyc.period}d</span>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  <div style={{ flex: 1, height: 3, background: "#1a1a1a", borderRadius: 2 }}>
+                                    <div style={{ width: `${cyc.accuracy}%`, height: "100%", background: cyc.accuracy > 70 ? "#22c55e" : cyc.accuracy > 50 ? "#f59e0b" : "#ef4444", borderRadius: 2 }} />
+                                  </div>
+                                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: isOn ? "#f8e49b" : "#555", width: 32, textAlign: "right" }}>{cyc.accuracy.toFixed(0)}%</span>
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: isOn ? "#d4af37" : "#222", border: `1px solid ${isOn ? "#d4af37" : "#333"}`, transition: "all 0.15s" }} />
+                                </div>
+                              </div>
+                              {/* Tweaks when selected */}
+                              {isOn && (
+                                <div style={{ padding: "8px 16px 10px", background: "rgba(212,175,55,0.02)", borderBottom: "1px solid #111" }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                                    <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, color: "#333", letterSpacing: "0.15em", textTransform: "uppercase", width: 48 }}>Period</span>
+                                    <input type="range" min="0.3" max="3" step="0.01" value={tw.periodMult}
+                                      onChange={e => setCycleTweaks(prev => ({ ...prev, [cyc.period]: { ...tw, periodMult: parseFloat(e.target.value) } }))}
+                                      style={{ flex: 1, accentColor: "#d4af37", height: 2 }} />
+                                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 32, textAlign: "right" }}>{(cyc.period * tw.periodMult).toFixed(0)}d</span>
+                                  </div>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, color: "#333", letterSpacing: "0.15em", textTransform: "uppercase", width: 48 }}>Amplitude</span>
+                                    <input type="range" min="0.1" max="5" step="0.01" value={tw.ampMult}
+                                      onChange={e => setCycleTweaks(prev => ({ ...prev, [cyc.period]: { ...tw, ampMult: parseFloat(e.target.value) } }))}
+                                      style={{ flex: 1, accentColor: "#d4af37", height: 2 }} />
+                                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 32, textAlign: "right" }}>{tw.ampMult.toFixed(2)}x</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             {/* Indicator Bar */}
             <div className="ind-bar">
