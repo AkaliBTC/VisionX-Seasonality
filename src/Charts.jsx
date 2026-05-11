@@ -149,8 +149,125 @@ function BarChart({ data, title, width }) {
   );
 }
 
+
+// ── INDICATOR CALCULATIONS ────────────────────────────────────────────────────
+const calcSMA = (candles, period) => {
+  const result = new Array(candles.length).fill(null);
+  for (let i = period - 1; i < candles.length; i++) {
+    const sum = candles.slice(i - period + 1, i + 1).reduce((a, c) => a + c.c, 0);
+    result[i] = sum / period;
+  }
+  return result;
+};
+
+const calcEMA = (candles, period) => {
+  const result = new Array(candles.length).fill(null);
+  const k = 2 / (period + 1);
+  let ema = candles[period - 1]?.c;
+  if (ema == null) return result;
+  result[period - 1] = ema;
+  for (let i = period; i < candles.length; i++) {
+    ema = candles[i].c * k + ema * (1 - k);
+    result[i] = ema;
+  }
+  return result;
+};
+
+const calcBollinger = (candles, period = 20, mult = 2) => {
+  const mid = calcSMA(candles, period);
+  const upper = new Array(candles.length).fill(null);
+  const lower = new Array(candles.length).fill(null);
+  for (let i = period - 1; i < candles.length; i++) {
+    const slice = candles.slice(i - period + 1, i + 1).map(c => c.c);
+    const mean = mid[i];
+    const sd = Math.sqrt(slice.reduce((a, v) => a + (v - mean) ** 2, 0) / period);
+    upper[i] = mean + mult * sd;
+    lower[i] = mean - mult * sd;
+  }
+  return { mid, upper, lower };
+};
+
+const calcSAR = (candles, step = 0.02, max = 0.2) => {
+  const result = new Array(candles.length).fill(null);
+  if (candles.length < 2) return result;
+  let bull = true;
+  let sar = candles[0].l;
+  let ep = candles[0].h;
+  let af = step;
+  for (let i = 1; i < candles.length; i++) {
+    const prev = candles[i - 1];
+    const cur = candles[i];
+    sar = sar + af * (ep - sar);
+    if (bull) {
+      if (cur.l < sar) {
+        bull = false; sar = ep; ep = cur.l; af = step;
+      } else {
+        if (cur.h > ep) { ep = cur.h; af = Math.min(af + step, max); }
+        sar = Math.min(sar, prev.l, i > 1 ? candles[i-2].l : prev.l);
+      }
+    } else {
+      if (cur.h > sar) {
+        bull = true; sar = ep; ep = cur.h; af = step;
+      } else {
+        if (cur.l < ep) { ep = cur.l; af = Math.min(af + step, max); }
+        sar = Math.max(sar, prev.h, i > 1 ? candles[i-2].h : prev.h);
+      }
+    }
+    result[i] = { val: sar, bull };
+  }
+  return result;
+};
+
+const calcSupertrend = (candles, period = 10, mult = 3) => {
+  const result = new Array(candles.length).fill(null);
+  const atr = new Array(candles.length).fill(0);
+  for (let i = 1; i < candles.length; i++) {
+    const tr = Math.max(
+      candles[i].h - candles[i].l,
+      Math.abs(candles[i].h - candles[i-1].c),
+      Math.abs(candles[i].l - candles[i-1].c)
+    );
+    atr[i] = i < period ? tr : (atr[i-1] * (period-1) + tr) / period;
+  }
+  let upper = 0, lower = 0, trend = 1;
+  for (let i = period; i < candles.length; i++) {
+    const hl2 = (candles[i].h + candles[i].l) / 2;
+    const bu = hl2 + mult * atr[i];
+    const bl = hl2 - mult * atr[i];
+    upper = (bu < upper || candles[i-1].c > upper) ? bu : upper;
+    lower = (bl > lower || candles[i-1].c < lower) ? bl : lower;
+    if (candles[i].c > upper) trend = 1;
+    else if (candles[i].c < lower) trend = -1;
+    result[i] = { val: trend === 1 ? lower : upper, bull: trend === 1 };
+  }
+  return result;
+};
+
+const calcResistance = (candles, visible, lookback = 20) => {
+  const levels = new Set();
+  for (let i = lookback; i < visible.length - lookback; i++) {
+    const absI = visible[i];
+    const slice = visible.slice(i - lookback, i + lookback + 1);
+    const maxH = Math.max(...slice.map(c => c.h));
+    const minL = Math.min(...slice.map(c => c.l));
+    if (absI.h === maxH) levels.add(+(absI.h.toFixed(2)));
+    if (absI.l === minL) levels.add(+(absI.l.toFixed(2)));
+  }
+  return [...levels].slice(0, 8);
+};
+
+// ── INDICATOR SETTINGS DEFAULTS ───────────────────────────────────────────────
+const DEFAULT_SETTINGS = {
+  sma:        { period: 20 },
+  ema:        { period: 21 },
+  boll:       { period: 20, mult: 2 },
+  sar:        { step: 0.02, max: 0.2 },
+  supertrend: { period: 10, mult: 3 },
+  resist:     {},
+};
+
 // ── PRICE CHART (zoom/pan) ────────────────────────────────────────────────────
-function PriceChart({ candles, interval }) {
+function PriceChart({ candles, interval, activeIndicators, indSettings }) {
   const svgRef = useRef(null);
   const viewRef = useRef({ startIdx: 0, endIdx: Math.max(0, candles.length - 1) });
   const [viewVersion, setViewVersion] = useState(0); // trigger re-render
@@ -325,6 +442,73 @@ function PriceChart({ candles, interval }) {
         <path d={areaD} fill="url(#priceGrad)" />
         <path d={pathD} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
 
+        {/* ── INDICATORS ── */}
+        {(() => {
+          const els = [];
+          const toPath = (vals, clr, dash) => {
+            let d = ""; let started = false;
+            vals.forEach((v, i) => {
+              if (v == null) { started = false; return; }
+              const x = xScale(i), y = yScale(v);
+              d += started ? ` L ${x} ${y}` : ` M ${x} ${y}`;
+              started = true;
+            });
+            return d ? <path key={clr+dash} d={d} fill="none" stroke={clr} strokeWidth="1.2" strokeDasharray={dash||""} opacity="0.85" /> : null;
+          };
+
+          if (activeIndicators.has("sma")) {
+            const s = calcSMA(candles, indSettings.sma.period).slice(startIdx, endIdx+1);
+            els.push(toPath(s, "#f59e0b", ""));
+          }
+          if (activeIndicators.has("ema")) {
+            const e = calcEMA(candles, indSettings.ema.period).slice(startIdx, endIdx+1);
+            els.push(toPath(e, "#818cf8", ""));
+          }
+          if (activeIndicators.has("boll")) {
+            const b = calcBollinger(candles, indSettings.boll.period, indSettings.boll.mult);
+            els.push(toPath(b.upper.slice(startIdx, endIdx+1), "#38bdf8", "4 2"));
+            els.push(toPath(b.mid.slice(startIdx, endIdx+1), "#38bdf8", ""));
+            els.push(toPath(b.lower.slice(startIdx, endIdx+1), "#38bdf8", "4 2"));
+            // Fill between bands
+            const up = b.upper.slice(startIdx, endIdx+1);
+            const lo = b.lower.slice(startIdx, endIdx+1);
+            let fd = "";
+            up.forEach((v, i) => { if (v != null) fd += fd ? ` L ${xScale(i)} ${yScale(v)}` : `M ${xScale(i)} ${yScale(v)}`; });
+            for (let i = lo.length-1; i >= 0; i--) { if (lo[i] != null) fd += ` L ${xScale(i)} ${yScale(lo[i])}`; }
+            if (fd) els.push(<path key="bollfill" d={fd+"Z"} fill="rgba(56,189,248,0.04)" stroke="none"/>);
+          }
+          if (activeIndicators.has("sar")) {
+            const sarData = calcSAR(candles, indSettings.sar.step, indSettings.sar.max).slice(startIdx, endIdx+1);
+            const dots = sarData.map((s, i) => s ? (
+              <circle key={i} cx={xScale(i)} cy={yScale(s.val)} r="2"
+                fill={s.bull ? "#22c55e" : "#ef4444"} opacity="0.8"/>
+            ) : null);
+            els.push(<g key="sar">{dots}</g>);
+          }
+          if (activeIndicators.has("supertrend")) {
+            const st = calcSupertrend(candles, indSettings.supertrend.period, indSettings.supertrend.mult).slice(startIdx, endIdx+1);
+            let bullPath = "", bearPath = "";
+            st.forEach((s, i) => {
+              if (!s) return;
+              const x = xScale(i), y = yScale(s.val);
+              if (s.bull) bullPath += bullPath ? ` L ${x} ${y}` : `M ${x} ${y}`;
+              else bearPath += bearPath ? ` L ${x} ${y}` : `M ${x} ${y}`;
+            });
+            if (bullPath) els.push(<path key="st-bull" d={bullPath} fill="none" stroke="#22c55e" strokeWidth="1.5" opacity="0.9"/>);
+            if (bearPath) els.push(<path key="st-bear" d={bearPath} fill="none" stroke="#ef4444" strokeWidth="1.5" opacity="0.9"/>);
+          }
+          if (activeIndicators.has("resist")) {
+            const levels = calcResistance(candles, visible, 20);
+            levels.forEach((lvl, i) => {
+              const y = yScale(lvl);
+              if (y < PAD.top || y > PAD.top + iH) return;
+              els.push(<line key={"res"+i} x1={PAD.left} x2={W-PAD.right} y1={y} y2={y} stroke="#fbbf24" strokeWidth="0.8" strokeDasharray="6 4" opacity="0.6"/>);
+              els.push(<text key={"restxt"+i} x={W-PAD.right+4} y={y+4} fill="#fbbf24" fontSize="9" fontFamily="'DM Mono',monospace" opacity="0.7">{lvl.toLocaleString()}</text>);
+            });
+          }
+          return els;
+        })()}
+
         {/* Hover */}
         {hover && (
           <>
@@ -366,6 +550,9 @@ export default function App() {
   const [yearInput, setYearInput] = useState("");
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
+  const [activeIndicators, setActiveIndicators] = useState(new Set());
+  const [indSettings, setIndSettings] = useState(DEFAULT_SETTINGS);
+  const [editingInd, setEditingInd] = useState(null);
 
   const availableYears = [...new Set(candles.map(c => c.date.getFullYear()))].sort();
 
@@ -419,6 +606,21 @@ export default function App() {
 
   const maxOut = () => setSelectedYears([]);
 
+  const toggleIndicator = (id) => setActiveIndicators(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  const INDICATORS = [
+    { id: "sma",        label: "SMA",        color: "#f59e0b", fields: [{ k: "period", label: "Period", min: 2, max: 500 }] },
+    { id: "ema",        label: "EMA",        color: "#818cf8", fields: [{ k: "period", label: "Period", min: 2, max: 500 }] },
+    { id: "boll",       label: "BB",         color: "#38bdf8", fields: [{ k: "period", label: "Period", min: 2, max: 500 }, { k: "mult", label: "Mult", min: 0.5, max: 5, step: 0.1 }] },
+    { id: "sar",        label: "SAR",        color: "#a3e635", fields: [{ k: "step", label: "Step", min: 0.001, max: 0.1, step: 0.001 }, { k: "max", label: "Max", min: 0.1, max: 0.5, step: 0.01 }] },
+    { id: "supertrend", label: "Supertrend", color: "#fb923c", fields: [{ k: "period", label: "Period", min: 2, max: 100 }, { k: "mult", label: "Mult", min: 0.5, max: 10, step: 0.1 }] },
+    { id: "resist",     label: "Resist",     color: "#fbbf24", fields: [] },
+  ];
+
   return (
     <div style={{ minHeight: "100vh", background: "#0a0a0a", color: "#e8e8e8", fontFamily: "'Montserrat', sans-serif" }}>
       <style>{`
@@ -466,6 +668,21 @@ export default function App() {
         .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 300px; gap: 12px; }
         .empty-label { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 0.25em; color: #1e1e1e; }
         .empty-sub { font-size: 9px; color: #2a2a2a; letter-spacing: 0.15em; font-weight: 600; text-transform: uppercase; }
+
+        .ind-bar { display: flex; align-items: center; gap: 8px; padding: 12px 24px; background: #0d0d0d; border-top: 1px solid #1a1a1a; flex-wrap: wrap; }
+        .ind-btn { display: flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 6px; border: 1px solid #222; background: transparent; color: #555; font-family: 'Montserrat', sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 0.15em; cursor: pointer; transition: all 0.15s; text-transform: uppercase; position: relative; }
+        .ind-btn:hover { border-color: #333; color: #888; }
+        .ind-btn.active { background: rgba(255,255,255,0.05); }
+        .ind-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+        .ind-gear { font-size: 10px; opacity: 0.5; cursor: pointer; padding: 0 2px; transition: opacity 0.15s; }
+        .ind-gear:hover { opacity: 1; }
+
+        .ind-popup { position: absolute; bottom: calc(100% + 8px); left: 0; background: #111; border: 1px solid #2a2a2a; border-radius: 10px; padding: 14px 16px; z-index: 200; min-width: 180px; box-shadow: 0 8px 32px rgba(0,0,0,0.6); }
+        .ind-popup-title { font-family: 'Bebas Neue', sans-serif; font-size: 13px; letter-spacing: 0.1em; color: #e8e8e8; margin-bottom: 10px; }
+        .ind-field { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+        .ind-field label { font-family: 'Montserrat', sans-serif; font-size: 9px; font-weight: 600; letter-spacing: 0.1em; color: #666; text-transform: uppercase; }
+        .ind-field input { background: #0a0a0a; border: 1px solid #222; color: #e8e8e8; font-family: 'DM Mono', monospace; font-size: 11px; padding: 4px 8px; border-radius: 4px; outline: none; width: 70px; text-align: right; }
+        .ind-field input:focus { border-color: #d4af37; }
       `}</style>
 
       {/* HEADER */}
@@ -557,7 +774,40 @@ export default function App() {
               </div>
             </div>
             <div className="section-body" style={{ padding: "12px 8px 4px" }}>
-              <PriceChart candles={candles} interval={interval} />
+              <PriceChart candles={candles} interval={interval} activeIndicators={activeIndicators} indSettings={indSettings} />
+            </div>
+            {/* Indicator Bar */}
+            <div className="ind-bar">
+              {INDICATORS.map(ind => {
+                const isActive = activeIndicators.has(ind.id);
+                const isEditing = editingInd === ind.id;
+                return (
+                  <div key={ind.id} className={`ind-btn ${isActive ? "active" : ""}`} style={{ borderColor: isActive ? ind.color + "55" : undefined, color: isActive ? ind.color : undefined }}
+                    onClick={() => toggleIndicator(ind.id)}>
+                    <div className="ind-dot" style={{ background: isActive ? ind.color : "#333" }} />
+                    {ind.label}
+                    {ind.fields.length > 0 && (
+                      <span className="ind-gear" onClick={e => { e.stopPropagation(); setEditingInd(isEditing ? null : ind.id); }}>⚙</span>
+                    )}
+                    {isEditing && (
+                      <div className="ind-popup" onClick={e => e.stopPropagation()}>
+                        <div className="ind-popup-title">{ind.label} Settings</div>
+                        {ind.fields.map(f => (
+                          <div key={f.k} className="ind-field">
+                            <label>{f.label}</label>
+                            <input type="number" min={f.min} max={f.max} step={f.step||1}
+                              value={indSettings[ind.id][f.k]}
+                              onChange={e => setIndSettings(prev => ({
+                                ...prev,
+                                [ind.id]: { ...prev[ind.id], [f.k]: parseFloat(e.target.value) || f.min }
+                              }))} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
