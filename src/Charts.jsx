@@ -44,28 +44,35 @@ const fetchBinanceHistory = async (ticker, interval) => {
 
 // ── SEASONALITY CALC ──────────────────────────────────────────────────────────
 const calcSeasonality = (candles, years) => {
-  const byWeekday = { 1: [], 2: [], 3: [], 4: [], 5: [] }; // Mon-Fri
+  // Use prev-close to close returns (not intraday open-close)
+  const byWeekday = { 0:[], 1:[], 2:[], 3:[], 4:[], 5:[], 6:[] }; // 0=Sun..6=Sat
   const byMonth = { 1:[], 2:[], 3:[], 4:[], 5:[], 6:[], 7:[], 8:[], 9:[], 10:[], 11:[], 12:[] };
 
-  for (const c of candles) {
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i];
+    const prev = candles[i - 1];
     const d = c.date;
     const yr = d.getFullYear();
     if (!years.includes(yr)) continue;
-    const pct = ((c.c - c.o) / c.o) * 100;
-    const dow = d.getDay(); // 0=Sun
-    if (dow >= 1 && dow <= 5) byWeekday[dow].push(pct);
+    if (prev.c <= 0) continue;
+    const pct = ((c.c - prev.c) / prev.c) * 100;
+    const dow = d.getDay();
+    byWeekday[dow].push(pct);
     const mo = d.getMonth() + 1;
     byMonth[mo].push(pct);
   }
 
   const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
 
+  // Crypto: Mon-Sun (7 days)
   const weekdays = [
     { label: "Mon", val: avg(byWeekday[1]), n: byWeekday[1].length },
     { label: "Tue", val: avg(byWeekday[2]), n: byWeekday[2].length },
     { label: "Wed", val: avg(byWeekday[3]), n: byWeekday[3].length },
     { label: "Thu", val: avg(byWeekday[4]), n: byWeekday[4].length },
     { label: "Fri", val: avg(byWeekday[5]), n: byWeekday[5].length },
+    { label: "Sat", val: avg(byWeekday[6]), n: byWeekday[6].length },
+    { label: "Sun", val: avg(byWeekday[0]), n: byWeekday[0].length },
   ];
 
   const months = [
