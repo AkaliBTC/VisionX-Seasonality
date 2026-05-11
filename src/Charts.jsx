@@ -607,14 +607,17 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
     const idx = Math.max(0, Math.min(visLen - 1, Math.round((x - PAD.left) / iW * (visLen - 1))));
     const absIdx = startIdx + idx;
     const c = candlesRef.current[absIdx];
+    const xPos = PAD.left + (idx / Math.max(visLen - 1, 1)) * iW;
     if (c) {
       const slice = candlesRef.current.slice(startIdx, endIdx + 1);
       const prices2 = slice.flatMap(c => [c.h, c.l]);
       const minP2 = Math.min(...prices2), maxP2 = Math.max(...prices2);
       const r2 = maxP2 - minP2 || 1, p2 = r2 * 0.05;
-      const xPos = PAD.left + (idx / Math.max(visLen - 1, 1)) * iW;
       const yPos = PAD.top + iH - ((c.c - (minP2 - p2)) / (r2 + p2 * 2)) * iH;
       setHover({ x: xPos, y: yPos, candle: c });
+    } else {
+      // Future zone: show crosshair without price dot
+      setHover({ x: xPos, y: PAD.top + iH / 2, candle: null });
     }
     if (isPanningRef.current && panStart.current) {
       const dx = e.clientX - panStart.current.x;
@@ -699,12 +702,28 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           </text>
         ))}
 
-        {/* X labels */}
-        {xLabels.map((c, i) => (
-          <text key={i} x={xScale(visible.indexOf(c))} y={H - 8} textAnchor="middle" fill="#444" fontSize="10" fontFamily="'DM Mono', monospace">
-            {fmtLabel(c.t)}
-          </text>
-        ))}
+        {/* X labels — real + projected future dates */}
+        {Array.from({ length: 8 }, (_, i) => {
+          const slotIdx = Math.round(i * (totalSlots - 1) / 7);
+          const x = xScale(slotIdx);
+          let label;
+          if (slotIdx < visible.length) {
+            label = fmtLabel(visible[slotIdx].t);
+          } else {
+            // Project date: extrapolate from last candle
+            const lastCandle = visible[visible.length - 1];
+            const barsAhead = slotIdx - (visible.length - 1);
+            const msPerBar = interval === "1d" ? 86400000 : 604800000;
+            label = fmtLabel(lastCandle.t + barsAhead * msPerBar);
+          }
+          return (
+            <text key={i} x={x} y={H - 8} textAnchor="middle"
+              fill={slotIdx >= visible.length ? "#2a2a2a" : "#444"}
+              fontSize="10" fontFamily="'DM Mono', monospace">
+              {label}
+            </text>
+          );
+        })}
 
         {/* Line only */}
         <path d={pathD} fill="none" stroke={color} strokeWidth="1" strokeLinejoin="round" strokeLinecap="round" />
@@ -831,22 +850,56 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           );
         })()}
 
-        {/* Hover */}
-        {hover && (
-          <>
-            <line x1={hover.x} x2={hover.x} y1={PAD.top} y2={PAD.top + iH} stroke="#2a2a2a" strokeWidth="1" strokeDasharray="4,3" />
-            <circle cx={hover.x} cy={hover.y} r="4" fill={color} stroke="#0a0a0a" strokeWidth="2" />
-          </>
-        )}
+        {/* Hover — crosshair + y-axis price tag */}
+        {hover && (() => {
+          const hoverPrice = hover.candle ? hover.candle.c : (() => {
+            // In future zone: interpolate from composite wave if available
+            return null;
+          })();
+          const tagPrice = hoverPrice ?? (compositeWave?.[startIdx + Math.round((hover.x - PAD.left) / iW * (totalSlots-1))]?.v);
+          const tagY = tagPrice ? yScale(tagPrice) : hover.y;
+          return (
+            <>
+              {/* Vertical crosshair */}
+              <line x1={hover.x} x2={hover.x} y1={PAD.top} y2={PAD.top + iH}
+                stroke="#333" strokeWidth="1" strokeDasharray="4,3" />
+              {/* Horizontal crosshair */}
+              <line x1={PAD.left} x2={W - PAD.right} y1={tagY} y2={tagY}
+                stroke="#333" strokeWidth="1" strokeDasharray="4,3" />
+              {/* Dot on price line */}
+              {hover.candle && <circle cx={hover.x} cy={hover.y} r="3" fill={color} stroke="#0a0a0a" strokeWidth="2" />}
+              {/* Y-axis price tag */}
+              <rect x={0} y={tagY - 10} width={PAD.left - 4} height={20} fill="#1a1a1a" rx="3" />
+              <text x={PAD.left - 8} y={tagY + 4} textAnchor="end"
+                fill="#f8e49b" fontSize="10" fontFamily="'DM Mono', monospace" fontWeight="600">
+                {tagPrice ? fmtPrice(tagPrice) : ""}
+              </text>
+            </>
+          );
+        })()}
       </svg>
 
       {/* Tooltip */}
-      {hover && (
-        <div style={{ position: "absolute", top: 12, left: 90, background: "#111", border: "1px solid #222", borderRadius: 8, padding: "8px 14px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: "#e8e8e8", pointerEvents: "none" }}>
-          <div style={{ color: "#555", fontSize: 10, marginBottom: 2 }}>{fmtLabel(hover.candle.t)}</div>
-          <div style={{ color, fontSize: 16, fontWeight: 600 }}>{fmtPrice(hover.candle.c)}</div>
-        </div>
-      )}
+      {hover && (() => {
+        const slotIdx = Math.round((hover.x - PAD.left) / iW * (totalSlots - 1));
+        const isFutureHover = slotIdx >= visible.length;
+        const barsAhead = slotIdx - (visible.length - 1);
+        const lastCandle = visible[visible.length - 1];
+        const msPerBar = interval === "1d" ? 86400000 : 604800000;
+        const projectedDate = isFutureHover
+          ? fmtLabel(lastCandle.t + barsAhead * msPerBar)
+          : hover.candle ? fmtLabel(hover.candle.t) : "";
+        const waveVal = compositeWave?.[startIdx + slotIdx]?.v;
+        return (
+          <div style={{ position: "absolute", top: 12, left: 90, background: "#111", border: `1px solid ${isFutureHover ? "#2a2a2a" : "#222"}`, borderRadius: 8, padding: "8px 14px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: "#e8e8e8", pointerEvents: "none" }}>
+            <div style={{ color: isFutureHover ? "#d4af37" : "#555", fontSize: 10, marginBottom: 2 }}>
+              {isFutureHover ? `+${barsAhead}${interval === "1d" ? "d" : "w"} · ` : ""}{projectedDate}
+            </div>
+            {!isFutureHover && hover.candle && <div style={{ color, fontSize: 16, fontWeight: 600 }}>{fmtPrice(hover.candle.c)}</div>}
+            {waveVal && <div style={{ color: "#d4af37", fontSize: isFutureHover ? 16 : 12, fontWeight: 600, marginTop: isFutureHover ? 0 : 4 }}>↝ {fmtPrice(waveVal)}</div>}
+          </div>
+        );
+      })()}
     </div>
   );
 }
