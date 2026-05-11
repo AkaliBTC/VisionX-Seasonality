@@ -195,40 +195,43 @@ const analyzeCycles = (candles, topN = 20) => {
   return results.slice(0, topN);
 };
 
-// Build composite sine wave from selected cycles (tweaked)
+// Build composite sine wave — arithmetic, auto-scaled to visible price range
 const buildComposite = (candles, selectedCycles, tweaks) => {
   if (!candles.length || !selectedCycles.length) return [];
-  const closes = candles.map(c => c.c);
-  const logPrices = closes.map(p => Math.log(p));
-  const n = logPrices.length;
-  // Detrend
-  const xMean = (n - 1) / 2;
-  const yMean = logPrices.reduce((a, b) => a + b, 0) / n;
-  let num = 0, den = 0;
-  for (let i = 0; i < n; i++) { num += (i - xMean) * (logPrices[i] - yMean); den += (i - xMean) ** 2; }
-  const slope = den ? num / den : 0;
-  const intercept = yMean - slope * xMean;
-
-  // Project extra 20% forward
+  const n = candles.length;
   const fwdBars = Math.ceil(n * 0.25);
   const totalBars = n + fwdBars;
 
-  const composite = Array(totalBars).fill(0);
+  // Raw composite (unitless sum of sines)
+  const raw = Array(totalBars).fill(0);
   for (const cyc of selectedCycles) {
     const tw = tweaks[cyc.period] || { periodMult: 1, ampMult: 1 };
     const period = cyc.period * tw.periodMult;
     const amp = cyc.amplitude * tw.ampMult;
     const freq = 1 / period;
     for (let t = 0; t < totalBars; t++) {
-      composite[t] += amp * Math.sin(2 * Math.PI * freq * t + cyc.phase);
+      raw[t] += amp * Math.sin(2 * Math.PI * freq * t + cyc.phase);
     }
   }
 
-  // Re-trend: add back linear trend and convert from log to price space
-  return composite.map((v, t) => {
-    const logP = v + (slope * t + intercept);
-    return { t, v: Math.exp(logP), isFuture: t >= n };
-  });
+  // Price stats for scaling
+  const closes = candles.map(c => c.c);
+  const priceMin = Math.min(...closes);
+  const priceMax = Math.max(...closes);
+  const priceMid = (priceMin + priceMax) / 2;
+  const priceRange = (priceMax - priceMin) * 0.45; // use 45% of price range as amplitude
+
+  // Scale raw composite to price space
+  const rawMin = Math.min(...raw);
+  const rawMax = Math.max(...raw);
+  const rawRange = rawMax - rawMin || 1;
+
+  return raw.map((v, t) => ({
+    t,
+    // Normalize to [-1,1] then scale to price range around midpoint
+    v: priceMid + ((v - (rawMin + rawMax) / 2) / (rawRange / 2)) * priceRange,
+    isFuture: t >= n,
+  }));
 };
 
 // ── BAR CHART ─────────────────────────────────────────────────────────────────
@@ -1051,51 +1054,29 @@ export default function App() {
                         </div>
                       </div>
                       {/* Table header */}
-                      <div style={{ display: "grid", gridTemplateColumns: "40px 1fr 1fr 32px", gap: 0, padding: "6px 16px", borderBottom: "1px solid #1a1a1a" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "28px 56px 1fr 40px", gap: 0, padding: "6px 16px", borderBottom: "1px solid #1a1a1a" }}>
                         {["#","Period","Accuracy",""].map((h, i) => (
-                          <span key={i} style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.18em", color: "#333", textTransform: "uppercase" }}>{h}</span>
+                          <span key={i} style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.18em", color: "#2a2a2a", textTransform: "uppercase" }}>{h}</span>
                         ))}
                       </div>
                       {/* Cycle rows */}
                       <div style={{ overflowY: "auto", flex: 1, maxHeight: 320 }}>
                         {cycles.map((cyc, i) => {
                           const isOn = selectedCycles.has(cyc.period);
-                          const tw = cycleTweaks[cyc.period] || { periodMult: 1, ampMult: 1 };
                           return (
-                            <div key={cyc.period}>
-                              <div onClick={() => toggleCycle(cyc.period)}
-                                style={{ display: "grid", gridTemplateColumns: "40px 1fr 1fr 32px", gap: 0, padding: "7px 16px", borderBottom: "1px solid #111", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.04)" : "transparent", transition: "background 0.15s" }}>
-                                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#333" }}>{i + 1}</span>
-                                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: isOn ? "#f8e49b" : "#555" }}>{cyc.period}d</span>
-                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                  <div style={{ flex: 1, height: 3, background: "#1a1a1a", borderRadius: 2 }}>
-                                    <div style={{ width: `${cyc.accuracy}%`, height: "100%", background: cyc.accuracy > 70 ? "#22c55e" : cyc.accuracy > 50 ? "#f59e0b" : "#ef4444", borderRadius: 2 }} />
-                                  </div>
-                                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: isOn ? "#f8e49b" : "#555", width: 32, textAlign: "right" }}>{cyc.accuracy.toFixed(0)}%</span>
+                            <div key={cyc.period} onClick={() => toggleCycle(cyc.period)}
+                              style={{ display: "grid", gridTemplateColumns: "28px 56px 1fr 40px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid #0f0f0f", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.05)" : "transparent", transition: "background 0.15s" }}>
+                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#2a2a2a" }}>{i + 1}</span>
+                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: isOn ? "#f8e49b" : "#555", fontWeight: isOn ? 600 : 400 }}>{cyc.period}d</span>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <div style={{ flex: 1, height: 2, background: "#1a1a1a", borderRadius: 2 }}>
+                                  <div style={{ width: `${Math.min(cyc.accuracy, 100)}%`, height: "100%", background: cyc.accuracy > 70 ? "#22c55e" : cyc.accuracy > 50 ? "#f59e0b" : "#ef4444", borderRadius: 2 }} />
                                 </div>
-                                <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: isOn ? "#d4af37" : "#222", border: `1px solid ${isOn ? "#d4af37" : "#333"}`, transition: "all 0.15s" }} />
-                                </div>
+                                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: isOn ? "#f8e49b" : "#444", width: 28, textAlign: "right" }}>{cyc.accuracy.toFixed(0)}%</span>
                               </div>
-                              {/* Tweaks when selected */}
-                              {isOn && (
-                                <div style={{ padding: "8px 16px 10px", background: "rgba(212,175,55,0.02)", borderBottom: "1px solid #111" }}>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                                    <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, color: "#333", letterSpacing: "0.15em", textTransform: "uppercase", width: 48 }}>Period</span>
-                                    <input type="range" min="0.3" max="3" step="0.01" value={tw.periodMult}
-                                      onChange={e => setCycleTweaks(prev => ({ ...prev, [cyc.period]: { ...tw, periodMult: parseFloat(e.target.value) } }))}
-                                      style={{ flex: 1, accentColor: "#d4af37", height: 2 }} />
-                                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 32, textAlign: "right" }}>{(cyc.period * tw.periodMult).toFixed(0)}d</span>
-                                  </div>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                    <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, color: "#333", letterSpacing: "0.15em", textTransform: "uppercase", width: 48 }}>Amplitude</span>
-                                    <input type="range" min="0.1" max="5" step="0.01" value={tw.ampMult}
-                                      onChange={e => setCycleTweaks(prev => ({ ...prev, [cyc.period]: { ...tw, ampMult: parseFloat(e.target.value) } }))}
-                                      style={{ flex: 1, accentColor: "#d4af37", height: 2 }} />
-                                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 32, textAlign: "right" }}>{tw.ampMult.toFixed(2)}x</span>
-                                  </div>
-                                </div>
-                              )}
+                              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                                <div style={{ width: 7, height: 7, borderRadius: "50%", background: isOn ? "#d4af37" : "transparent", border: `1px solid ${isOn ? "#d4af37" : "#2a2a2a"}`, transition: "all 0.15s" }} />
+                              </div>
                             </div>
                           );
                         })}
