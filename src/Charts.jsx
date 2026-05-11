@@ -163,6 +163,20 @@ function PriceChart({ candles, interval }) {
   const iW = W - PAD.left - PAD.right;
   const iH = H - PAD.top - PAD.bottom;
 
+  const fmtLabel = useCallback((ts) => {
+    const d = new Date(ts);
+    return interval === "1d"
+      ? d.toLocaleDateString([], { month: "short", day: "numeric" })
+      : d.toLocaleDateString([], { month: "short", year: "2-digit" });
+  }, [interval]);
+
+  const fmtPrice = (p) => {
+    if (p < 0.01) return p.toFixed(6);
+    if (p < 1) return p.toFixed(4);
+    if (p < 100) return p.toFixed(2);
+    return p.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  };
+
   useEffect(() => {
     if (candles.length > 0) {
       const defaultShow = Math.min(candles.length, interval === "1d" ? 365 : 104);
@@ -170,6 +184,73 @@ function PriceChart({ candles, interval }) {
     }
   }, [candles, interval]);
 
+  const zoom = useCallback((delta, centerFrac = 0.5) => {
+    const { startIdx, endIdx } = viewRef.current;
+    const len = endIdx - startIdx;
+    const step = Math.max(1, Math.round(len * 0.15));
+    const leftStep = Math.round(step * centerFrac);
+    const rightStep = step - leftStep;
+    let ns = startIdx + delta * leftStep;
+    let ne = endIdx - delta * rightStep;
+    if (ne - ns < 5) return;
+    ns = Math.max(0, ns);
+    ne = Math.min(candles.length - 1, ne);
+    setView({ startIdx: ns, endIdx: ne });
+  }, [candles.length]);
+
+  const handleWheel = useCallback((e) => {
+    e.preventDefault();
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const frac = (e.clientX - rect.left - PAD.left * (rect.width / W)) / (iW * (rect.width / W));
+    zoom(e.deltaY > 0 ? -1 : 1, Math.max(0, Math.min(1, frac)));
+  }, [zoom]);
+
+  // Non-passive wheel listener — prevents page scroll while zooming chart
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, [handleWheel]);
+
+  const handleMouseDown = useCallback((e) => {
+    setIsPanning(true);
+    panStart.current = { x: e.clientX, start: viewRef.current.startIdx, end: viewRef.current.endIdx };
+  }, []);
+
+  const handleMouseMove = useCallback((e) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (W / rect.width);
+    const { startIdx, endIdx } = viewRef.current;
+    const visLen = endIdx - startIdx + 1;
+    const idx = Math.max(0, Math.min(visLen - 1, Math.round((x - PAD.left) / iW * (visLen - 1))));
+    const absIdx = startIdx + idx;
+    if (candles[absIdx]) {
+      const xPos = PAD.left + (idx / Math.max(visLen - 1, 1)) * iW;
+      const prices2 = candles.slice(startIdx, endIdx + 1).flatMap(c => [c.h, c.l]);
+      const minP2 = Math.min(...prices2), maxP2 = Math.max(...prices2);
+      const r2 = maxP2 - minP2 || 1, p2 = r2 * 0.05;
+      const yPos = PAD.top + iH - ((candles[absIdx].c - (minP2 - p2)) / (r2 + p2 * 2)) * iH;
+      setHover({ x: xPos, y: yPos, candle: candles[absIdx] });
+    }
+    if (isPanning && panStart.current) {
+      const dx = e.clientX - panStart.current.x;
+      const { startIdx: ps, endIdx: pe } = panStart.current;
+      const pixPerCandle = iW * (rect.width / W) / Math.max(pe - ps, 1);
+      const shift = Math.round(-dx / pixPerCandle);
+      const len = pe - ps;
+      let ns = ps + shift, ne = pe + shift;
+      if (ns < 0) { ns = 0; ne = len; }
+      if (ne >= candles.length) { ne = candles.length - 1; ns = ne - len; }
+      setView({ startIdx: ns, endIdx: ne });
+    }
+  }, [candles, isPanning, iW, iH]);
+
+  // ALL hooks done — early return safe here
   if (!candles.length) return null;
 
   const { startIdx, endIdx } = view;
@@ -191,86 +272,10 @@ function PriceChart({ candles, interval }) {
   const isUp = visible[visible.length - 1].c >= visible[0].c;
   const color = isUp ? "#22c55e" : "#ef4444";
 
-  // X labels
   const xStep = Math.max(1, Math.floor(visible.length / 7));
   const xLabels = visible.filter((_, i) => i % xStep === 0);
-
-  // Y labels
   const yTicks = 5;
   const yLabels = Array.from({ length: yTicks }, (_, i) => minP - pad + ((range + pad * 2) / (yTicks - 1)) * i);
-
-  const fmtLabel = (ts) => {
-    const d = new Date(ts);
-    return interval === "1d"
-      ? d.toLocaleDateString([], { month: "short", day: "numeric" })
-      : d.toLocaleDateString([], { month: "short", year: "2-digit" });
-  };
-
-  const fmtPrice = (p) => {
-    if (p < 0.01) return p.toFixed(6);
-    if (p < 1) return p.toFixed(4);
-    if (p < 100) return p.toFixed(2);
-    return p.toLocaleString("en-US", { maximumFractionDigits: 0 });
-  };
-
-  const zoom = (delta, centerFrac = 0.5) => {
-    const { startIdx, endIdx } = viewRef.current;
-    const len = endIdx - startIdx;
-    const step = Math.max(1, Math.round(len * 0.15));
-    const leftStep = Math.round(step * centerFrac);
-    const rightStep = step - leftStep;
-    let ns = startIdx + delta * leftStep;
-    let ne = endIdx - delta * rightStep;
-    if (ne - ns < 5) return;
-    ns = Math.max(0, ns);
-    ne = Math.min(candles.length - 1, ne);
-    setView({ startIdx: ns, endIdx: ne });
-  };
-
-  const handleWheel = useCallback((e) => {
-    e.preventDefault();
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const frac = (e.clientX - rect.left - PAD.left * (rect.width / W)) / (iW * (rect.width / W));
-    zoom(e.deltaY > 0 ? -1 : 1, Math.max(0, Math.min(1, frac)));
-  }, []);
-
-  const handleMouseDown = (e) => {
-    setIsPanning(true);
-    panStart.current = { x: e.clientX, start: viewRef.current.startIdx, end: viewRef.current.endIdx };
-  };
-
-  const handleMouseMove = (e) => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const xRatio = W / rect.width;
-    const x = (e.clientX - rect.left) * xRatio;
-    const { startIdx, endIdx } = viewRef.current;
-    const idx = Math.max(0, Math.min(visible.length - 1, Math.round((x - PAD.left) / iW * (visible.length - 1))));
-    setHover({ idx, x: xScale(idx), y: yScale(visible[idx].c), candle: visible[idx] });
-
-    if (isPanning && panStart.current) {
-      const dx = e.clientX - panStart.current.x;
-      const pixPerCandle = iW * (rect.width / W) / (endIdx - startIdx);
-      const shift = Math.round(-dx / pixPerCandle);
-      const len = panStart.current.end - panStart.current.start;
-      let ns = panStart.current.start + shift;
-      let ne = panStart.current.end + shift;
-      if (ns < 0) { ns = 0; ne = len; }
-      if (ne >= candles.length) { ne = candles.length - 1; ns = ne - len; }
-      setView({ startIdx: ns, endIdx: ne });
-    }
-  };
-
-  // Fix scroll bug: must use non-passive wheel listener to preventDefault
-  useEffect(() => {
-    const el = svgRef.current;
-    if (!el) return;
-    el.addEventListener("wheel", handleWheel, { passive: false });
-    return () => el.removeEventListener("wheel", handleWheel);
-  }, [handleWheel]);
 
   return (
     <div style={{ position: "relative", userSelect: "none" }}>
