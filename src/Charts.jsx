@@ -44,27 +44,38 @@ const fetchBinanceHistory = async (ticker, interval) => {
 
 // ── SEASONALITY CALC ──────────────────────────────────────────────────────────
 const calcSeasonality = (candles, years) => {
-  // Use prev-close to close returns (not intraday open-close)
-  const byWeekday = { 0:[], 1:[], 2:[], 3:[], 4:[], 5:[], 6:[] }; // 0=Sun..6=Sat
-  const byMonth = { 1:[], 2:[], 3:[], 4:[], 5:[], 6:[], 7:[], 8:[], 9:[], 10:[], 11:[], 12:[] };
+  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
 
+  // ── WEEKDAY: daily return = prevClose→close ────────────────────────────────
+  const byWeekday = { 0:[], 1:[], 2:[], 3:[], 4:[], 5:[], 6:[] };
   for (let i = 1; i < candles.length; i++) {
     const c = candles[i];
     const prev = candles[i - 1];
-    const d = c.date;
-    const yr = d.getFullYear();
+    const yr = c.date.getFullYear();
     if (!years.includes(yr)) continue;
     if (prev.c <= 0) continue;
     const pct = ((c.c - prev.c) / prev.c) * 100;
-    const dow = d.getDay();
-    byWeekday[dow].push(pct);
-    const mo = d.getMonth() + 1;
+    byWeekday[c.date.getDay()].push(pct);
+  }
+
+  // ── MONTHLY: total return of each calendar month (first open → last close) ─
+  // Group candles by year+month, take first open and last close of each month
+  const monthMap = {};
+  for (const c of candles) {
+    const yr = c.date.getFullYear();
+    const mo = c.date.getMonth() + 1;
+    if (!years.includes(yr)) continue;
+    const key = `${yr}-${mo}`;
+    if (!monthMap[key]) monthMap[key] = { mo, first: c, last: c };
+    else monthMap[key].last = c;
+  }
+  const byMonth = { 1:[], 2:[], 3:[], 4:[], 5:[], 6:[], 7:[], 8:[], 9:[], 10:[], 11:[], 12:[] };
+  for (const { mo, first, last } of Object.values(monthMap)) {
+    if (first.o <= 0) continue;
+    const pct = ((last.c - first.o) / first.o) * 100;
     byMonth[mo].push(pct);
   }
 
-  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
-
-  // Crypto: Mon-Sun (7 days)
   const weekdays = [
     { label: "Mon", val: avg(byWeekday[1]), n: byWeekday[1].length },
     { label: "Tue", val: avg(byWeekday[2]), n: byWeekday[2].length },
@@ -216,14 +227,14 @@ function PriceChart({ candles, interval }) {
     setView({ startIdx: ns, endIdx: ne });
   };
 
-  const handleWheel = (e) => {
+  const handleWheel = useCallback((e) => {
     e.preventDefault();
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
     const frac = (e.clientX - rect.left - PAD.left * (rect.width / W)) / (iW * (rect.width / W));
     zoom(e.deltaY > 0 ? -1 : 1, Math.max(0, Math.min(1, frac)));
-  };
+  }, []);
 
   const handleMouseDown = (e) => {
     setIsPanning(true);
@@ -253,11 +264,18 @@ function PriceChart({ candles, interval }) {
     }
   };
 
+  // Fix scroll bug: must use non-passive wheel listener to preventDefault
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, [handleWheel]);
+
   return (
     <div style={{ position: "relative", userSelect: "none" }}>
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
         style={{ width: "100%", height: "auto", display: "block", cursor: isPanning ? "grabbing" : "crosshair" }}
-        onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={() => setIsPanning(false)}
