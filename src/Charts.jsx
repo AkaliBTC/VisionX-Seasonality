@@ -188,25 +188,48 @@ const findSignificantLows = (candles, lookback) => {
   return deduped;
 };
 
-const analyzeCycles = (candles, topN = 20) => {
+const analyzeCycles = (candles, topN = 20, anchorIdx = null) => {
   if (candles.length < 20) return [];
   const n = candles.length;
   const lookback = Math.min(40, Math.max(3, Math.floor(n * 0.08)));
   const lows = findSignificantLows(candles, lookback);
   if (lows.length < 2) return [];
 
-  // All pairwise distances (consecutive + skip-one for harmonics)
+  // If anchor is set, find the closest low to it and use its neighbors
+  // to compute the most accurate cycles around that specific bottom
+  let anchorLowIdx = null;
+  if (anchorIdx != null) {
+    let minDist = Infinity;
+    lows.forEach((li, i) => {
+      const d = Math.abs(li - anchorIdx);
+      if (d < minDist) { minDist = d; anchorLowIdx = i; }
+    });
+  }
+
+  // Build distances: all pairs + skip-one
   const distances = [];
-  for (let i = 1; i < lows.length; i++) distances.push(lows[i] - lows[i-1]);
-  for (let i = 2; i < lows.length; i++) distances.push(lows[i] - lows[i-2]);
+  for (let i = 1; i < lows.length; i++) distances.push({ d: lows[i] - lows[i-1], i1: i-1, i2: i });
+  for (let i = 2; i < lows.length; i++) distances.push({ d: lows[i] - lows[i-2], i1: i-2, i2: i });
+
+  // If anchor low found, boost distances that include anchor ± 1 neighbor
+  const anchorBoost = (i1, i2) => {
+    if (anchorLowIdx == null) return 1;
+    const nearby = [anchorLowIdx - 1, anchorLowIdx, anchorLowIdx + 1];
+    return (nearby.includes(i1) || nearby.includes(i2)) ? 3 : 1;
+  };
 
   // Cluster within 15%
   const clusters = [];
-  for (const d of distances) {
+  for (const { d, i1, i2 } of distances) {
     if (d < 3) continue;
+    const boost = anchorBoost(i1, i2);
     const ex = clusters.find(c => Math.abs(c.mean - d) / c.mean < 0.15);
-    if (ex) { ex.vals.push(d); ex.mean = ex.vals.reduce((a,b)=>a+b,0)/ex.vals.length; }
-    else clusters.push({ mean: d, vals: [d] });
+    if (ex) {
+      for (let b = 0; b < boost; b++) ex.vals.push(d);
+      ex.mean = ex.vals.reduce((a,b)=>a+b,0)/ex.vals.length;
+    } else {
+      clusters.push({ mean: d, vals: Array(boost).fill(d) });
+    }
   }
 
   // Score: count × consistency
@@ -873,7 +896,7 @@ export default function App() {
     if (candles.length > 20) {
       setProgress("Analyzing cycles…");
       setTimeout(() => {
-        const c = analyzeCycles(candles, 20);
+        const c = analyzeCycles(candles, 20, cycleAnchorIdx);
         setCycles(c);
         setSelectedCycles(new Set());
         setCycleTweaks({});
@@ -1114,7 +1137,17 @@ export default function App() {
                 <div className="section-body" style={{ padding: "12px 8px 4px" }}>
                   <PriceChart candles={candles} interval={interval} activeIndicators={activeIndicators} indSettings={indSettings} compositeWave={compositeWave}
                     pickingAnchor={pickingAnchor}
-                    onAnchorPick={(idx) => { setCycleAnchorIdx(idx); setPickingAnchor(false); setShowCycles(true); }} />
+                    onAnchorPick={(idx) => {
+                      setCycleAnchorIdx(idx);
+                      setPickingAnchor(false);
+                      setShowCycles(true);
+                      // Recompute cycles with anchor context
+                      setTimeout(() => {
+                        const c = analyzeCycles(candles, 20, idx);
+                        setCycles(c);
+                        setSelectedCycles(new Set());
+                      }, 10);
+                    }} />
                 </div>
               </div>
               {/* Cycle Panel Toggle */}
@@ -1136,14 +1169,19 @@ export default function App() {
                             style={{ background: pickingAnchor ? "rgba(239,68,68,0.15)" : cycleAnchorIdx != null ? "rgba(212,175,55,0.1)" : "transparent", border: `1px solid ${pickingAnchor ? "#ef4444" : cycleAnchorIdx != null ? "#d4af37" : "#222"}`, color: pickingAnchor ? "#ef4444" : cycleAnchorIdx != null ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", padding: "4px 10px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase", transition: "all 0.2s" }}>
                             {pickingAnchor ? "↗ CLICK LOW" : cycleAnchorIdx != null ? "⊕ LOW SET" : "📍 SET LOW"}
                           </button>
-                          {showCycles && <button onClick={() => setShowCycles(false)} style={{ background: "transparent", border: "1px solid #222", color: "#333", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", padding: "4px 8px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase" }}>HIDE</button>}
+
                         </div>
                       </div>
                       {/* Slope control */}
                       <div style={{ padding: "10px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", gap: 10 }}>
                         <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Peak Shift</span>
                         <input type="range" min="0.5" max="1.5" step="0.01" value={cycleSlopeMult}
-                          onChange={e => setCycleSlopeMult(parseFloat(e.target.value))}
+                          onChange={e => {
+                            const raw = parseFloat(e.target.value);
+                            const snapped = Math.round(raw * 10) / 10;
+                            // Magnetic: snap if within 0.04 of a .1 value
+                            setCycleSlopeMult(Math.abs(raw - snapped) < 0.04 ? snapped : raw);
+                          }}
                           style={{ flex: 1, accentColor: "#d4af37", height: 2, cursor: "pointer" }} />
                         <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 36, textAlign: "right", whiteSpace: "nowrap" }}>{cycleSlopeMult.toFixed(2)}x</span>
                         <button onClick={() => setCycleSlopeMult(1.0)} style={{ background: "transparent", border: "1px solid #222", color: "#333", fontFamily: "'DM Mono', monospace", fontSize: 8, padding: "2px 6px", borderRadius: 3, cursor: "pointer" }}>↺</button>
