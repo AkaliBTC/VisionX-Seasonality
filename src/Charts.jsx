@@ -5,31 +5,62 @@ const PROXIES = [
   (u) => fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(u)}`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(d => JSON.parse(d.contents)),
   (u) => fetch(`https://corsproxy.io/?${encodeURIComponent(u)}`).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
   (u) => fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
+  (u) => fetch(`https://yacdn.org/proxy/${u}`).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
 ];
 
 const fetchYahooChart = async (ticker, range) => {
+  // Do NOT encode the ticker — = must stay literal for futures (ES=F, GC=F etc.)
   const raw = ticker.toUpperCase().trim();
   const interval = range === "1d" ? "5m" : "1h";
-  const urls = [
+
+  // ── Chart endpoint (primary — has OHLC + timestamps) ──────────────────────
+  const chartUrls = [
     `https://query1.finance.yahoo.com/v8/finance/chart/${raw}?interval=${interval}&range=${range}`,
     `https://query2.finance.yahoo.com/v8/finance/chart/${raw}?interval=${interval}&range=${range}`,
   ];
-  for (const url of urls) {
+
+  const extractChart = (data) => {
+    const result = data?.chart?.result?.[0];
+    if (!result) return null;
+    const timestamps = result.timestamp;
+    const closes = result.indicators?.quote?.[0]?.close;
+    const meta = result.meta;
+    if (!timestamps || !closes) return null;
+    const points = timestamps.map((t, i) => ({ t: t * 1000, v: closes[i] })).filter(p => p.v != null);
+    if (points.length < 2) return null;
+    return { points, meta, currency: meta?.currency || "" };
+  };
+
+  for (const url of chartUrls) {
     for (const px of PROXIES) {
       try {
         const data = await px(url);
-        const result = data?.chart?.result?.[0];
-        if (!result) continue;
-        const timestamps = result.timestamp;
-        const closes = result.indicators?.quote?.[0]?.close;
-        const meta = result.meta;
-        if (!timestamps || !closes) continue;
-        const points = timestamps.map((t, i) => ({ t: t * 1000, v: closes[i] })).filter(p => p.v != null);
-        if (points.length < 2) continue;
-        return { points, meta, currency: meta?.currency || "" };
+        const r = extractChart(data);
+        if (r) return r;
       } catch { continue; }
     }
   }
+
+  // ── v6 quote fallback (no chart data, just current price — build flat line) ─
+  const quoteUrls = [
+    `https://query1.finance.yahoo.com/v6/finance/quote?symbols=${raw}`,
+    `https://query2.finance.yahoo.com/v6/finance/quote?symbols=${raw}`,
+  ];
+  for (const url of quoteUrls) {
+    for (const px of PROXIES) {
+      try {
+        const data = await px(url);
+        const item = data?.quoteResponse?.result?.[0];
+        const price = item?.regularMarketPrice || item?.ask;
+        if (price && price > 0) {
+          const now = Date.now();
+          const points = [{ t: now - 3600000, v: price }, { t: now, v: price }];
+          return { points, currency: item?.currency || "" };
+        }
+      } catch { continue; }
+    }
+  }
+
   return null;
 };
 
@@ -62,8 +93,12 @@ const isCrypto = (ticker) => {
   return cryptos.some(c => t === c || t === c + "USDT") || t.endsWith("USDT");
 };
 
-const fetchChart = (ticker, range) =>
-  isCrypto(ticker) ? fetchBinanceChart(ticker, range) : fetchYahooChart(ticker, range);
+const fetchChart = async (ticker, range) => {
+  // Crypto: Binance only
+  if (isCrypto(ticker)) return fetchBinanceChart(ticker, range);
+  // TradFi: race all proxies in parallel for speed, take first valid result
+  return fetchYahooChart(ticker, range);
+};
 
 const fmtPrice = (p) => {
   if (p == null) return "—";
