@@ -233,12 +233,17 @@ const buildComposite = (candles, selectedCycles, tweaks, anchorIdx, slopeMult = 
   // anchor (trough) maps to raw=-numCyc → anchorPrice
   const midPrice = anchorPrice + numCyc * amplitude;
 
-  // Apply slope: tilt the midline linearly around the anchor
+  // Skew: bottoms stay fixed, tops shift up/down
+  // raw is in [-numCyc, +numCyc]. Normalize to [-1, +1], then apply skew only to positive part.
+  // skewMult > 1 = taller peaks, skewMult < 1 = flatter peaks, = 1 symmetric sine
   return raw.map((v, t) => {
-    const drift = (t - anchor) * (amplitude * 0.004 * (slopeMult - 1.0));
+    const norm = v / numCyc; // [-1, +1]
+    const skewed = norm < 0
+      ? norm                          // trough unchanged
+      : norm * slopeMult;             // crest scaled by slopeMult
     return {
       t,
-      v: midPrice + v * amplitude + drift,
+      v: anchorPrice + (1 + skewed) * numCyc * amplitude,
       isFuture: t >= n,
     };
   });
@@ -1090,11 +1095,11 @@ export default function App() {
                       </div>
                       {/* Slope control */}
                       <div style={{ padding: "10px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Slope</span>
-                        <input type="range" min="-3" max="5" step="0.05" value={cycleSlopeMult}
+                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Skew</span>
+                        <input type="range" min="0.1" max="4" step="0.05" value={cycleSlopeMult}
                           onChange={e => setCycleSlopeMult(parseFloat(e.target.value))}
                           style={{ flex: 1, accentColor: "#d4af37", height: 2, cursor: "pointer" }} />
-                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 36, textAlign: "right", whiteSpace: "nowrap" }}>{cycleSlopeMult >= 0 ? "+" : ""}{cycleSlopeMult.toFixed(2)}x</span>
+                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 36, textAlign: "right", whiteSpace: "nowrap" }}>{cycleSlopeMult.toFixed(2)}x</span>
                         <button onClick={() => setCycleSlopeMult(1.0)} style={{ background: "transparent", border: "1px solid #222", color: "#333", fontFamily: "'DM Mono', monospace", fontSize: 8, padding: "2px 6px", borderRadius: 3, cursor: "pointer" }}>↺</button>
                       </div>
                       {/* Table header */}
