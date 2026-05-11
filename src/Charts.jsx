@@ -204,7 +204,7 @@ const analyzeCycles = (candles, topN = 20) => {
 };
 
 // Build composite — anchor is a LOW, -cos pins trough there, projects fwd + bwd
-const buildComposite = (candles, selectedCycles, tweaks, anchorIdx) => {
+const buildComposite = (candles, selectedCycles, tweaks, anchorIdx, slopeMult = 1.0) => {
   if (!candles.length || !selectedCycles.length) return [];
   const n = candles.length;
   const fwdBars = Math.ceil(n * 0.25);
@@ -233,11 +233,15 @@ const buildComposite = (candles, selectedCycles, tweaks, anchorIdx) => {
   // anchor (trough) maps to raw=-numCyc → anchorPrice
   const midPrice = anchorPrice + numCyc * amplitude;
 
-  return raw.map((v, t) => ({
-    t,
-    v: midPrice + v * amplitude,
-    isFuture: t >= n,
-  }));
+  // Apply slope: tilt the midline linearly around the anchor
+  return raw.map((v, t) => {
+    const drift = (t - anchor) * (amplitude * 0.004 * (slopeMult - 1.0));
+    return {
+      t,
+      v: midPrice + v * amplitude + drift,
+      isFuture: t >= n,
+    };
+  });
 };
 
 // ── BAR CHART ─────────────────────────────────────────────────────────────────
@@ -554,8 +558,13 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   if (visible.length < 2) return null;
 
   const prices = visible.flatMap(c => [c.h, c.l]);
-  const minP = Math.min(...prices);
-  const maxP = Math.max(...prices);
+  // Include composite wave values in auto-scale
+  const waveVals = compositeWave
+    ? compositeWave.filter(p => p.t >= startIdx && p.t < startIdx + visible.length).map(p => p.v)
+    : [];
+  const allVals = [...prices, ...waveVals].filter(v => v != null && isFinite(v));
+  const minP = Math.min(...allVals);
+  const maxP = Math.max(...allVals);
   const range = maxP - minP || 1;
   const pad = range * 0.05;
 
@@ -784,6 +793,7 @@ export default function App() {
   const [cyclesPanelOpen, setCyclesPanelOpen] = useState(false);
   const [pickingAnchor, setPickingAnchor] = useState(false);
   const [cycleAnchorIdx, setCycleAnchorIdx] = useState(null);
+  const [cycleSlopeMult, setCycleSlopeMult] = useState(1.0);
 
   const availableYears = [...new Set(candles.map(c => c.date.getFullYear()))].sort();
 
@@ -863,7 +873,7 @@ export default function App() {
 
   const selectedCycleObjs = cycles.filter(c => selectedCycles.has(c.period));
   const compositeWave = (showCycles && selectedCycleObjs.length > 0)
-    ? buildComposite(candles, selectedCycleObjs, cycleTweaks, cycleAnchorIdx)
+    ? buildComposite(candles, selectedCycleObjs, cycleTweaks, cycleAnchorIdx, cycleSlopeMult)
     : [];
 
   const toggleIndicator = (id) => setActiveIndicators(prev => {
@@ -1077,6 +1087,15 @@ export default function App() {
                           </button>
                           {showCycles && <button onClick={() => setShowCycles(false)} style={{ background: "transparent", border: "1px solid #222", color: "#333", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", padding: "4px 8px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase" }}>HIDE</button>}
                         </div>
+                      </div>
+                      {/* Slope control */}
+                      <div style={{ padding: "10px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Slope</span>
+                        <input type="range" min="-3" max="5" step="0.05" value={cycleSlopeMult}
+                          onChange={e => setCycleSlopeMult(parseFloat(e.target.value))}
+                          style={{ flex: 1, accentColor: "#d4af37", height: 2, cursor: "pointer" }} />
+                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 36, textAlign: "right", whiteSpace: "nowrap" }}>{cycleSlopeMult >= 0 ? "+" : ""}{cycleSlopeMult.toFixed(2)}x</span>
+                        <button onClick={() => setCycleSlopeMult(1.0)} style={{ background: "transparent", border: "1px solid #222", color: "#333", fontFamily: "'DM Mono', monospace", fontSize: 8, padding: "2px 6px", borderRadius: 3, cursor: "pointer" }}>↺</button>
                       </div>
                       {/* Table header */}
                       <div style={{ display: "grid", gridTemplateColumns: "28px 56px 1fr 40px", gap: 0, padding: "6px 16px", borderBottom: "1px solid #1a1a1a" }}>
