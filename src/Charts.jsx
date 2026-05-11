@@ -259,7 +259,7 @@ const analyzeCycles = (candles, topN = 20, anchorIdx = null) => {
 const buildComposite = (candles, selectedCycles, tweaks, anchorIdx, slopeMult = 1.0) => {
   if (!candles.length || !selectedCycles.length) return [];
   const n = candles.length;
-  const fwdBars = Math.ceil(n * 0.25);
+  const fwdBars = Math.ceil(n * 0.5);
   const totalBars = n + fwdBars;
   const anchor = anchorIdx != null ? Math.min(anchorIdx, n-1) : n-1;
 
@@ -620,7 +620,10 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
       const len = pe - ps;
       let ns = ps + shift, ne = pe + shift;
       if (ns < 0) { ns = 0; ne = len; }
-      if (ne >= candlesRef.current.length) { ne = candlesRef.current.length - 1; ns = ne - len; }
+      // Allow panning into future (up to 50% of candle count beyond last candle)
+      const maxEnd = candlesRef.current.length - 1 + Math.ceil(candlesRef.current.length * 0.5);
+      if (ne > maxEnd) { ne = maxEnd; ns = ne - len; }
+      if (ns < 0) { ns = 0; }
       viewRef.current = { startIdx: ns, endIdx: ne };
       setViewVersion(v => v + 1);
     }
@@ -1160,7 +1163,7 @@ export default function App() {
                     {cyclesPanelOpen ? "◀ Cycles" : "▶ Cycles"}
                   </button>
                   {cyclesPanelOpen && (
-                    <div style={{ width: 280, background: "#0d0d0d", borderLeft: "1px solid #1a1a1a", display: "flex", flexDirection: "column" }}>
+                    <div style={{ width: 340, background: "#0d0d0d", borderLeft: "1px solid #1a1a1a", display: "flex", flexDirection: "column" }}>
                       {/* Panel header */}
                       <div style={{ padding: "12px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 14, letterSpacing: "0.1em", color: "#e8e8e8" }}>Cycle Analysis</span>
@@ -1199,18 +1202,18 @@ export default function App() {
                         <button onClick={() => setCycleSlopeMult(1.0)} style={{ background: "transparent", border: "1px solid #222", color: "#333", fontFamily: "'DM Mono', monospace", fontSize: 8, padding: "2px 6px", borderRadius: 3, cursor: "pointer" }}>↺</button>
                       </div>
                       {/* Table header */}
-                      <div style={{ display: "grid", gridTemplateColumns: "28px 56px 1fr 40px", gap: 0, padding: "6px 16px", borderBottom: "1px solid #1a1a1a" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "28px 64px 1fr 40px", gap: 0, padding: "6px 18px", borderBottom: "1px solid #1a1a1a" }}>
                         {["#","Period","Accuracy",""].map((h, i) => (
                           <span key={i} style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.18em", color: "#2a2a2a", textTransform: "uppercase" }}>{h}</span>
                         ))}
                       </div>
                       {/* Cycle rows */}
-                      <div style={{ overflowY: "auto", flex: 1, maxHeight: 320 }}>
+                      <div style={{ overflowY: "auto", flex: 1, maxHeight: 480 }}>
                         {cycles.map((cyc, i) => {
                           const isOn = selectedCycles.has(cyc.period);
                           return (
                             <div key={cyc.period} onClick={() => toggleCycle(cyc.period)}
-                              style={{ display: "grid", gridTemplateColumns: "28px 56px 1fr 40px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid #0f0f0f", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.05)" : "transparent", transition: "background 0.15s" }}>
+                              style={{ display: "grid", gridTemplateColumns: "28px 64px 1fr 40px", alignItems: "center", gap: 0, padding: "9px 18px", borderBottom: "1px solid #0f0f0f", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.05)" : "transparent", transition: "background 0.15s" }}>
                               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#2a2a2a" }}>{i + 1}</span>
                               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: isOn ? "#f8e49b" : "#555", fontWeight: isOn ? 600 : 400 }}>{cyc.period}d</span>
                               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
