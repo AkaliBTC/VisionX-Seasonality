@@ -552,7 +552,10 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
     let ne = endIdx - delta * rightStep;
     if (ne - ns < 5) return;
     ns = Math.max(0, ns);
-    const maxEnd = candlesRef.current.length - 1 + Math.ceil(candlesRef.current.length * 0.5);
+    // Cap: last real candle must stay within left 50% of visible window
+    const viewLen = ne - ns;
+    const lastReal = candlesRef.current.length - 1;
+    const maxEnd = lastReal + Math.floor(viewLen * 0.5);
     ne = Math.min(maxEnd, ne);
     viewRef.current = { startIdx: ns, endIdx: ne };
     setViewVersion(v => v + 1);
@@ -620,7 +623,9 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
       const shift = Math.round(-dx / pixPerCandle);
       const len = pe - ps;
       let ns = ps + shift, ne = pe + shift;
-      const maxEnd = candlesRef.current.length - 1 + Math.ceil(candlesRef.current.length * 0.5);
+      const lastReal = candlesRef.current.length - 1;
+      // Cap: last real candle must stay within left 50% of visible window
+      const maxEnd = lastReal + Math.floor(len * 0.5);
       if (ns < 0) { ns = 0; ne = Math.min(len, maxEnd); }
       if (ne > maxEnd) { ne = maxEnd; ns = Math.max(0, ne - len); }
       viewRef.current = { startIdx: ns, endIdx: ne };
