@@ -231,13 +231,14 @@ const analyzeCycles = (candles, topN = 20) => {
 };
 
 // Build composite sine wave — arithmetic, auto-scaled to visible price range
-const buildComposite = (candles, selectedCycles, tweaks) => {
+const buildComposite = (candles, selectedCycles, tweaks, anchorIdx) => {
   if (!candles.length || !selectedCycles.length) return [];
   const n = candles.length;
   const fwdBars = Math.ceil(n * 0.25);
   const totalBars = n + fwdBars;
 
-  // Raw composite (unitless sum of sines)
+  // Build raw composite shifted so t=0 is at anchorIdx
+  const anchor = anchorIdx != null ? anchorIdx : 0;
   const raw = Array(totalBars).fill(0);
   for (const cyc of selectedCycles) {
     const tw = tweaks[cyc.period] || { periodMult: 1, ampMult: 1 };
@@ -245,26 +246,31 @@ const buildComposite = (candles, selectedCycles, tweaks) => {
     const amp = cyc.amplitude * tw.ampMult;
     const freq = 1 / period;
     for (let t = 0; t < totalBars; t++) {
-      raw[t] += amp * Math.sin(2 * Math.PI * freq * t + cyc.phase);
+      // shift so wave starts at anchor: use (t - anchor) as the time index
+      raw[t] += amp * Math.sin(2 * Math.PI * freq * (t - anchor));
     }
   }
 
-  // Price stats for scaling
+  // Price at anchor point
+  const anchorPrice = candles[Math.min(anchor, n-1)]?.c ?? candles[n-1].c;
+
+  // Scale: raw amplitude → price amplitude based on recent volatility
   const closes = candles.map(c => c.c);
   const priceMin = Math.min(...closes);
   const priceMax = Math.max(...closes);
-  const priceMid = (priceMin + priceMax) / 2;
-  const priceRange = (priceMax - priceMin) * 0.45; // use 45% of price range as amplitude
+  const priceRange = (priceMax - priceMin) * 0.45;
 
-  // Scale raw composite to price space
   const rawMin = Math.min(...raw);
   const rawMax = Math.max(...raw);
   const rawRange = rawMax - rawMin || 1;
 
+  // Anchor price is where raw[anchor] maps to
+  const rawAtAnchor = raw[anchor];
+  const rawMid = (rawMin + rawMax) / 2;
+
   return raw.map((v, t) => ({
     t,
-    // Normalize to [-1,1] then scale to price range around midpoint
-    v: priceMid + ((v - (rawMin + rawMax) / 2) / (rawRange / 2)) * priceRange,
+    v: anchorPrice + ((v - rawAtAnchor) / (rawRange / 2)) * priceRange,
     isFuture: t >= n,
   }));
 };
@@ -453,7 +459,7 @@ const DEFAULT_SETTINGS = {
 };
 
 // ── PRICE CHART (zoom/pan) ────────────────────────────────────────────────────
-function PriceChart({ candles, interval, activeIndicators, indSettings, compositeWave }) {
+function PriceChart({ candles, interval, activeIndicators, indSettings, compositeWave, pickingAnchor, onAnchorPick }) {
   const svgRef = useRef(null);
   const viewRef = useRef({ startIdx: 0, endIdx: Math.max(0, candles.length - 1) });
   const [viewVersion, setViewVersion] = useState(0); // trigger re-render
@@ -523,6 +529,19 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
 
   const handleMouseDown = (e) => {
     e.preventDefault();
+    // If in anchor picking mode, capture the candle index and fire callback
+    if (pickingAnchor && onAnchorPick) {
+      const svg = svgRef.current;
+      if (svg) {
+        const rect = svg.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * (W / rect.width);
+        const { startIdx, endIdx } = viewRef.current;
+        const visLen = endIdx - startIdx + 1;
+        const idx = Math.max(0, Math.min(visLen - 1, Math.round((x - PAD.left) / iW * (visLen - 1))));
+        onAnchorPick(startIdx + idx);
+      }
+      return;
+    }
     isPanningRef.current = true;
     panStart.current = { x: e.clientX, start: viewRef.current.startIdx, end: viewRef.current.endIdx };
   };
@@ -592,7 +611,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   return (
     <div style={{ position: "relative", userSelect: "none" }}>
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
-        style={{ width: "100%", height: "auto", display: "block", cursor: "crosshair" }}
+        style={{ width: "100%", height: "auto", display: "block", cursor: pickingAnchor ? "cell" : "crosshair" }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -798,6 +817,8 @@ export default function App() {
   const [cycleTweaks, setCycleTweaks] = useState({});
   const [showCycles, setShowCycles] = useState(false);
   const [cyclesPanelOpen, setCyclesPanelOpen] = useState(false);
+  const [pickingAnchor, setPickingAnchor] = useState(false);
+  const [cycleAnchorIdx, setCycleAnchorIdx] = useState(null);
 
   const availableYears = [...new Set(candles.map(c => c.date.getFullYear()))].sort();
 
@@ -877,7 +898,7 @@ export default function App() {
 
   const selectedCycleObjs = cycles.filter(c => selectedCycles.has(c.period));
   const compositeWave = (showCycles && selectedCycleObjs.length > 0)
-    ? buildComposite(candles, selectedCycleObjs, cycleTweaks)
+    ? buildComposite(candles, selectedCycleObjs, cycleTweaks, cycleAnchorIdx)
     : [];
 
   const toggleIndicator = (id) => setActiveIndicators(prev => {
@@ -1065,7 +1086,9 @@ export default function App() {
             <div style={{ display: "flex", position: "relative" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="section-body" style={{ padding: "12px 8px 4px" }}>
-                  <PriceChart candles={candles} interval={interval} activeIndicators={activeIndicators} indSettings={indSettings} compositeWave={compositeWave} />
+                  <PriceChart candles={candles} interval={interval} activeIndicators={activeIndicators} indSettings={indSettings} compositeWave={compositeWave}
+                    pickingAnchor={pickingAnchor}
+                    onAnchorPick={(idx) => { setCycleAnchorIdx(idx); setPickingAnchor(false); setShowCycles(true); }} />
                 </div>
               </div>
               {/* Cycle Panel Toggle */}
@@ -1080,12 +1103,14 @@ export default function App() {
                       {/* Panel header */}
                       <div style={{ padding: "12px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 14, letterSpacing: "0.1em", color: "#e8e8e8" }}>Cycle Analysis</span>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#444" }}>{selectedCycles.size} selected</span>
-                          <button onClick={() => setShowCycles(s => !s)}
-                            style={{ background: showCycles ? "rgba(212,175,55,0.15)" : "transparent", border: `1px solid ${showCycles ? "#d4af37" : "#222"}`, color: showCycles ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", padding: "4px 10px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase" }}>
-                            {showCycles ? "ON" : "OFF"}
+                          <button onClick={() => setPickingAnchor(p => !p)}
+                            title="Click a point on the chart to anchor the wave"
+                            style={{ background: pickingAnchor ? "rgba(239,68,68,0.15)" : cycleAnchorIdx != null ? "rgba(212,175,55,0.1)" : "transparent", border: `1px solid ${pickingAnchor ? "#ef4444" : cycleAnchorIdx != null ? "#d4af37" : "#222"}`, color: pickingAnchor ? "#ef4444" : cycleAnchorIdx != null ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", padding: "4px 10px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase", transition: "all 0.2s" }}>
+                            {pickingAnchor ? "↗ PICK" : cycleAnchorIdx != null ? "⊕ SET" : "SET ANCHOR"}
                           </button>
+                          {showCycles && <button onClick={() => setShowCycles(false)} style={{ background: "transparent", border: "1px solid #222", color: "#333", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", padding: "4px 8px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase" }}>HIDE</button>}
                         </div>
                       </div>
                       {/* Table header */}
