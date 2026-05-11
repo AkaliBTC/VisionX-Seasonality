@@ -480,21 +480,32 @@ function PriceChart({ candles, interval, activeIndicators, indSettings }) {
             const sarData = calcSAR(candles, indSettings.sar.step, indSettings.sar.max).slice(startIdx, endIdx+1);
             const dots = sarData.map((s, i) => s ? (
               <circle key={i} cx={xScale(i)} cy={yScale(s.val)} r="2"
-                fill={s.bull ? "#22c55e" : "#ef4444"} opacity="0.8"/>
+                fill="#d4af37" opacity="0.9"/>
             ) : null);
             els.push(<g key="sar">{dots}</g>);
           }
           if (activeIndicators.has("supertrend")) {
             const st = calcSupertrend(candles, indSettings.supertrend.period, indSettings.supertrend.mult).slice(startIdx, endIdx+1);
-            let bullPath = "", bearPath = "";
+            const vis = visible;
+            // Build filled areas between price and supertrend line
+            let bullArea = "", bearArea = "";
+            const bottomY = PAD.top + iH;
             st.forEach((s, i) => {
               if (!s) return;
-              const x = xScale(i), y = yScale(s.val);
-              if (s.bull) bullPath += bullPath ? ` L ${x} ${y}` : `M ${x} ${y}`;
-              else bearPath += bearPath ? ` L ${x} ${y}` : `M ${x} ${y}`;
+              const x = xScale(i), stY = yScale(s.val), priceY = yScale(vis[i]?.c ?? s.val);
+              if (s.bull) bullArea += bullArea ? ` L ${x} ${stY}` : `M ${x} ${stY}`;
+              else bearArea += bearArea ? ` L ${x} ${stY}` : `M ${x} ${stY}`;
             });
-            if (bullPath) els.push(<path key="st-bull" d={bullPath} fill="none" stroke="#22c55e" strokeWidth="1.5" opacity="0.9"/>);
-            if (bearPath) els.push(<path key="st-bear" d={bearPath} fill="none" stroke="#ef4444" strokeWidth="1.5" opacity="0.9"/>);
+            // Close areas along price line reversed
+            let bullClose = "", bearClose = "";
+            for (let i = st.length-1; i >= 0; i--) {
+              if (!st[i] || !vis[i]) continue;
+              const x = xScale(i), priceY = yScale(vis[i].c);
+              if (st[i].bull) bullClose += ` L ${x} ${priceY}`;
+              else bearClose += ` L ${x} ${priceY}`;
+            }
+            if (bullArea && bullClose) els.push(<path key="st-bull-fill" d={bullArea+bullClose+"Z"} fill="rgba(34,197,94,0.12)" stroke="#22c55e" strokeWidth="0.8" opacity="0.9"/>);
+            if (bearArea && bearClose) els.push(<path key="st-bear-fill" d={bearArea+bearClose+"Z"} fill="rgba(239,68,68,0.12)" stroke="#ef4444" strokeWidth="0.8" opacity="0.9"/>);
           }
           if (activeIndicators.has("resist")) {
             const levels = calcResistance(candles, visible, 20);
