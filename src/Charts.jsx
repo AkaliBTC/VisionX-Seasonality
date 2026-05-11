@@ -68,18 +68,26 @@ const parseStooqCSV = (csv) => {
 };
 
 const fetchStooqHistory = async (ticker, interval) => {
-  // Stooq ticker mapping — weekly uses same ticker, Stooq handles period via d/w
   const sym = ticker.trim().toLowerCase();
   const period = interval === "1w" ? "w" : "d";
-  const url = `https://stooq.com/q/d/l/?s=${sym}&i=${period}`;
+  // Try multiple URL formats
+  const urls = [
+    `https://stooq.com/q/d/l/?s=${sym}&i=${period}`,
+    `https://stooq.pl/q/d/l/?s=${sym}&i=${period}`,
+    `https://stooq.com/q/d/l/?s=${sym}&d1=19900101&d2=20991231&i=${period}`,
+  ];
 
-  for (const px of PROXIES) {
-    try {
-      const text = await px(url);
-      if (!text || text.includes("No data") || text.length < 50) continue;
-      const candles = parseStooqCSV(text);
-      if (candles.length > 10) return candles;
-    } catch { continue; }
+  for (const url of urls) {
+    for (const px of PROXIES) {
+      try {
+        const text = await px(url);
+        if (!text || text.length < 50) continue;
+        // Stooq returns "No data" or html when blocked
+        if (text.includes("<html") || text.includes("No data")) continue;
+        const candles = parseStooqCSV(text);
+        if (candles.length > 10) return candles;
+      } catch { continue; }
+    }
   }
   return null;
 };
@@ -92,9 +100,43 @@ const isCrypto = (ticker) => {
   return CRYPTO_LIST.includes(t) || ticker.toUpperCase().endsWith("USDT");
 };
 
+// Yahoo fallback via proxies
+const fetchYahooFallback = async (ticker, interval) => {
+  const raw = ticker.toUpperCase().trim();
+  const range = interval === "1w" ? "10y" : "5y";
+  const iv = interval === "1w" ? "1wk" : "1d";
+  const urls = [
+    `https://query1.finance.yahoo.com/v8/finance/chart/${raw}?interval=${iv}&range=${range}`,
+    `https://query2.finance.yahoo.com/v8/finance/chart/${raw}?interval=${iv}&range=${range}`,
+  ];
+  for (const url of urls) {
+    for (const px of PROXIES) {
+      try {
+        const data = await px(url);
+        const result = JSON.parse(typeof data === "string" ? data : JSON.stringify(data));
+        const r = result?.chart?.result?.[0];
+        if (!r?.timestamp) continue;
+        const closes = r.indicators?.quote?.[0]?.close;
+        const opens = r.indicators?.quote?.[0]?.open;
+        const highs = r.indicators?.quote?.[0]?.high;
+        const lows = r.indicators?.quote?.[0]?.low;
+        const candles = r.timestamp.map((t, i) => ({
+          t: t * 1000, o: opens?.[i] ?? closes[i], h: highs?.[i] ?? closes[i],
+          l: lows?.[i] ?? closes[i], c: closes[i], date: new Date(t * 1000)
+        })).filter(c => c.c != null && !isNaN(c.c));
+        if (candles.length > 10) return candles;
+      } catch { continue; }
+    }
+  }
+  return null;
+};
+
 const fetchHistory = async (ticker, interval) => {
   if (isCrypto(ticker)) return await fetchBinanceHistory(ticker, interval);
-  return await fetchStooqHistory(ticker, interval);
+  // Try Stooq first, Yahoo as fallback
+  const stooq = await fetchStooqHistory(ticker, interval);
+  if (stooq && stooq.length > 10) return stooq;
+  return await fetchYahooFallback(ticker, interval);
 };
 
 // ── SEASONALITY CALC ──────────────────────────────────────────────────────────
@@ -649,11 +691,12 @@ export default function App() {
   };
 
   const submit = () => {
-    const t = input.trim().toUpperCase();
-    if (!t) return;
-    setTicker(t);
+    const raw = input.trim();
+    if (!raw) return;
+    // Keep original case for Stooq (aapl.us, ^SPX etc), uppercase only for crypto display
+    setTicker(raw);
     setSelectedYears([]);
-    load(t, interval);
+    load(raw, interval);
   };
 
   const switchInterval = (iv) => {
@@ -778,7 +821,7 @@ export default function App() {
       {/* TOOLBAR */}
       <div className="toolbar">
         <input className="ticker-inp" placeholder="BTC" value={input}
-          onChange={e => setInput(e.target.value.toUpperCase())}
+          onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === "Enter" && submit()} />
         <button className="btn btn-gold" onClick={submit}>LOAD</button>
         <div style={{ display: "flex", gap: 6, marginLeft: 8 }}>
