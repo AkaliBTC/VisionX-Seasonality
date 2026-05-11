@@ -230,49 +230,41 @@ const analyzeCycles = (candles, topN = 20) => {
   return selected;
 };
 
-// Build composite sine wave — arithmetic, auto-scaled to visible price range
+// Build composite — log-price space, re-trend, anchor at user-picked point
 const buildComposite = (candles, selectedCycles, tweaks, anchorIdx) => {
   if (!candles.length || !selectedCycles.length) return [];
   const n = candles.length;
   const fwdBars = Math.ceil(n * 0.25);
   const totalBars = n + fwdBars;
+  const anchor = anchorIdx != null ? Math.min(anchorIdx, n-1) : Math.floor(n/2);
 
-  // Build raw composite shifted so t=0 is at anchorIdx
-  const anchor = anchorIdx != null ? anchorIdx : 0;
+  // Reconstruct trend from log prices
+  const lp = candles.map(c => Math.log(c.c));
+  const xm=(n-1)/2, ym=lp.reduce((a,b)=>a+b,0)/n;
+  let nd=0, dd=0;
+  lp.forEach((v,i)=>{ nd+=(i-xm)*(v-ym); dd+=(i-xm)**2; });
+  const slope=dd?nd/dd:0;
+  const intercept=ym-slope*xm;
+
+  // Build composite in log-detrended space
   const raw = Array(totalBars).fill(0);
   for (const cyc of selectedCycles) {
-    const tw = tweaks[cyc.period] || { periodMult: 1, ampMult: 1 };
-    const period = cyc.period * tw.periodMult;
-    const amp = cyc.amplitude * tw.ampMult;
-    const freq = 1 / period;
-    for (let t = 0; t < totalBars; t++) {
-      // shift so wave starts at anchor: use (t - anchor) as the time index
-      raw[t] += amp * Math.sin(2 * Math.PI * freq * (t - anchor));
-    }
+    const tw = tweaks[cyc.period] || {};
+    const period = cyc.period * (tw.periodMult||1);
+    const amp = cyc.amplitude * (tw.ampMult||1);
+    const w = 2*Math.PI/period;
+    for (let t=0; t<totalBars; t++) raw[t] += amp * Math.sin(w*t + cyc.phase);
   }
 
-  // Price at anchor point
-  const anchorPrice = candles[Math.min(anchor, n-1)]?.c ?? candles[n-1].c;
-
-  // Scale: raw amplitude → price amplitude based on recent volatility
-  const closes = candles.map(c => c.c);
-  const priceMin = Math.min(...closes);
-  const priceMax = Math.max(...closes);
-  const priceRange = (priceMax - priceMin) * 0.45;
-
-  const rawMin = Math.min(...raw);
-  const rawMax = Math.max(...raw);
-  const rawRange = rawMax - rawMin || 1;
-
-  // Anchor price is where raw[anchor] maps to
+  // Phase-shift composite so its value at anchor matches detrended log price there
+  const detrendedAtAnchor = lp[anchor] - (slope*anchor+intercept);
   const rawAtAnchor = raw[anchor];
-  const rawMid = (rawMin + rawMax) / 2;
+  const phaseShift = detrendedAtAnchor - rawAtAnchor;
 
-  return raw.map((v, t) => ({
-    t,
-    v: anchorPrice + ((v - rawAtAnchor) / (rawRange / 2)) * priceRange,
-    isFuture: t >= n,
-  }));
+  return raw.map((v, t) => {
+    const logP = (v + phaseShift) + (slope*t + intercept);
+    return { t, v: Math.exp(logP), isFuture: t >= n };
+  });
 };
 
 // ── BAR CHART ─────────────────────────────────────────────────────────────────
