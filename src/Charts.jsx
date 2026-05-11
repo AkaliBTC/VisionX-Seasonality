@@ -1179,8 +1179,15 @@ export default function App() {
                           onChange={e => {
                             const raw = parseFloat(e.target.value);
                             const snapped = Math.round(raw * 10) / 10;
-                            // Magnetic: snap if within 0.04 of a .1 value
-                            setCycleSlopeMult(Math.abs(raw - snapped) < 0.04 ? snapped : raw);
+                            const dist = Math.abs(raw - snapped);
+                            // Rubber-band: within 0.08 → pull strongly toward snap point
+                            // gives a gummy elastic feel before locking in
+                            if (dist < 0.08) {
+                              const pull = snapped + (raw - snapped) * (dist / 0.08) * 0.3;
+                              setCycleSlopeMult(dist < 0.02 ? snapped : pull);
+                            } else {
+                              setCycleSlopeMult(raw);
+                            }
                           }}
                           style={{ flex: 1, accentColor: "#d4af37", height: 2, cursor: "pointer" }} />
                         <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 36, textAlign: "right", whiteSpace: "nowrap" }}>{cycleSlopeMult.toFixed(2)}x</span>
