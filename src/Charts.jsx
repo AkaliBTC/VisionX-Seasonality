@@ -699,12 +699,24 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           </text>
         ))}
 
-        {/* X labels */}
-        {xLabels.map((c, i) => (
-          <text key={i} x={xScale(visible.indexOf(c))} y={H - 8} textAnchor="middle" fill="#444" fontSize="10" fontFamily="'DM Mono', monospace">
-            {fmtLabel(c.t)}
-          </text>
-        ))}
+        {/* X labels — real + projected future dates */}
+        {Array.from({ length: 8 }, (_, i) => {
+          const slotIdx = Math.round(i * (totalSlots - 1) / 7);
+          const x = xScale(slotIdx);
+          const isFut = slotIdx >= visible.length;
+          const msPerBar = interval === "1d" ? 86400000 : 604800000;
+          const ts = isFut
+            ? visible[visible.length-1].t + (slotIdx - (visible.length-1)) * msPerBar
+            : visible[Math.min(slotIdx, visible.length-1)]?.t;
+          const label = ts ? fmtLabel(ts) : "";
+          return (
+            <text key={i} x={x} y={H - 8} textAnchor="middle"
+              fill={isFut ? "#2a2a2a" : "#444"}
+              fontSize="10" fontFamily="'DM Mono', monospace">
+              {label}
+            </text>
+          );
+        })}
 
         {/* Line only */}
         <path d={pathD} fill="none" stroke={color} strokeWidth="1" strokeLinejoin="round" strokeLinecap="round" />
@@ -845,7 +857,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           return (
             <>
               <line x1={hover.x} x2={hover.x} y1={PAD.top} y2={PAD.top + iH} stroke="#2a2a2a" strokeWidth="1" strokeDasharray="4,3" />
-              <circle cx={hover.x} cy={hover.y} r="4" fill={color} stroke="#0a0a0a" strokeWidth="2" />
+              {hover.candle && <circle cx={hover.x} cy={hover.y} r="4" fill={color} stroke="#0a0a0a" strokeWidth="2" />}
               <rect x={tagX} y={H - PAD.bottom + 2} width={tagW} height={18} fill="#1a1a1a" rx="3" />
               <text x={tagX + tagW/2} y={H - PAD.bottom + 14} textAnchor="middle"
                 fill={isFut ? "#d4af37" : "#f8e49b"} fontSize="10"
