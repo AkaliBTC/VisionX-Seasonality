@@ -859,6 +859,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           return (
             <>
               <line x1={hover.x} x2={hover.x} y1={PAD.top} y2={PAD.top + iH} stroke="#2a2a2a" strokeWidth="1" strokeDasharray="4,3" />
+              <line x1={PAD.left} x2={W - PAD.right} y1={hover.y} y2={hover.y} stroke="#2a2a2a" strokeWidth="1" strokeDasharray="4,3" />
               {hover.candle && <circle cx={hover.x} cy={hover.y} r="4" fill={color} stroke="#0a0a0a" strokeWidth="2" />}
               <rect x={tagX} y={H - PAD.bottom + 2} width={tagW} height={18} fill="#1a1a1a" rx="3" />
               <text x={tagX + tagW/2} y={H - PAD.bottom + 14} textAnchor="middle"
