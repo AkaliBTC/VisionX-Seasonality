@@ -831,17 +831,32 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           );
         })()}
 
-        {/* Hover */}
-        {hover && (
-          <>
-            <line x1={hover.x} x2={hover.x} y1={PAD.top} y2={PAD.top + iH} stroke="#2a2a2a" strokeWidth="1" strokeDasharray="4,3" />
-            <circle cx={hover.x} cy={hover.y} r="4" fill={color} stroke="#0a0a0a" strokeWidth="2" />
-          </>
-        )}
+        {/* Hover — crosshair + time tag */}
+        {hover && (() => {
+          const slotIdx = Math.round((hover.x - PAD.left) / iW * (totalSlots - 1));
+          const isFut = slotIdx >= visible.length;
+          const msPerBar = interval === "1d" ? 86400000 : 604800000;
+          const ts = isFut
+            ? visible[visible.length-1].t + (slotIdx - (visible.length-1)) * msPerBar
+            : visible[Math.max(0, Math.min(slotIdx, visible.length-1))]?.t;
+          const label = ts ? fmtLabel(ts) : "";
+          const tagW = label.length * 6.5 + 12;
+          const tagX = Math.max(PAD.left, Math.min(hover.x - tagW/2, W - PAD.right - tagW));
+          return (
+            <>
+              <line x1={hover.x} x2={hover.x} y1={PAD.top} y2={PAD.top + iH} stroke="#2a2a2a" strokeWidth="1" strokeDasharray="4,3" />
+              <circle cx={hover.x} cy={hover.y} r="4" fill={color} stroke="#0a0a0a" strokeWidth="2" />
+              <rect x={tagX} y={H - PAD.bottom + 2} width={tagW} height={18} fill="#1a1a1a" rx="3" />
+              <text x={tagX + tagW/2} y={H - PAD.bottom + 14} textAnchor="middle"
+                fill={isFut ? "#d4af37" : "#f8e49b"} fontSize="10"
+                fontFamily="'DM Mono', monospace" fontWeight="600">{label}</text>
+            </>
+          );
+        })()}
       </svg>
 
       {/* Tooltip */}
-      {hover && (
+      {hover && hover.candle && (
         <div style={{ position: "absolute", top: 12, left: 90, background: "#111", border: "1px solid #222", borderRadius: 8, padding: "8px 14px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: "#e8e8e8", pointerEvents: "none" }}>
           <div style={{ color: "#555", fontSize: 10, marginBottom: 2 }}>{fmtLabel(hover.candle.t)}</div>
           <div style={{ color, fontSize: 16, fontWeight: 600 }}>{fmtPrice(hover.candle.c)}</div>
