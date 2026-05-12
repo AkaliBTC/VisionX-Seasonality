@@ -142,129 +142,180 @@ const calcSeasonality = (candles, years) => {
 };
 
 
-// ── CYCLE ANALYSIS — proper spectral analysis with peak picking ───────────────
-const analyzeCycles = (candles, topN = 20) => {
-  if (candles.length < 20) return [];
-  const closes = candles.map(c => c.c);
-  const n = closes.length;
+// ── CYCLE ANALYSIS — bottom detection + inter-low spacing ────────────────────
+const findSignificantLows = (candles, lookback) => {
+  const n = candles.length;
+  const lows_map = candles.map(c => c.l);
 
-  // 1. Detrend via first differences (returns), then smooth slightly
-  const returns = closes.map((c, i) => i === 0 ? 0 : (c - closes[i-1]) / closes[i-1]);
+  // Multi-scale: detect local minima at multiple lookback windows
+  const scales = [
+    Math.max(3, Math.floor(lookback * 0.4)),
+    lookback,
+    Math.min(n / 4, Math.floor(lookback * 2)),
+  ];
 
-  // 2. Zero-mean
-  const mean = returns.reduce((a, b) => a + b, 0) / n;
-  const signal = returns.map(v => v - mean);
-
-  // 3. Apply Hann window to reduce spectral leakage
-  const windowed = signal.map((v, i) => v * 0.5 * (1 - Math.cos(2 * Math.PI * i / (n - 1))));
-
-  // 4. DFT with fine resolution — compute power spectrum
-  const minPeriod = 5;
-  const maxPeriod = Math.floor(n / 2.5); // need at least 2.5 cycles to detect
-  const spectrum = [];
-
-  for (let period = minPeriod; period <= maxPeriod; period++) {
-    const freq = 1 / period;
-    let re = 0, im = 0;
-    for (let t = 0; t < n; t++) {
-      const angle = 2 * Math.PI * freq * t;
-      re += windowed[t] * Math.cos(angle);
-      im -= windowed[t] * Math.sin(angle);
-    }
-    const power = re * re + im * im;
-    const amplitude = 2 * Math.sqrt(power) / n;
-    const phase = Math.atan2(im, re);
-    spectrum.push({ period, power, amplitude, phase });
-  }
-
-  // 5. Peak picking — only keep local maxima (no adjacent periods)
-  // A peak must be larger than its neighbors on both sides
-  const peaks = [];
-  for (let i = 1; i < spectrum.length - 1; i++) {
-    const prev = spectrum[i - 1].power;
-    const cur = spectrum[i].power;
-    const next = spectrum[i + 1].power;
-    if (cur > prev && cur > next) {
-      peaks.push(spectrum[i]);
+  const candidates = new Set();
+  for (const lb of scales) {
+    for (let i = lb; i < n - lb; i++) {
+      const win = lows_map.slice(i - lb, i + lb + 1);
+      const minV = Math.min(...win);
+      if (lows_map[i] <= minV) candidates.add(i);
     }
   }
 
-  // 6. For each peak, compute accuracy via R² of sine fit to original signal
-  const withAccuracy = peaks.map(p => {
-    const freq = 1 / p.period;
-    // Fit amplitude and phase via least squares
-    let sumSS = 0, sumSC = 0, sumCC = 0, sumCS = 0, sumSig = 0, sumSigS = 0, sumSigC = 0;
-    for (let t = 0; t < n; t++) {
-      const s = Math.sin(2 * Math.PI * freq * t);
-      const c = Math.cos(2 * Math.PI * freq * t);
-      sumSS += s * s; sumCC += c * c; sumSC += s * c;
-      sumSigS += signal[t] * s; sumSigC += signal[t] * c;
-    }
-    const det = sumSS * sumCC - sumSC * sumSC;
-    const A = det ? (sumSigS * sumCC - sumSigC * sumSC) / det : 0;
-    const B = det ? (sumSigC * sumSS - sumSigS * sumSC) / det : 0;
-    const amp = Math.sqrt(A * A + B * B);
-    const phase = Math.atan2(B, A);
-
-    // R² against signal
-    const sigMean = signal.reduce((a, b) => a + b, 0) / n;
-    let ssTot = 0, ssRes = 0;
-    for (let t = 0; t < n; t++) {
-      const pred = amp * Math.sin(2 * Math.PI * freq * t + phase);
-      ssTot += (signal[t] - sigMean) ** 2;
-      ssRes += (signal[t] - pred) ** 2;
-    }
-    const r2 = ssTot > 0 ? Math.max(0, 1 - ssRes / ssTot) : 0;
-    return { period: p.period, amplitude: amp, phase, power: p.power, accuracy: r2 * 100 };
+  // Prominence filter: a low is significant if it drops at least X% from surrounding highs
+  const minProminence = 0.03; // 3% drop from surrounding structure
+  const prominent = [...candidates].filter(i => {
+    const price = lows_map[i];
+    // Find highest high within 2*lookback on each side
+    const leftHigh = Math.max(...lows_map.slice(Math.max(0, i - lookback * 2), i).map((_, j, a) => candles[Math.max(0, i - lookback * 2) + j].h));
+    const rightHigh = Math.max(...lows_map.slice(i + 1, Math.min(n, i + lookback * 2 + 1)).map((_, j) => candles[i + 1 + j].h));
+    const refHigh = Math.min(leftHigh, rightHigh); // more conservative
+    return refHigh > 0 && (refHigh - price) / refHigh >= minProminence;
   });
 
-  // 7. Sort by power descending, deduplicate (min 3 period gap between selected cycles)
-  withAccuracy.sort((a, b) => b.power - a.power);
-  const selected = [];
-  for (const cyc of withAccuracy) {
-    const tooClose = selected.some(s => Math.abs(s.period - cyc.period) < 3);
-    if (!tooClose) selected.push(cyc);
-    if (selected.length >= topN) break;
+  prominent.sort((a, b) => a - b);
+
+  // Deduplicate: within lookback distance keep only the deepest
+  const deduped = [];
+  for (const idx of prominent) {
+    if (!deduped.length || idx - deduped[deduped.length - 1] > lookback) {
+      deduped.push(idx);
+    } else if (lows_map[idx] < lows_map[deduped[deduped.length - 1]]) {
+      deduped[deduped.length - 1] = idx;
+    }
+  }
+  return deduped;
+};
+
+const analyzeCycles = (candles, topN = 20, anchorIdx = null) => {
+  if (candles.length < 20) return [];
+  const n = candles.length;
+  const lookback = Math.min(40, Math.max(3, Math.floor(n * 0.08)));
+  const lows = findSignificantLows(candles, lookback);
+  if (lows.length < 2) return [];
+
+  // If anchor is set, find the closest low to it and use its neighbors
+  // to compute the most accurate cycles around that specific bottom
+  let anchorLowIdx = null;
+  if (anchorIdx != null) {
+    let minDist = Infinity;
+    lows.forEach((li, i) => {
+      const d = Math.abs(li - anchorIdx);
+      if (d < minDist) { minDist = d; anchorLowIdx = i; }
+    });
   }
 
+  // Build distances: all pairs + skip-one
+  const distances = [];
+  for (let i = 1; i < lows.length; i++) distances.push({ d: lows[i] - lows[i-1], i1: i-1, i2: i });
+  for (let i = 2; i < lows.length; i++) distances.push({ d: lows[i] - lows[i-2], i1: i-2, i2: i });
+
+  // If anchor low found, boost distances that include anchor ± 1 neighbor
+  const anchorBoost = (i1, i2) => {
+    if (anchorLowIdx == null) return 1;
+    const nearby = [anchorLowIdx - 1, anchorLowIdx, anchorLowIdx + 1];
+    return (nearby.includes(i1) || nearby.includes(i2)) ? 3 : 1;
+  };
+
+  // Cluster within 15%
+  const clusters = [];
+  for (const { d, i1, i2 } of distances) {
+    if (d < 3) continue;
+    const boost = anchorBoost(i1, i2);
+    const ex = clusters.find(c => Math.abs(c.mean - d) / c.mean < 0.15);
+    if (ex) {
+      for (let b = 0; b < boost; b++) ex.vals.push(d);
+      ex.mean = ex.vals.reduce((a,b)=>a+b,0)/ex.vals.length;
+    } else {
+      clusters.push({ mean: d, vals: Array(boost).fill(d) });
+    }
+  }
+
+  // Score: count × consistency
+  const scored = clusters.map(c => {
+    const m = c.mean;
+    const variance = c.vals.reduce((a,v)=>a+(v-m)**2,0)/c.vals.length;
+    const std = Math.sqrt(variance);
+    const consistency = m > 0 ? Math.max(0, 1 - std/m) : 0;
+    const accuracy = Math.min(99, consistency * 85 * Math.min(1, c.vals.length / 3));
+    return { period: Math.round(m), accuracy, score: c.vals.length * consistency, amplitude: 1, phase: -Math.PI/2, lowCount: c.vals.length };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  const selected = [];
+  for (const s of scored) {
+    if (s.period < 3) continue;
+    if (!selected.some(x => Math.abs(x.period-s.period)/Math.max(x.period,s.period) < 0.1))
+      selected.push(s);
+    if (selected.length >= topN) break;
+  }
+  // Final sort: by accuracy descending
+  selected.sort((a, b) => b.accuracy - a.accuracy);
   return selected;
 };
 
-// Build composite sine wave — arithmetic, auto-scaled to visible price range
-const buildComposite = (candles, selectedCycles, tweaks) => {
+// Build composite — anchor is a LOW, -cos pins trough there, projects fwd + bwd
+const buildComposite = (candles, selectedCycles, tweaks, anchorIdx, slopeMult = 1.0) => {
   if (!candles.length || !selectedCycles.length) return [];
   const n = candles.length;
-  const fwdBars = Math.ceil(n * 0.25);
+  const fwdBars = Math.ceil(n * 0.5);
   const totalBars = n + fwdBars;
+  const anchor = anchorIdx != null ? Math.min(anchorIdx, n-1) : n-1;
 
-  // Raw composite (unitless sum of sines)
+  const anchorPrice = candles[anchor].l;
+  const priceMin = Math.min(...candles.map(c => c.l));
+  const priceMax = Math.max(...candles.map(c => c.h));
+  const priceRange = priceMax - priceMin;
+  const numCyc = selectedCycles.length;
+
+  // -cos(w*(t-anchor)) = trough at t=anchor, crest at t=anchor+period/2
   const raw = Array(totalBars).fill(0);
   for (const cyc of selectedCycles) {
-    const tw = tweaks[cyc.period] || { periodMult: 1, ampMult: 1 };
-    const period = cyc.period * tw.periodMult;
-    const amp = cyc.amplitude * tw.ampMult;
-    const freq = 1 / period;
+    const tw = tweaks[cyc.period] || {};
+    const period = cyc.period * (tw.periodMult || 1);
+    const w = 2 * Math.PI / period;
     for (let t = 0; t < totalBars; t++) {
-      raw[t] += amp * Math.sin(2 * Math.PI * freq * t + cyc.phase);
+      raw[t] += -Math.cos(w * (t - anchor));
     }
   }
 
-  // Price stats for scaling
-  const closes = candles.map(c => c.c);
-  const priceMin = Math.min(...closes);
-  const priceMax = Math.max(...closes);
-  const priceMid = (priceMin + priceMax) / 2;
-  const priceRange = (priceMax - priceMin) * 0.45; // use 45% of price range as amplitude
+  // raw in [-numCyc, +numCyc]; amplitude = 35% price range per cycle
+  const amplitude = (priceRange * 0.35) / numCyc;
+  // anchor (trough) maps to raw=-numCyc → anchorPrice
+  const midPrice = anchorPrice + numCyc * amplitude;
 
-  // Scale raw composite to price space
-  const rawMin = Math.min(...raw);
-  const rawMax = Math.max(...raw);
-  const rawRange = rawMax - rawMin || 1;
+  // Phase skew: shift where the HIGH occurs on the X axis
+  // slopeMult=1 → symmetric (high at midpoint between lows)
+  // slopeMult<1 → high shifted left (fast rise, slow fall)
+  // slopeMult>1 → high shifted right (slow rise, fast fall)
+  // Implementation: use a distorted time axis per cycle
+  const skewed = Array(totalBars).fill(0);
+  for (const cyc of selectedCycles) {
+    const tw = tweaks[cyc.period] || {};
+    const period = cyc.period * (tw.periodMult || 1);
+    for (let t = 0; t < totalBars; t++) {
+      // Map t into [0,1] within current cycle relative to anchor
+      const phase = ((t - anchor) % period + period) % period / period; // 0→1 within cycle
+      // Distort: compress/expand the rising part
+      // phase < slopeMult/(1+slopeMult) = rising, rest = falling
+      const split = slopeMult / (1 + slopeMult); // where the peak sits (0..1)
+      let distorted;
+      if (phase < split) {
+        // Rising half: 0 → π  mapped over [0, split]
+        distorted = (phase / split) * Math.PI;
+      } else {
+        // Falling half: π → 2π mapped over [split, 1]
+        distorted = Math.PI + ((phase - split) / (1 - split)) * Math.PI;
+      }
+      skewed[t] += -Math.cos(distorted); // -cos: trough=0, peak=π
+    }
+  }
 
-  return raw.map((v, t) => ({
+  // skewed in [-numCyc, +numCyc], anchor (t=anchor, phase=0) = trough = -numCyc
+  return skewed.map((v, t) => ({
     t,
-    // Normalize to [-1,1] then scale to price range around midpoint
-    v: priceMid + ((v - (rawMin + rawMax) / 2) / (rawRange / 2)) * priceRange,
+    v: anchorPrice + (v + numCyc) * amplitude,
     isFuture: t >= n,
   }));
 };
@@ -453,7 +504,7 @@ const DEFAULT_SETTINGS = {
 };
 
 // ── PRICE CHART (zoom/pan) ────────────────────────────────────────────────────
-function PriceChart({ candles, interval, activeIndicators, indSettings, compositeWave }) {
+function PriceChart({ candles, interval, activeIndicators, indSettings, compositeWave, pickingAnchor, onAnchorPick }) {
   const svgRef = useRef(null);
   const viewRef = useRef({ startIdx: 0, endIdx: Math.max(0, candles.length - 1) });
   const [viewVersion, setViewVersion] = useState(0); // trigger re-render
@@ -501,7 +552,10 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
     let ne = endIdx - delta * rightStep;
     if (ne - ns < 5) return;
     ns = Math.max(0, ns);
-    const maxEnd = candlesRef.current.length - 1 + Math.floor((ne - ns) * 0.5);
+    // Cap: last real candle must stay within left 50% of visible window
+    const viewLen = ne - ns;
+    const lastReal = candlesRef.current.length - 1;
+    const maxEnd = lastReal + Math.floor(viewLen * 0.5);
     ne = Math.min(maxEnd, ne);
     viewRef.current = { startIdx: ns, endIdx: ne };
     setViewVersion(v => v + 1);
@@ -524,6 +578,19 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
 
   const handleMouseDown = (e) => {
     e.preventDefault();
+    // If in anchor picking mode, capture the candle index and fire callback
+    if (pickingAnchor && onAnchorPick) {
+      const svg = svgRef.current;
+      if (svg) {
+        const rect = svg.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * (W / rect.width);
+        const { startIdx, endIdx } = viewRef.current;
+        const visLen = endIdx - startIdx + 1;
+        const idx = Math.max(0, Math.min(visLen - 1, Math.round((x - PAD.left) / iW * (visLen - 1))));
+        onAnchorPick(startIdx + idx);
+      }
+      return;
+    }
     isPanningRef.current = true;
     panStart.current = { x: e.clientX, start: viewRef.current.startIdx, end: viewRef.current.endIdx };
   };
@@ -540,37 +607,32 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
     const idx = Math.max(0, Math.min(visLen - 1, Math.round((x - PAD.left) / iW * (visLen - 1))));
     const absIdx = startIdx + idx;
     const c = candlesRef.current[absIdx];
+    const xPos = PAD.left + (idx / Math.max(visLen - 1, 1)) * iW;
     if (c) {
       const slice = candlesRef.current.slice(startIdx, endIdx + 1);
       const prices2 = slice.flatMap(c => [c.h, c.l]);
       const minP2 = Math.min(...prices2), maxP2 = Math.max(...prices2);
       const r2 = maxP2 - minP2 || 1, p2 = r2 * 0.05;
-      const xPos = PAD.left + (idx / Math.max(visLen - 1, 1)) * iW;
       const yPos = PAD.top + iH - ((c.c - (minP2 - p2)) / (r2 + p2 * 2)) * iH;
       setHover({ x: xPos, y: yPos, candle: c });
+    } else {
+      // Future zone: show crosshair without price dot
+      setHover({ x: xPos, y: PAD.top + iH / 2, candle: null });
     }
     if (isPanningRef.current && panStart.current) {
       const dx = e.clientX - panStart.current.x;
       const { start: ps, end: pe } = panStart.current;
-      const len = pe - ps; // keep window size fixed
-      const pixPerCandle = iW * (rect.width / W) / Math.max(len, 1);
+      const pixPerCandle = iW * (rect.width / W) / Math.max(pe - ps, 1);
       const shift = Math.round(-dx / pixPerCandle);
+      const len = pe - ps;
+      let ns = ps + shift, ne = pe + shift;
       const lastReal = candlesRef.current.length - 1;
-      // Hard cap: lastReal must stay at or left of center (50% of window)
+      // Cap: last real candle must stay within left 50% of visible window
       const maxEnd = lastReal + Math.floor(len * 0.5);
-      let ns = ps + shift;
-      let ne = ns + len; // keep window size constant
-      // Apply bounds
-      if (ns < 0) { ns = 0; ne = len; }
-      if (ne > maxEnd) { ne = maxEnd; ns = ne - len; }
-      if (ns < 0) ns = 0;
+      if (ns < 0) { ns = 0; ne = Math.min(len, maxEnd); }
+      if (ne > maxEnd) { ne = maxEnd; ns = Math.max(0, ne - len); }
       viewRef.current = { startIdx: ns, endIdx: ne };
       setViewVersion(v => v + 1);
-    }
-    // Future zone hover
-    if (!c) {
-      const xPos = PAD.left + (idx / Math.max(visLen - 1, 1)) * iW;
-      setHover({ x: xPos, y: PAD.top + iH / 2, candle: null });
     }
   };
 
@@ -578,26 +640,36 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   if (!candles.length) return null;
 
   const { startIdx, endIdx } = viewRef.current;
-  const visible = candles.slice(startIdx, endIdx + 1);
-  const totalSlots = endIdx - startIdx + 1;
+  // Build visible array including virtual future bars (null candles for future)
+  const realEnd = Math.min(endIdx, candles.length - 1);
+  const visible = candles.slice(startIdx, realEnd + 1);
   if (visible.length < 2) return null;
+  // Total slots including future virtual bars
+  const totalSlots = endIdx - startIdx + 1;
 
   const prices = visible.flatMap(c => [c.h, c.l]);
-  const minP = Math.min(...prices);
-  const maxP = Math.max(...prices);
+  // Include composite wave values in auto-scale
+  const waveVals = compositeWave
+    ? compositeWave.filter(p => p.t >= startIdx && p.t < startIdx + visible.length).map(p => p.v)
+    : [];
+  const allVals = [...prices, ...waveVals].filter(v => v != null && isFinite(v));
+  const minP = Math.min(...allVals);
+  const maxP = Math.max(...allVals);
   const range = maxP - minP || 1;
   const pad = range * 0.05;
 
-  const xScale = (i) => PAD.left + (i / (visible.length - 1)) * iW;
+  const xScale = (i) => PAD.left + (i / (totalSlots - 1)) * iW;
   const yScale = (v) => PAD.top + iH - ((v - (minP - pad)) / (range + pad * 2)) * iH;
 
   const pathD = visible.map((c, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${yScale(c.c)}`).join(" ");
   const areaD = pathD + ` L ${xScale(visible.length - 1)} ${PAD.top + iH} L ${PAD.left} ${PAD.top + iH} Z`;
+  // Future zone marker
+  const futureX = xScale(visible.length - 1);
 
   const isUp = visible[visible.length - 1].c >= visible[0].c;
   const color = isUp ? "#22c55e" : "#ef4444";
 
-  const xStep = Math.max(1, Math.floor(visible.length / 7));
+  const xStep = Math.max(1, Math.floor(totalSlots / 7));
   const xLabels = visible.filter((_, i) => i % xStep === 0);
   const yTicks = 5;
   const yLabels = Array.from({ length: yTicks }, (_, i) => minP - pad + ((range + pad * 2) / (yTicks - 1)) * i);
@@ -605,7 +677,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   return (
     <div style={{ position: "relative", userSelect: "none" }}>
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
-        style={{ width: "100%", height: "auto", display: "block", cursor: "crosshair" }}
+        style={{ width: "100%", height: "auto", display: "block", cursor: pickingAnchor ? "cell" : "crosshair" }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -630,12 +702,28 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           </text>
         ))}
 
-        {/* X labels */}
-        {xLabels.map((c, i) => (
-          <text key={i} x={xScale(visible.indexOf(c))} y={H - 8} textAnchor="middle" fill="#444" fontSize="10" fontFamily="'DM Mono', monospace">
-            {fmtLabel(c.t)}
-          </text>
-        ))}
+        {/* X labels — real + projected future dates */}
+        {Array.from({ length: 8 }, (_, i) => {
+          const slotIdx = Math.round(i * (totalSlots - 1) / 7);
+          const x = xScale(slotIdx);
+          let label;
+          if (slotIdx < visible.length) {
+            label = fmtLabel(visible[slotIdx].t);
+          } else {
+            // Project date: extrapolate from last candle
+            const lastCandle = visible[visible.length - 1];
+            const barsAhead = slotIdx - (visible.length - 1);
+            const msPerBar = interval === "1d" ? 86400000 : 604800000;
+            label = fmtLabel(lastCandle.t + barsAhead * msPerBar);
+          }
+          return (
+            <text key={i} x={x} y={H - 8} textAnchor="middle"
+              fill={slotIdx >= visible.length ? "#2a2a2a" : "#444"}
+              fontSize="10" fontFamily="'DM Mono', monospace">
+              {label}
+            </text>
+          );
+        })}
 
         {/* Line only */}
         <path d={pathD} fill="none" stroke={color} strokeWidth="1" strokeLinejoin="round" strokeLinecap="round" />
@@ -762,28 +850,46 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           );
         })()}
 
-        {/* Hover — crosshair + time tag */}
+        {/* Hover — crosshair + y-axis price tag */}
         {hover && (() => {
-          const dotY = hover.candle ? yScale(hover.candle.c) : hover.y;
-          const slotIdx = Math.round((hover.x - PAD.left) / iW * (totalSlots - 1));
-          const isFut = slotIdx >= visible.length;
-          const msPerBar = interval === "1d" ? 86400000 : 604800000;
-          const ts = isFut
-            ? visible[visible.length-1].t + (slotIdx - (visible.length-1)) * msPerBar
-            : visible[Math.max(0, Math.min(slotIdx, visible.length-1))]?.t;
-          const label = ts ? fmtLabel(ts) : "";
-          const tagW = label.length * 6.5 + 12;
-          const tagX = Math.max(PAD.left, Math.min(hover.x - tagW/2, W - PAD.right - tagW));
-          const waveVal = compositeWave?.[startIdx + slotIdx]?.v;
+          const hoverPrice = hover.candle ? hover.candle.c : (() => {
+            // In future zone: interpolate from composite wave if available
+            return null;
+          })();
+          const tagPrice = hoverPrice ?? (compositeWave?.[startIdx + Math.round((hover.x - PAD.left) / iW * (totalSlots-1))]?.v);
+          const tagY = tagPrice ? yScale(tagPrice) : hover.y;
           return (
             <>
-              <line x1={hover.x} x2={hover.x} y1={PAD.top} y2={PAD.top + iH} stroke="#333" strokeWidth="1" strokeDasharray="4,3" />
-              <line x1={PAD.left} x2={W - PAD.right} y1={dotY} y2={dotY} stroke="#333" strokeWidth="1" strokeDasharray="4,3" />
-              {hover.candle && <circle cx={hover.x} cy={dotY} r="3" fill={color} stroke="#0a0a0a" strokeWidth="2" />}
-              <rect x={tagX} y={H - PAD.bottom + 2} width={tagW} height={18} fill="#1a1a1a" rx="3" />
-              <text x={tagX + tagW/2} y={H - PAD.bottom + 14} textAnchor="middle"
-                fill={isFut ? "#d4af37" : "#f8e49b"} fontSize="10"
-                fontFamily="'DM Mono', monospace" fontWeight="600">{label}</text>
+              {/* Vertical crosshair */}
+              <line x1={hover.x} x2={hover.x} y1={PAD.top} y2={PAD.top + iH}
+                stroke="#333" strokeWidth="1" strokeDasharray="4,3" />
+              {/* Horizontal crosshair */}
+              <line x1={PAD.left} x2={W - PAD.right} y1={tagY} y2={tagY}
+                stroke="#333" strokeWidth="1" strokeDasharray="4,3" />
+              {/* Dot on price line */}
+              {hover.candle && <circle cx={hover.x} cy={hover.y} r="3" fill={color} stroke="#0a0a0a" strokeWidth="2" />}
+              {/* X-axis time tag */}
+              {(() => {
+                const slotIdx = Math.round((hover.x - PAD.left) / iW * (totalSlots - 1));
+                const isFut = slotIdx >= visible.length;
+                const msPerBar = interval === "1d" ? 86400000 : 604800000;
+                const ts = isFut
+                  ? visible[visible.length-1].t + (slotIdx - (visible.length-1)) * msPerBar
+                  : visible[Math.max(0, Math.min(slotIdx, visible.length-1))]?.t;
+                const label = ts ? fmtLabel(ts) : "";
+                const tagW = label.length * 6.5 + 12;
+                const tagX = Math.max(PAD.left, Math.min(hover.x - tagW/2, W - PAD.right - tagW));
+                return (
+                  <>
+                    <rect x={tagX} y={H - PAD.bottom + 2} width={tagW} height={18} fill="#1a1a1a" rx="3" />
+                    <text x={tagX + tagW/2} y={H - PAD.bottom + 14} textAnchor="middle"
+                      fill={isFut ? "#d4af37" : "#f8e49b"} fontSize="10"
+                      fontFamily="'DM Mono', monospace" fontWeight="600">
+                      {label}
+                    </text>
+                  </>
+                );
+              })()}
             </>
           );
         })()}
@@ -843,6 +949,9 @@ export default function App() {
   const [cycleTweaks, setCycleTweaks] = useState({});
   const [showCycles, setShowCycles] = useState(false);
   const [cyclesPanelOpen, setCyclesPanelOpen] = useState(false);
+  const [pickingAnchor, setPickingAnchor] = useState(false);
+  const [cycleAnchorIdx, setCycleAnchorIdx] = useState(null);
+  const [cycleSlopeMult, setCycleSlopeMult] = useState(1.0);
 
   const availableYears = [...new Set(candles.map(c => c.date.getFullYear()))].sort();
 
@@ -871,7 +980,7 @@ export default function App() {
     if (candles.length > 20) {
       setProgress("Analyzing cycles…");
       setTimeout(() => {
-        const c = analyzeCycles(candles, 20);
+        const c = analyzeCycles(candles, 20, cycleAnchorIdx);
         setCycles(c);
         setSelectedCycles(new Set());
         setCycleTweaks({});
@@ -922,7 +1031,7 @@ export default function App() {
 
   const selectedCycleObjs = cycles.filter(c => selectedCycles.has(c.period));
   const compositeWave = (showCycles && selectedCycleObjs.length > 0)
-    ? buildComposite(candles, selectedCycleObjs, cycleTweaks)
+    ? buildComposite(candles, selectedCycleObjs, cycleTweaks, cycleAnchorIdx, cycleSlopeMult)
     : [];
 
   const toggleIndicator = (id) => setActiveIndicators(prev => {
@@ -1086,7 +1195,7 @@ export default function App() {
       {/* PRICE CHART */}
       {!ticker ? (
         <div className="empty">
-          <div className="empty-label">Enter a ticker</div>
+          <div className="empty-label">Enter a crypto ticker</div>
           <div className="empty-sub">Crypto: BTC · ETH · SOL · HYPE</div>
           <div className="empty-sub" style={{ marginTop: 6 }}>Stocks: AAPL · MSFT · ADS · BMW</div>
           <div className="empty-sub" style={{ marginTop: 4 }}>Indices: SPX · NDX · DAX · FTSE</div>
@@ -1110,42 +1219,80 @@ export default function App() {
             <div style={{ display: "flex", position: "relative" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="section-body" style={{ padding: "12px 8px 4px" }}>
-                  <PriceChart candles={candles} interval={interval} activeIndicators={activeIndicators} indSettings={indSettings} compositeWave={compositeWave} />
+                  <PriceChart candles={candles} interval={interval} activeIndicators={activeIndicators} indSettings={indSettings} compositeWave={compositeWave}
+                    pickingAnchor={pickingAnchor}
+                    onAnchorPick={(idx) => {
+                      setCycleAnchorIdx(idx);
+                      setPickingAnchor(false);
+                      setShowCycles(true);
+                      // Recompute cycles with anchor context
+                      setTimeout(() => {
+                        const c = analyzeCycles(candles, 20, idx);
+                        setCycles(c);
+                        setSelectedCycles(new Set());
+                      }, 10);
+                    }} />
                 </div>
               </div>
               {/* Cycle Panel Toggle */}
               {cycles.length > 0 && (
                 <div style={{ position: "relative" }}>
                   <button onClick={() => setCyclesPanelOpen(o => !o)}
-                    style={{ position: "absolute", top: 52, right: -1, background: cyclesPanelOpen ? "#1a1a1a" : "#111", border: "1px solid #222", borderRight: "none", color: cyclesPanelOpen ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", padding: "6px 8px", cursor: "pointer", borderRadius: "6px 0 0 6px", writingMode: "vertical-rl", textTransform: "uppercase", transition: "all 0.2s" }}>
-                    CYCLES
+                    style={{ position: "absolute", top: 12, right: -1, background: cyclesPanelOpen ? "#1a1a1a" : "#111", border: "1px solid #222", borderRight: "none", color: cyclesPanelOpen ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", padding: "8px 10px", cursor: "pointer", borderRadius: "6px 0 0 6px", writingMode: "vertical-rl", textTransform: "uppercase", transition: "all 0.2s" }}>
+                    {cyclesPanelOpen ? "◀ Cycles" : "▶ Cycles"}
                   </button>
                   {cyclesPanelOpen && (
-                    <div style={{ width: 280, background: "#0d0d0d", borderLeft: "1px solid #1a1a1a", display: "flex", flexDirection: "column" }}>
+                    <div style={{ width: 340, background: "#0d0d0d", borderLeft: "1px solid #1a1a1a", display: "flex", flexDirection: "column" }}>
                       {/* Panel header */}
                       <div style={{ padding: "12px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 14, letterSpacing: "0.1em", color: "#e8e8e8" }}>Cycle Analysis</span>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#444" }}>{selectedCycles.size} selected</span>
-                          <button onClick={() => setShowCycles(s => !s)}
-                            style={{ background: showCycles ? "rgba(212,175,55,0.15)" : "transparent", border: `1px solid ${showCycles ? "#d4af37" : "#222"}`, color: showCycles ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", padding: "4px 10px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase" }}>
-                            {showCycles ? "ON" : "OFF"}
+                          <button onClick={() => setPickingAnchor(p => !p)}
+                            title="Click a point on the chart to anchor the wave"
+                            style={{ background: pickingAnchor ? "rgba(239,68,68,0.15)" : cycleAnchorIdx != null ? "rgba(212,175,55,0.1)" : "transparent", border: `1px solid ${pickingAnchor ? "#ef4444" : cycleAnchorIdx != null ? "#d4af37" : "#222"}`, color: pickingAnchor ? "#ef4444" : cycleAnchorIdx != null ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", padding: "4px 10px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase", transition: "all 0.2s" }}>
+                            {pickingAnchor ? "↗ CLICK LOW" : cycleAnchorIdx != null ? "⊕ LOW SET" : "📍 SET LOW"}
                           </button>
+
                         </div>
                       </div>
+                      {/* Slope control */}
+                      <div style={{ padding: "10px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Peak Shift</span>
+                        <input type="range" min="0.5" max="1.5" step="0.01" value={cycleSlopeMult}
+                          onChange={e => {
+                            const raw = parseFloat(e.target.value);
+                            const snapped = Math.round(raw * 10) / 10;
+                            const dist = Math.abs(raw - snapped);
+                            if (dist < 0.035) {
+                              // Hard snap zone — lock immediately
+                              setCycleSlopeMult(snapped);
+                            } else if (dist < 0.08) {
+                              // Rubber band — pulls hard toward snap, exponential feel
+                              const t = (dist - 0.035) / (0.08 - 0.035); // 0→1
+                              const pull = snapped + (raw - snapped) * t * t * 0.25;
+                              setCycleSlopeMult(pull);
+                            } else {
+                              setCycleSlopeMult(raw);
+                            }
+                          }}
+                          style={{ flex: 1, accentColor: "#d4af37", height: 2, cursor: "pointer" }} />
+                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 36, textAlign: "right", whiteSpace: "nowrap" }}>{cycleSlopeMult.toFixed(2)}x</span>
+                        <button onClick={() => setCycleSlopeMult(1.0)} style={{ background: "transparent", border: "1px solid #222", color: "#333", fontFamily: "'DM Mono', monospace", fontSize: 8, padding: "2px 6px", borderRadius: 3, cursor: "pointer" }}>↺</button>
+                      </div>
                       {/* Table header */}
-                      <div style={{ display: "grid", gridTemplateColumns: "28px 56px 1fr 40px", gap: 0, padding: "6px 16px", borderBottom: "1px solid #1a1a1a" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "28px 64px 1fr 40px", gap: 0, padding: "6px 18px", borderBottom: "1px solid #1a1a1a" }}>
                         {["#","Period","Accuracy",""].map((h, i) => (
                           <span key={i} style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.18em", color: "#2a2a2a", textTransform: "uppercase" }}>{h}</span>
                         ))}
                       </div>
                       {/* Cycle rows */}
-                      <div style={{ overflowY: "auto", flex: 1, maxHeight: 320 }}>
+                      <div style={{ overflowY: "auto", flex: 1, maxHeight: 480 }}>
                         {cycles.map((cyc, i) => {
                           const isOn = selectedCycles.has(cyc.period);
                           return (
                             <div key={cyc.period} onClick={() => toggleCycle(cyc.period)}
-                              style={{ display: "grid", gridTemplateColumns: "28px 56px 1fr 40px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid #0f0f0f", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.05)" : "transparent", transition: "background 0.15s" }}>
+                              style={{ display: "grid", gridTemplateColumns: "28px 64px 1fr 40px", alignItems: "center", gap: 0, padding: "9px 18px", borderBottom: "1px solid #0f0f0f", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.05)" : "transparent", transition: "background 0.15s" }}>
                               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#2a2a2a" }}>{i + 1}</span>
                               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: isOn ? "#f8e49b" : "#555", fontWeight: isOn ? 600 : 400 }}>{cyc.period}d</span>
                               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
