@@ -606,15 +606,17 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
     const visLen = endIdx - startIdx + 1;
     const idx = Math.max(0, Math.min(visLen - 1, Math.round((x - PAD.left) / iW * (visLen - 1))));
     const absIdx = startIdx + idx;
-    const c = candlesRef.current[absIdx];
+    const xPos = PAD.left + (idx / Math.max(visLen - 1, 1)) * iW;
     if (c) {
       const slice = candlesRef.current.slice(startIdx, endIdx + 1);
       const prices2 = slice.flatMap(c => [c.h, c.l]);
       const minP2 = Math.min(...prices2), maxP2 = Math.max(...prices2);
       const r2 = maxP2 - minP2 || 1, p2 = r2 * 0.05;
-      const xPos = PAD.left + (idx / Math.max(visLen - 1, 1)) * iW;
       const yPos = PAD.top + iH - ((c.c - (minP2 - p2)) / (r2 + p2 * 2)) * iH;
       setHover({ x: xPos, y: yPos, candle: c });
+    } else {
+      // Future zone — still show crosshair + time tag
+      setHover({ x: xPos, y: PAD.top + iH / 2, candle: null });
     }
     if (isPanningRef.current && panStart.current) {
       const dx = e.clientX - panStart.current.x;
