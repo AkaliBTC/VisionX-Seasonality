@@ -567,6 +567,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
 
   const { startIdx, endIdx } = viewRef.current;
   const visible = candles.slice(startIdx, endIdx + 1);
+  const totalSlots = endIdx - startIdx + 1;
   if (visible.length < 2) return null;
 
   const prices = visible.flatMap(c => [c.h, c.l]);
