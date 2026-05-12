@@ -552,16 +552,25 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
     if (isPanningRef.current && panStart.current) {
       const dx = e.clientX - panStart.current.x;
       const { start: ps, end: pe } = panStart.current;
-      const pixPerCandle = iW * (rect.width / W) / Math.max(pe - ps, 1);
+      const len = pe - ps; // keep window size fixed
+      const pixPerCandle = iW * (rect.width / W) / Math.max(len, 1);
       const shift = Math.round(-dx / pixPerCandle);
-      const len = pe - ps;
-      let ns = ps + shift, ne = pe + shift;
       const lastReal = candlesRef.current.length - 1;
+      // Hard cap: lastReal must stay at or left of center (50% of window)
       const maxEnd = lastReal + Math.floor(len * 0.5);
-      if (ns < 0) { ns = 0; ne = Math.min(len, maxEnd); }
-      if (ne > maxEnd) { ne = maxEnd; ns = Math.max(0, ne - len); }
+      let ns = ps + shift;
+      let ne = ns + len; // keep window size constant
+      // Apply bounds
+      if (ns < 0) { ns = 0; ne = len; }
+      if (ne > maxEnd) { ne = maxEnd; ns = ne - len; }
+      if (ns < 0) ns = 0;
       viewRef.current = { startIdx: ns, endIdx: ne };
       setViewVersion(v => v + 1);
+    }
+    // Future zone hover
+    if (!c) {
+      const xPos = PAD.left + (idx / Math.max(visLen - 1, 1)) * iW;
+      setHover({ x: xPos, y: PAD.top + iH / 2, candle: null });
     }
   };
 
