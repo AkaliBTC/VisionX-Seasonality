@@ -115,7 +115,7 @@ const parseCSV = (text, interval) => {
 
 // ── NASDAQ DATA LINK — Commodities ───────────────────────────────────────────
 const NASDAQ_MAP = {
-  "WTI": "CHRIS/CME_CL1", "OIL": "CHRIS/CME_CL1", "CRUDE": "CHRIS/CME_CL1",
+  "WTI": "NSE/OIL", "OIL": "NSE/OIL", "CRUDE": "NSE/OIL",
   "GOLD": "LBMA/GOLD", "XAU": "LBMA/GOLD",
   "SILVER": "LBMA/SILVER", "XAG": "LBMA/SILVER",
   "PLATINUM": "LPPM/PLAT", "XPT": "LPPM/PLAT",
