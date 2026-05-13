@@ -74,26 +74,21 @@ const fetchTwelveDataHistory = async (ticker, interval) => {
   return allCandles.length > 10 ? allCandles : null;
 };
 
-// ── CSV PARSER (TradingView export format) ────────────────────────────────────
+// ── CSV PARSER (TradingView export) ──────────────────────────────────────────
 const parseCSV = (text, interval) => {
   const lines = text.trim().split("\n");
-  const header = lines[0].toLowerCase();
-  // Detect columns
-  const cols = header.split(",").map(c => c.trim().replace(/['"]/g, ""));
+  const cols = lines[0].toLowerCase().split(",").map(c => c.trim().replace(/['"]/g, ""));
   const tIdx = cols.findIndex(c => c.includes("time") || c.includes("date"));
   const oIdx = cols.findIndex(c => c === "open");
   const hIdx = cols.findIndex(c => c === "high");
   const lIdx = cols.findIndex(c => c === "low");
-  const cIdx = cols.findIndex(c => c === "close");
-
+  const cIdx = cols.findIndex(c => c === "close" || c === "value" || c === "price");
   if (tIdx === -1 || cIdx === -1) return null;
-
   const daily = [];
   for (let i = 1; i < lines.length; i++) {
     const parts = lines[i].split(",").map(s => s.trim().replace(/['"]/g, ""));
     if (parts.length < 2) continue;
     const raw = parts[tIdx];
-    // Handle Unix timestamp or date string
     const t = isNaN(raw) ? new Date(raw).getTime() : parseInt(raw) * 1000;
     if (isNaN(t)) continue;
     const c = parseFloat(parts[cIdx]);
@@ -104,16 +99,13 @@ const parseCSV = (text, interval) => {
     daily.push({ t, o, h, l, c, date: new Date(t) });
   }
   daily.sort((a, b) => a.t - b.t);
-
   if (interval === "1w" && daily.length > 0) {
     const weeks = {};
     for (const d of daily) {
-      const wd = new Date(d.t);
-      const day = wd.getDay();
-      const diff = wd.getDate() - day + (day === 0 ? -6 : 1);
-      const monday = new Date(new Date(d.t).setDate(diff));
+      const wd = new Date(d.t); const day = wd.getDay();
+      const monday = new Date(new Date(d.t).setDate(wd.getDate() - day + (day === 0 ? -6 : 1)));
       const key = monday.toISOString().split("T")[0];
-      if (!weeks[key]) weeks[key] = { ...d };
+      if (!weeks[key]) weeks[key] = {...d};
       else { weeks[key].h = Math.max(weeks[key].h, d.h); weeks[key].l = Math.min(weeks[key].l, d.l); weeks[key].c = d.c; }
     }
     return Object.values(weeks).sort((a, b) => a.t - b.t);
@@ -121,51 +113,39 @@ const parseCSV = (text, interval) => {
   return daily;
 };
 
-// ── DETECT SOURCE ─────────────────────────────────────────────────────────────// ── CSV PARSER (TradingView export format) ────────────────────────────────────
-const parseCSV = (text, interval) => {
-  const lines = text.trim().split("\n");
-  const header = lines[0].toLowerCase();
-  // Detect columns
-  const cols = header.split(",").map(c => c.trim().replace(/['"]/g, ""));
-  const tIdx = cols.findIndex(c => c.includes("time") || c.includes("date"));
-  const oIdx = cols.findIndex(c => c === "open");
-  const hIdx = cols.findIndex(c => c === "high");
-  const lIdx = cols.findIndex(c => c === "low");
-  const cIdx = cols.findIndex(c => c === "close");
+// ── NASDAQ DATA LINK — Commodities ───────────────────────────────────────────
+const NASDAQ_MAP = {
+  "WTI": "CHRIS/CME_CL1", "OIL": "CHRIS/CME_CL1", "CRUDE": "CHRIS/CME_CL1",
+  "GOLD": "LBMA/GOLD", "XAU": "LBMA/GOLD",
+  "SILVER": "LBMA/SILVER", "XAG": "LBMA/SILVER",
+  "PLATINUM": "LPPM/PLAT", "XPT": "LPPM/PLAT",
+  "PALLADIUM": "LPPM/PALL", "XPD": "LPPM/PALL",
+  "COPPER": "LME/PR_CU", "HG": "LME/PR_CU",
+  "ALUMINUM": "LME/PR_AL", "ALUMINIUM": "LME/PR_AL",
+  "WHEAT": "CHRIS/CME_W1", "ZW": "CHRIS/CME_W1",
+};
+const COMMODITY_KEYS = new Set(Object.keys(NASDAQ_MAP));
+const isCommodity = (ticker) => COMMODITY_KEYS.has(ticker.toUpperCase().trim());
 
-  if (tIdx === -1 || cIdx === -1) return null;
+const ND_PROXIES = [
+  (u) => fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(u)}`).then(r => { if(!r.ok) throw new Error(); return r.json(); }).then(d => d.contents),
+  (u) => fetch(`https://corsproxy.io/?${encodeURIComponent(u)}`).then(r => { if(!r.ok) throw new Error(); return r.text(); }),
+  (u) => fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`).then(r => { if(!r.ok) throw new Error(); return r.text(); }),
+];
 
-  const daily = [];
-  for (let i = 1; i < lines.length; i++) {
-    const parts = lines[i].split(",").map(s => s.trim().replace(/['"]/g, ""));
-    if (parts.length < 2) continue;
-    const raw = parts[tIdx];
-    // Handle Unix timestamp or date string
-    const t = isNaN(raw) ? new Date(raw).getTime() : parseInt(raw) * 1000;
-    if (isNaN(t)) continue;
-    const c = parseFloat(parts[cIdx]);
-    if (isNaN(c)) continue;
-    const o = oIdx >= 0 ? parseFloat(parts[oIdx]) || c : c;
-    const h = hIdx >= 0 ? parseFloat(parts[hIdx]) || c : c;
-    const l = lIdx >= 0 ? parseFloat(parts[lIdx]) || c : c;
-    daily.push({ t, o, h, l, c, date: new Date(t) });
+const fetchNasdaqHistory = async (ticker, interval) => {
+  const dataset = NASDAQ_MAP[ticker.toUpperCase().trim()];
+  if (!dataset) return null;
+  const url = `https://data.nasdaq.com/api/v3/datasets/${dataset}/data.csv?order=asc`;
+  for (const px of ND_PROXIES) {
+    try {
+      const text = await px(url);
+      if (!text || text.includes("<!DOCTYPE") || text.length < 100) continue;
+      const parsed = parseCSV(text, interval);
+      if (parsed && parsed.length > 10) return parsed;
+    } catch { continue; }
   }
-  daily.sort((a, b) => a.t - b.t);
-
-  if (interval === "1w" && daily.length > 0) {
-    const weeks = {};
-    for (const d of daily) {
-      const wd = new Date(d.t);
-      const day = wd.getDay();
-      const diff = wd.getDate() - day + (day === 0 ? -6 : 1);
-      const monday = new Date(new Date(d.t).setDate(diff));
-      const key = monday.toISOString().split("T")[0];
-      if (!weeks[key]) weeks[key] = { ...d };
-      else { weeks[key].h = Math.max(weeks[key].h, d.h); weeks[key].l = Math.min(weeks[key].l, d.l); weeks[key].c = d.c; }
-    }
-    return Object.values(weeks).sort((a, b) => a.t - b.t);
-  }
-  return daily;
+  return null;
 };
 
 // ── DETECT SOURCE ─────────────────────────────────────────────────────────────
@@ -178,6 +158,10 @@ const isCrypto = (ticker) => {
 
 const fetchHistory = async (ticker, interval) => {
   if (isCrypto(ticker)) return await fetchBinanceHistory(ticker, interval);
+  if (isCommodity(ticker)) {
+    const nd = await fetchNasdaqHistory(ticker, interval);
+    if (nd && nd.length > 10) return nd;
+  }
   return await fetchTwelveDataHistory(ticker, interval);
 };
 
@@ -701,16 +685,14 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
     const idx = Math.max(0, Math.min(visLen - 1, Math.round((x - PAD.left) / iW * (visLen - 1))));
     const absIdx = startIdx + idx;
     const c = candlesRef.current[absIdx];
-    const xPos = PAD.left + (idx / Math.max(visLen - 1, 1)) * iW;
     if (c) {
       const slice = candlesRef.current.slice(startIdx, endIdx + 1);
       const prices2 = slice.flatMap(c => [c.h, c.l]);
       const minP2 = Math.min(...prices2), maxP2 = Math.max(...prices2);
       const r2 = maxP2 - minP2 || 1, p2 = r2 * 0.05;
+      const xPos = PAD.left + (idx / Math.max(visLen - 1, 1)) * iW;
       const yPos = PAD.top + iH - ((c.c - (minP2 - p2)) / (r2 + p2 * 2)) * iH;
       setHover({ x: xPos, y: yPos, candle: c });
-    } else {
-      setHover({ x: xPos, y: PAD.top + iH / 2, candle: null });
     }
     if (isPanningRef.current && panStart.current) {
       const dx = e.clientX - panStart.current.x;
@@ -795,24 +777,12 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           </text>
         ))}
 
-        {/* X labels — real + projected future dates */}
-        {Array.from({ length: 8 }, (_, i) => {
-          const slotIdx = Math.round(i * (totalSlots - 1) / 7);
-          const x = xScale(slotIdx);
-          const isFut = slotIdx >= visible.length;
-          const msPerBar = interval === "1d" ? 86400000 : 604800000;
-          const ts = isFut
-            ? visible[visible.length-1].t + (slotIdx - (visible.length-1)) * msPerBar
-            : visible[Math.min(slotIdx, visible.length-1)]?.t;
-          const label = ts ? fmtLabel(ts) : "";
-          return (
-            <text key={i} x={x} y={H - 8} textAnchor="middle"
-              fill={isFut ? "#2a2a2a" : "#444"}
-              fontSize="10" fontFamily="'DM Mono', monospace">
-              {label}
-            </text>
-          );
-        })}
+        {/* X labels */}
+        {xLabels.map((c, i) => (
+          <text key={i} x={xScale(visible.indexOf(c))} y={H - 8} textAnchor="middle" fill="#444" fontSize="10" fontFamily="'DM Mono', monospace">
+            {fmtLabel(c.t)}
+          </text>
+        ))}
 
         {/* Line only */}
         <path d={pathD} fill="none" stroke={color} strokeWidth="1" strokeLinejoin="round" strokeLinecap="round" />
@@ -939,33 +909,17 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           );
         })()}
 
-        {/* Hover — crosshair + time tag */}
-        {hover && (() => {
-          const slotIdx = Math.round((hover.x - PAD.left) / iW * (totalSlots - 1));
-          const isFut = slotIdx >= visible.length;
-          const msPerBar = interval === "1d" ? 86400000 : 604800000;
-          const ts = isFut
-            ? visible[visible.length-1].t + (slotIdx - (visible.length-1)) * msPerBar
-            : visible[Math.max(0, Math.min(slotIdx, visible.length-1))]?.t;
-          const label = ts ? fmtLabel(ts) : "";
-          const tagW = label.length * 6.5 + 12;
-          const tagX = Math.max(PAD.left, Math.min(hover.x - tagW/2, W - PAD.right - tagW));
-          return (
-            <>
-              <line x1={hover.x} x2={hover.x} y1={PAD.top} y2={PAD.top + iH} stroke="#2a2a2a" strokeWidth="1" strokeDasharray="4,3" />
-              <line x1={PAD.left} x2={W - PAD.right} y1={hover.y} y2={hover.y} stroke="#2a2a2a" strokeWidth="1" strokeDasharray="4,3" />
-              {hover.candle && <circle cx={hover.x} cy={hover.y} r="4" fill={color} stroke="#0a0a0a" strokeWidth="2" />}
-              <rect x={tagX} y={H - PAD.bottom + 2} width={tagW} height={18} fill="#1a1a1a" rx="3" />
-              <text x={tagX + tagW/2} y={H - PAD.bottom + 14} textAnchor="middle"
-                fill={isFut ? "#d4af37" : "#f8e49b"} fontSize="10"
-                fontFamily="'DM Mono', monospace" fontWeight="600">{label}</text>
-            </>
-          );
-        })()}
+        {/* Hover */}
+        {hover && (
+          <>
+            <line x1={hover.x} x2={hover.x} y1={PAD.top} y2={PAD.top + iH} stroke="#2a2a2a" strokeWidth="1" strokeDasharray="4,3" />
+            <circle cx={hover.x} cy={hover.y} r="4" fill={color} stroke="#0a0a0a" strokeWidth="2" />
+          </>
+        )}
       </svg>
 
       {/* Tooltip */}
-      {hover && hover.candle && (
+      {hover && (
         <div style={{ position: "absolute", top: 12, left: 90, background: "#111", border: "1px solid #222", borderRadius: 8, padding: "8px 14px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: "#e8e8e8", pointerEvents: "none" }}>
           <div style={{ color: "#555", fontSize: 10, marginBottom: 2 }}>{fmtLabel(hover.candle.t)}</div>
           <div style={{ color, fontSize: 16, fontWeight: 600 }}>{fmtPrice(hover.candle.c)}</div>
@@ -1020,18 +974,13 @@ export default function App() {
     : null;
 
   const handleCSV = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
       const parsed = parseCSV(ev.target.result, interval);
       if (!parsed || parsed.length < 10) { setError(true); return; }
-      const name = file.name.replace(/\.csv$/i, "").toUpperCase();
-      setTicker(name);
-      setCandles(parsed);
-      setCsvLoaded(true);
-      setSelectedYears([]);
-      setError(false);
+      setTicker(file.name.replace(/\.csv$/i, "").toUpperCase());
+      setCandles(parsed); setCsvLoaded(true); setSelectedYears([]); setError(false);
     };
     reader.readAsText(file);
   };
@@ -1040,7 +989,7 @@ export default function App() {
     if (!t) return;
     setCsvLoaded(false);
     setLoading(true); setError(false); setCandles([]);
-    setProgress(isCrypto(t) ? "Fetching Binance history…" : "Fetching Twelve Data history…");
+    setProgress(isCrypto(t) ? "Fetching Binance history…" : isCommodity(t) ? "Fetching commodity data…" : "Fetching Twelve Data history…");
     try {
       const data = await fetchHistory(t, iv);
       if (!data || data.length < 10) { setError(true); }
@@ -1228,11 +1177,10 @@ export default function App() {
           ))}
         </div>
         {loading && <><div className="spinner" /><span style={{ fontSize: 10, color: "#444", letterSpacing: "0.1em" }}>{progress}</span></>}
-        <label style={{ display: "flex", alignItems: "center", gap: 6, padding: "11px 18px", background: "transparent", border: "1px solid #222", borderRadius: 6, cursor: "pointer", fontFamily: "'Montserrat', sans-serif", fontSize: 10, fontWeight: 700, letterSpacing: "0.15em", color: "#555", textTransform: "uppercase", transition: "all 0.2s" }}
-          onMouseEnter={e => e.currentTarget.style.borderColor="#333"}
-          onMouseLeave={e => e.currentTarget.style.borderColor="#222"}>
+        <label style={{ display:"flex", alignItems:"center", gap:6, padding:"11px 18px", background:"transparent", border:"1px solid #222", borderRadius:6, cursor:"pointer", fontFamily:"'Montserrat',sans-serif", fontSize:10, fontWeight:700, letterSpacing:"0.15em", color:"#555", textTransform:"uppercase", transition:"all 0.2s" }}
+          onMouseEnter={e=>e.currentTarget.style.borderColor="#333"} onMouseLeave={e=>e.currentTarget.style.borderColor="#222"}>
           ↑ CSV
-          <input type="file" accept=".csv" style={{ display: "none" }} onChange={handleCSV} />
+          <input type="file" accept=".csv" style={{display:"none"}} onChange={handleCSV} />
         </label>
       </div>
 
@@ -1275,11 +1223,11 @@ export default function App() {
       {/* PRICE CHART */}
       {!ticker ? (
         <div className="empty">
-          <div className="empty-label">Enter a ticker</div>
+          <div className="empty-label">Enter a crypto ticker</div>
           <div className="empty-sub">Crypto: BTC · ETH · SOL · HYPE</div>
           <div className="empty-sub" style={{ marginTop: 6 }}>Stocks: AAPL · MSFT · ADS · BMW</div>
           <div className="empty-sub" style={{ marginTop: 4 }}>Indices: SPX · NDX · DAX · FTSE</div>
-          <div className="empty-sub" style={{ marginTop: 4 }}>Commodities: Upload CSV from TradingView</div>
+          <div className="empty-sub" style={{ marginTop: 4 }}>Commodities: GOLD · SILVER · WTI · PLATINUM · PALLADIUM · COPPER · WHEAT · or ↑ CSV</div>
         </div>
       ) : error ? (
         <div className="empty">
@@ -1290,7 +1238,7 @@ export default function App() {
         <>
           <div className="section">
             <div className="section-header">
-              <div className="section-title">{ticker} · {interval === "1d" ? "DAILY" : "WEEKLY"} · {isCrypto(ticker) ? "BINANCE" : csvLoaded ? "CSV" : "TWELVE DATA"}</div>
+              <div className="section-title">{ticker} · {interval === "1d" ? "DAILY" : "WEEKLY"} · {isCrypto(ticker) ? "BINANCE" : csvLoaded ? "CSV" : isCommodity(ticker) ? "NASDAQ" : "TWELVE DATA"}</div>
               <div style={{ display: "flex", gap: 6 }}>
                 <button className="btn btn-outline" style={{ padding: "6px 14px", fontSize: 9 }}
                   onClick={() => {/* zoom handled in component */}}>SCROLL TO ZOOM · DRAG TO PAN</button>
