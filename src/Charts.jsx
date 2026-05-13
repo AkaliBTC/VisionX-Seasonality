@@ -556,9 +556,12 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
       const pixPerCandle = iW * (rect.width / W) / Math.max(pe - ps, 1);
       const shift = Math.round(-dx / pixPerCandle);
       const len = pe - ps;
-      let ns = ps + shift, ne = pe + shift;
+      let ns = ps + shift;
+      let ne = ns + len;
+      const lastReal = candlesRef.current.length - 1;
+      const maxEnd = lastReal + Math.floor(len * 0.5);
       if (ns < 0) { ns = 0; ne = len; }
-      if (ne >= candlesRef.current.length) { ne = candlesRef.current.length - 1; ns = ne - len; }
+      if (ne > maxEnd) { ne = maxEnd; ns = Math.max(0, ne - len); }
       viewRef.current = { startIdx: ns, endIdx: ne };
       setViewVersion(v => v + 1);
     }
@@ -572,7 +575,6 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   const visible = candles.slice(startIdx, realEnd + 1);
   if (visible.length < 2) return null;
   const totalSlots = endIdx - startIdx + 1;
-  if (visible.length < 2) return null;
 
   const prices = visible.flatMap(c => [c.h, c.l]);
   const minP = Math.min(...prices);
