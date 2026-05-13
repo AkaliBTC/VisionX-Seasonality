@@ -523,6 +523,18 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
 
   const handleMouseDown = (e) => {
     e.preventDefault();
+    if (pickingAnchor && onAnchorPick) {
+      const svg = svgRef.current;
+      if (svg) {
+        const rect = svg.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * (W / rect.width);
+        const { startIdx, endIdx } = viewRef.current;
+        const visLen = endIdx - startIdx + 1;
+        const idx = Math.max(0, Math.min(visLen - 1, Math.round((x - PAD.left) / iW * (visLen - 1))));
+        onAnchorPick(startIdx + idx);
+      }
+      return;
+    }
     isPanningRef.current = true;
     panStart.current = { x: e.clientX, start: viewRef.current.startIdx, end: viewRef.current.endIdx };
   };
@@ -599,7 +611,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   return (
     <div style={{ position: "relative", userSelect: "none" }}>
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
-        style={{ width: "100%", height: "auto", display: "block", cursor: "crosshair" }}
+        style={{ width: "100%", height: "auto", display: "block", cursor: pickingAnchor ? "cell" : "crosshair" }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
