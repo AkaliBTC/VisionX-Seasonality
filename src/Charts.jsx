@@ -460,7 +460,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   const [hover, setHover] = useState(null);
   const isPanningRef = useRef(false);
   const panStart = useRef(null);
-  const candlesRef = useRef(candles);
+  const priceScaleRef = useRef({ minP: 0, pad: 0, range: 1 });
   candlesRef.current = candles;
 
   const W = 1000, H = 340, PAD = { top: 20, right: 20, bottom: 40, left: 80 };
@@ -556,13 +556,8 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
     const c = candlesRef.current[absIdx];
     const xPos = PAD.left + (idx / Math.max(slots - 1, 1)) * iW;
     if (c) {
-      const realCandles = candlesRef.current;
-      const realEnd = Math.min(endIdx, realCandles.length - 1);
-      const slice = realCandles.slice(startIdx, realEnd + 1);
-      const prices2 = slice.flatMap(c => [c.h, c.l]);
-      const minP2 = Math.min(...prices2), maxP2 = Math.max(...prices2);
-      const r2 = maxP2 - minP2 || 1, p2 = r2 * 0.05;
-      const yPos = PAD.top + iH - ((c.c - (minP2 - p2)) / (r2 + p2 * 2)) * iH;
+      const { minP, pad, range } = priceScaleRef.current;
+      const yPos = PAD.top + iH - ((c.c - (minP - pad)) / (range + pad * 2)) * iH;
       setHover({ x: xPos, y: yPos, candle: c });
     } else {
       setHover({ x: xPos, y: PAD.top + iH / 2, candle: null });
@@ -614,7 +609,9 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   const range = maxP - minP || 1;
   const pad = range * 0.05;
 
-  const xScale = (i) => PAD.left + (i / (visible.length - 1)) * iW;
+  priceScaleRef.current = { minP, pad, range };
+
+  const xScale = (i) => PAD.left + (i / Math.max(totalSlots - 1, 1)) * iW;
   const yScale = (v) => PAD.top + iH - ((v - (minP - pad)) / (range + pad * 2)) * iH;
 
   const pathD = visible.map((c, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${yScale(c.c)}`).join(" ");
@@ -623,8 +620,8 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   const isUp = visible[visible.length - 1].c >= visible[0].c;
   const color = isUp ? "#22c55e" : "#ef4444";
 
-  const xStep = Math.max(1, Math.floor(visible.length / 7));
-  const xLabels = visible.filter((_, i) => i % xStep === 0);
+  const xStep = Math.max(1, Math.floor(totalSlots / 7));
+  const xLabels = Array.from({ length: 8 }, (_, i) => Math.round(i * (totalSlots - 1) / 7));
   const yTicks = 5;
   const yLabels = Array.from({ length: yTicks }, (_, i) => minP - pad + ((range + pad * 2) / (yTicks - 1)) * i);
 
