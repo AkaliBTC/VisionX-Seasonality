@@ -82,7 +82,11 @@ const parseCSV = (text, interval) => {
   const oIdx = cols.findIndex(c => c === "open");
   const hIdx = cols.findIndex(c => c === "high");
   const lIdx = cols.findIndex(c => c === "low");
-  const cIdx = cols.findIndex(c => c === "close" || c === "value" || c === "price");
+  const cIdx = cols.findIndex(c =>
+    c === "close" || c === "value" || c === "price" ||
+    c === "usd (pm)" || c === "usd (am)" || c === "usd" ||
+    c === "settle" || c === "settlement price" || c === "last"
+  );
   if (tIdx === -1 || cIdx === -1) return null;
   const daily = [];
   for (let i = 1; i < lines.length; i++) {
@@ -114,15 +118,24 @@ const parseCSV = (text, interval) => {
 };
 
 // ── NASDAQ DATA LINK — Commodities ───────────────────────────────────────────
+// dataset + column_index (1-based, col 1 = Date, col 2 = first price col)
 const NASDAQ_MAP = {
-  "WTI": "NSE/OIL", "OIL": "NSE/OIL", "CRUDE": "NSE/OIL",
-  "GOLD": "LBMA/GOLD", "XAU": "LBMA/GOLD",
-  "SILVER": "LBMA/SILVER", "XAG": "LBMA/SILVER",
-  "PLATINUM": "LPPM/PLAT", "XPT": "LPPM/PLAT",
-  "PALLADIUM": "LPPM/PALL", "XPD": "LPPM/PALL",
-  "COPPER": "LME/PR_CU", "HG": "LME/PR_CU",
-  "ALUMINUM": "LME/PR_AL", "ALUMINIUM": "LME/PR_AL",
-  "WHEAT": "CHRIS/CME_W1", "ZW": "CHRIS/CME_W1",
+  "WTI":       { ds: "NSE/OIL",      col: 2 },
+  "OIL":       { ds: "NSE/OIL",      col: 2 },
+  "CRUDE":     { ds: "NSE/OIL",      col: 2 },
+  "GOLD":      { ds: "LBMA/GOLD",    col: 2 }, // USD (PM)
+  "XAU":       { ds: "LBMA/GOLD",    col: 2 },
+  "SILVER":    { ds: "LBMA/SILVER",  col: 2 }, // USD (AM)
+  "XAG":       { ds: "LBMA/SILVER",  col: 2 },
+  "PLATINUM":  { ds: "LPPM/PLAT",    col: 2 },
+  "XPT":       { ds: "LPPM/PLAT",    col: 2 },
+  "PALLADIUM": { ds: "LPPM/PALL",    col: 2 },
+  "XPD":       { ds: "LPPM/PALL",    col: 2 },
+  "COPPER":    { ds: "LME/PR_CU",    col: 2 },
+  "HG":        { ds: "LME/PR_CU",    col: 2 },
+  "ALUMINUM":  { ds: "LME/PR_AL",    col: 2 },
+  "ALUMINIUM": { ds: "LME/PR_AL",    col: 2 },
+  "WHEAT":     { ds: "CHRIS/CME_W1", col: 5 }, // Settle
 };
 const COMMODITY_KEYS = new Set(Object.keys(NASDAQ_MAP));
 const isCommodity = (ticker) => COMMODITY_KEYS.has(ticker.toUpperCase().trim());
@@ -133,15 +146,44 @@ const ND_PROXIES = [
   (u) => fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`).then(r => { if(!r.ok) throw new Error(); return r.text(); }),
 ];
 
+const parseNasdaqCSV = (text, colIdx, interval) => {
+  // colIdx is 1-based (1=Date, 2=first value col)
+  const lines = text.trim().split("\n");
+  if (lines.length < 2) return null;
+  const daily = [];
+  for (let i = 1; i < lines.length; i++) {
+    const parts = lines[i].split(",").map(s => s.trim().replace(/['"]/g, ""));
+    if (parts.length < colIdx) continue;
+    const t = new Date(parts[0]).getTime();
+    if (isNaN(t)) continue;
+    const c = parseFloat(parts[colIdx - 1]);
+    if (isNaN(c) || c <= 0) continue;
+    daily.push({ t, o: c, h: c, l: c, c, date: new Date(t) });
+  }
+  daily.sort((a, b) => a.t - b.t);
+  if (interval === "1w" && daily.length > 0) {
+    const weeks = {};
+    for (const d of daily) {
+      const wd = new Date(d.t); const day = wd.getDay();
+      const monday = new Date(new Date(d.t).setDate(wd.getDate() - day + (day === 0 ? -6 : 1)));
+      const key = monday.toISOString().split("T")[0];
+      if (!weeks[key]) weeks[key] = {...d};
+      else { weeks[key].c = d.c; }
+    }
+    return Object.values(weeks).sort((a, b) => a.t - b.t);
+  }
+  return daily.length > 5 ? daily : null;
+};
+
 const fetchNasdaqHistory = async (ticker, interval) => {
-  const dataset = NASDAQ_MAP[ticker.toUpperCase().trim()];
-  if (!dataset) return null;
-  const url = `https://data.nasdaq.com/api/v3/datasets/${dataset}/data.csv?order=asc`;
+  const cfg = NASDAQ_MAP[ticker.toUpperCase().trim()];
+  if (!cfg) return null;
+  const url = `https://data.nasdaq.com/api/v3/datasets/${cfg.ds}/data.csv?order=asc&column_index=${cfg.col}`;
   for (const px of ND_PROXIES) {
     try {
       const text = await px(url);
       if (!text || text.includes("<!DOCTYPE") || text.length < 100) continue;
-      const parsed = parseCSV(text, interval);
+      const parsed = parseNasdaqCSV(text, 2, interval); // after column_index filter, col 2 is always the value
       if (parsed && parsed.length > 10) return parsed;
     } catch { continue; }
   }
