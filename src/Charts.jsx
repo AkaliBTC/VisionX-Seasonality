@@ -74,32 +74,40 @@ const fetchTwelveDataHistory = async (ticker, interval) => {
   return allCandles.length > 10 ? allCandles : null;
 };
 
-// ── CSV PARSER (TradingView export) ──────────────────────────────────────────
+// ── CSV PARSER (TradingView + Investing.com) ──────────────────────────────────
 const parseCSV = (text, interval) => {
-  const lines = text.trim().split("\n");
+  const clean = text.replace(/^\uFEFF/, "");
+  const lines = clean.trim().split("\n");
   const cols = lines[0].toLowerCase().split(",").map(c => c.trim().replace(/['"]/g, ""));
   const tIdx = cols.findIndex(c => c.includes("time") || c.includes("date"));
   const oIdx = cols.findIndex(c => c === "open");
   const hIdx = cols.findIndex(c => c === "high");
   const lIdx = cols.findIndex(c => c === "low");
   const cIdx = cols.findIndex(c =>
-    c === "close" || c === "value" || c === "price" ||
+    c === "close" || c === "price" || c === "value" ||
     c === "usd (pm)" || c === "usd (am)" || c === "usd" ||
     c === "settle" || c === "settlement price" || c === "last"
   );
   if (tIdx === -1 || cIdx === -1) return null;
+  const parseNum = (s) => s ? parseFloat(s.replace(/,/g, "")) : NaN;
   const daily = [];
   for (let i = 1; i < lines.length; i++) {
     const parts = lines[i].split(",").map(s => s.trim().replace(/['"]/g, ""));
     if (parts.length < 2) continue;
     const raw = parts[tIdx];
-    const t = isNaN(raw) ? new Date(raw).getTime() : parseInt(raw) * 1000;
+    if (!raw) continue;
+    // MM/DD/YYYY (investing.com), YYYY-MM-DD, Unix timestamp
+    let t;
+    if (/^\d+$/.test(raw)) { t = parseInt(raw) * 1000; }
+    else if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) {
+      const [m, d, y] = raw.split("/"); t = new Date(`${y}-${m}-${d}`).getTime();
+    } else { t = new Date(raw).getTime(); }
     if (isNaN(t)) continue;
-    const c = parseFloat(parts[cIdx]);
-    if (isNaN(c)) continue;
-    const o = oIdx >= 0 ? parseFloat(parts[oIdx]) || c : c;
-    const h = hIdx >= 0 ? parseFloat(parts[hIdx]) || c : c;
-    const l = lIdx >= 0 ? parseFloat(parts[lIdx]) || c : c;
+    const c = parseNum(parts[cIdx]);
+    if (isNaN(c) || c <= 0) continue;
+    const o = oIdx >= 0 ? parseNum(parts[oIdx]) || c : c;
+    const h = hIdx >= 0 ? parseNum(parts[hIdx]) || c : c;
+    const l = lIdx >= 0 ? parseNum(parts[lIdx]) || c : c;
     daily.push({ t, o, h, l, c, date: new Date(t) });
   }
   daily.sort((a, b) => a.t - b.t);
