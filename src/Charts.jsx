@@ -74,95 +74,101 @@ const fetchTwelveDataHistory = async (ticker, interval) => {
   return allCandles.length > 10 ? allCandles : null;
 };
 
-// ── FRED (Federal Reserve) — Commodities ─────────────────────────────────────
-const FRED_MAP = {
-  // WTI Crude Oil
-  "WTI": "DCOILWTICO", "CRUDE": "DCOILWTICO", "CL": "DCOILWTICO", "OIL": "DCOILWTICO",
-  // Gold
-  "GOLD": "GOLDAMGBD228NLBM", "XAU": "GOLDAMGBD228NLBM", "GC": "GOLDAMGBD228NLBM",
-  // Silver
-  "SILVER": "SLVPRUSD", "XAG": "SLVPRUSD", "SI": "SLVPRUSD",
-  // Platinum
-  "PLATINUM": "PLATINUMUSD", "XPT": "PLATINUMUSD", "PL": "PLATINUMUSD",
-  // Palladium
-  "PALLADIUM": "PALLADIUMUSD", "XPD": "PALLADIUMUSD", "PA": "PALLADIUMUSD",
-  // Copper
-  "COPPER": "PCOPPUSDM", "HG": "PCOPPUSDM",
-  // Aluminum
-  "ALUMINUM": "PALUMUSDM", "ALUMINIUM": "PALUMUSDM", "ALU": "PALUMUSDM",
-  // Wheat
-  "WHEAT": "PWHEAMTUSDM", "ZW": "PWHEAMTUSDM",
-};
+// ── CSV PARSER (TradingView export format) ────────────────────────────────────
+const parseCSV = (text, interval) => {
+  const lines = text.trim().split("\n");
+  const header = lines[0].toLowerCase();
+  // Detect columns
+  const cols = header.split(",").map(c => c.trim().replace(/['"]/g, ""));
+  const tIdx = cols.findIndex(c => c.includes("time") || c.includes("date"));
+  const oIdx = cols.findIndex(c => c === "open");
+  const hIdx = cols.findIndex(c => c === "high");
+  const lIdx = cols.findIndex(c => c === "low");
+  const cIdx = cols.findIndex(c => c === "close");
 
-const COMMODITY_KEYS = new Set(Object.keys(FRED_MAP));
+  if (tIdx === -1 || cIdx === -1) return null;
 
-const isCommodity = (ticker) => COMMODITY_KEYS.has(ticker.toUpperCase().trim());
-
-const fetchFREDHistory = async (ticker, interval) => {
-  const seriesId = FRED_MAP[ticker.toUpperCase().trim()];
-  if (!seriesId) return null;
-
-  // FRED API — no key needed for public series, no CORS issue
-  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}`;
-
-  try {
-    // Try direct first
-    const res = await fetch(url);
-    if (res.ok) {
-      const text = await res.text();
-      return parseFREDcsv(text, interval);
-    }
-  } catch {}
-
-  // CORS proxy fallback
-  const proxies = [
-    `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-    `https://corsproxy.io/?${encodeURIComponent(url)}`,
-  ];
-  for (const px of proxies) {
-    try {
-      const res = await fetch(px);
-      if (!res.ok) continue;
-      const json = await res.json();
-      const text = json.contents ?? json;
-      if (typeof text === "string" && text.includes(",")) {
-        return parseFREDcsv(text, interval);
-      }
-    } catch { continue; }
-  }
-  return null;
-};
-
-const parseFREDcsv = (csv, interval) => {
-  const lines = csv.trim().split("\n").slice(1);
   const daily = [];
-  for (const line of lines) {
-    const [date, val] = line.split(",");
-    if (!date || !val || val.trim() === ".") continue;
-    const t = new Date(date.trim()).getTime();
-    const c = parseFloat(val.trim());
-    if (isNaN(c) || isNaN(t)) continue;
-    daily.push({ t, o: c, h: c, l: c, c, date: new Date(t) });
+  for (let i = 1; i < lines.length; i++) {
+    const parts = lines[i].split(",").map(s => s.trim().replace(/['"]/g, ""));
+    if (parts.length < 2) continue;
+    const raw = parts[tIdx];
+    // Handle Unix timestamp or date string
+    const t = isNaN(raw) ? new Date(raw).getTime() : parseInt(raw) * 1000;
+    if (isNaN(t)) continue;
+    const c = parseFloat(parts[cIdx]);
+    if (isNaN(c)) continue;
+    const o = oIdx >= 0 ? parseFloat(parts[oIdx]) || c : c;
+    const h = hIdx >= 0 ? parseFloat(parts[hIdx]) || c : c;
+    const l = lIdx >= 0 ? parseFloat(parts[lIdx]) || c : c;
+    daily.push({ t, o, h, l, c, date: new Date(t) });
   }
   daily.sort((a, b) => a.t - b.t);
 
-  if (interval === "1w") {
-    // Aggregate to weekly (take last close of each week)
+  if (interval === "1w" && daily.length > 0) {
     const weeks = {};
     for (const d of daily) {
       const wd = new Date(d.t);
       const day = wd.getDay();
       const diff = wd.getDate() - day + (day === 0 ? -6 : 1);
-      const monday = new Date(wd.setDate(diff));
+      const monday = new Date(new Date(d.t).setDate(diff));
       const key = monday.toISOString().split("T")[0];
-      weeks[key] = d;
+      if (!weeks[key]) weeks[key] = { ...d };
+      else { weeks[key].h = Math.max(weeks[key].h, d.h); weeks[key].l = Math.min(weeks[key].l, d.l); weeks[key].c = d.c; }
     }
     return Object.values(weeks).sort((a, b) => a.t - b.t);
   }
   return daily;
 };
 
-// ── DETECT SOURCE ─────────────────────────────────────────────────────────────// ── DETECT SOURCE ─────────────────────────────────────────────────────────────
+// ── DETECT SOURCE ─────────────────────────────────────────────────────────────// ── CSV PARSER (TradingView export format) ────────────────────────────────────
+const parseCSV = (text, interval) => {
+  const lines = text.trim().split("\n");
+  const header = lines[0].toLowerCase();
+  // Detect columns
+  const cols = header.split(",").map(c => c.trim().replace(/['"]/g, ""));
+  const tIdx = cols.findIndex(c => c.includes("time") || c.includes("date"));
+  const oIdx = cols.findIndex(c => c === "open");
+  const hIdx = cols.findIndex(c => c === "high");
+  const lIdx = cols.findIndex(c => c === "low");
+  const cIdx = cols.findIndex(c => c === "close");
+
+  if (tIdx === -1 || cIdx === -1) return null;
+
+  const daily = [];
+  for (let i = 1; i < lines.length; i++) {
+    const parts = lines[i].split(",").map(s => s.trim().replace(/['"]/g, ""));
+    if (parts.length < 2) continue;
+    const raw = parts[tIdx];
+    // Handle Unix timestamp or date string
+    const t = isNaN(raw) ? new Date(raw).getTime() : parseInt(raw) * 1000;
+    if (isNaN(t)) continue;
+    const c = parseFloat(parts[cIdx]);
+    if (isNaN(c)) continue;
+    const o = oIdx >= 0 ? parseFloat(parts[oIdx]) || c : c;
+    const h = hIdx >= 0 ? parseFloat(parts[hIdx]) || c : c;
+    const l = lIdx >= 0 ? parseFloat(parts[lIdx]) || c : c;
+    daily.push({ t, o, h, l, c, date: new Date(t) });
+  }
+  daily.sort((a, b) => a.t - b.t);
+
+  if (interval === "1w" && daily.length > 0) {
+    const weeks = {};
+    for (const d of daily) {
+      const wd = new Date(d.t);
+      const day = wd.getDay();
+      const diff = wd.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(new Date(d.t).setDate(diff));
+      const key = monday.toISOString().split("T")[0];
+      if (!weeks[key]) weeks[key] = { ...d };
+      else { weeks[key].h = Math.max(weeks[key].h, d.h); weeks[key].l = Math.min(weeks[key].l, d.l); weeks[key].c = d.c; }
+    }
+    return Object.values(weeks).sort((a, b) => a.t - b.t);
+  }
+  return daily;
+};
+
+// ── DETECT SOURCE ─────────────────────────────────────────────────────────────
 const CRYPTO_LIST = ["BTC","ETH","SOL","BNB","XRP","ADA","AVAX","DOT","LINK","MATIC","DOGE","SHIB","UNI","ATOM","HYPE","SUI","APT","INJ","TIA","SEI","WIF","BONK","PEPE","ARB","OP","NEAR","FTM","ALGO","VET","SAND","MANA","AXS","GALA","ENJ","CHZ","LRC","CRV","AAVE","MKR","SNX","COMP","YFI","SUSHI","1INCH"];
 
 const isCrypto = (ticker) => {
@@ -172,7 +178,6 @@ const isCrypto = (ticker) => {
 
 const fetchHistory = async (ticker, interval) => {
   if (isCrypto(ticker)) return await fetchBinanceHistory(ticker, interval);
-  if (isCommodity(ticker)) return await fetchFREDHistory(ticker, interval);
   return await fetchTwelveDataHistory(ticker, interval);
 };
 
@@ -991,6 +996,7 @@ export default function App() {
   const [yearInput, setYearInput] = useState("");
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
+  const [csvLoaded, setCsvLoaded] = useState(false);
   const [activeIndicators, setActiveIndicators] = useState(new Set());
   const [indSettings, setIndSettings] = useState(DEFAULT_SETTINGS);
   const [editingInd, setEditingInd] = useState(null);
@@ -1013,10 +1019,28 @@ export default function App() {
     ? calcSeasonality(candles, activeYears)
     : null;
 
+  const handleCSV = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const parsed = parseCSV(ev.target.result, interval);
+      if (!parsed || parsed.length < 10) { setError(true); return; }
+      const name = file.name.replace(/\.csv$/i, "").toUpperCase();
+      setTicker(name);
+      setCandles(parsed);
+      setCsvLoaded(true);
+      setSelectedYears([]);
+      setError(false);
+    };
+    reader.readAsText(file);
+  };
+
   const load = async (t, iv) => {
     if (!t) return;
+    setCsvLoaded(false);
     setLoading(true); setError(false); setCandles([]);
-    setProgress(isCrypto(t) ? "Fetching Binance history…" : isCommodity(t) ? "Fetching FRED history…" : "Fetching Twelve Data history…");
+    setProgress(isCrypto(t) ? "Fetching Binance history…" : "Fetching Twelve Data history…");
     try {
       const data = await fetchHistory(t, iv);
       if (!data || data.length < 10) { setError(true); }
@@ -1204,6 +1228,12 @@ export default function App() {
           ))}
         </div>
         {loading && <><div className="spinner" /><span style={{ fontSize: 10, color: "#444", letterSpacing: "0.1em" }}>{progress}</span></>}
+        <label style={{ display: "flex", alignItems: "center", gap: 6, padding: "11px 18px", background: "transparent", border: "1px solid #222", borderRadius: 6, cursor: "pointer", fontFamily: "'Montserrat', sans-serif", fontSize: 10, fontWeight: 700, letterSpacing: "0.15em", color: "#555", textTransform: "uppercase", transition: "all 0.2s" }}
+          onMouseEnter={e => e.currentTarget.style.borderColor="#333"}
+          onMouseLeave={e => e.currentTarget.style.borderColor="#222"}>
+          ↑ CSV
+          <input type="file" accept=".csv" style={{ display: "none" }} onChange={handleCSV} />
+        </label>
       </div>
 
       {/* YEAR FILTER */}
@@ -1249,7 +1279,7 @@ export default function App() {
           <div className="empty-sub">Crypto: BTC · ETH · SOL · HYPE</div>
           <div className="empty-sub" style={{ marginTop: 6 }}>Stocks: AAPL · MSFT · ADS · BMW</div>
           <div className="empty-sub" style={{ marginTop: 4 }}>Indices: SPX · NDX · DAX · FTSE</div>
-          <div className="empty-sub" style={{ marginTop: 4 }}>Commodities: GOLD · SILVER · WTI · PLATINUM · PALLADIUM · COPPER · WHEAT</div>
+          <div className="empty-sub" style={{ marginTop: 4 }}>Commodities: Upload CSV from TradingView</div>
         </div>
       ) : error ? (
         <div className="empty">
@@ -1260,7 +1290,7 @@ export default function App() {
         <>
           <div className="section">
             <div className="section-header">
-              <div className="section-title">{ticker} · {interval === "1d" ? "DAILY" : "WEEKLY"} · {isCrypto(ticker) ? "BINANCE" : isCommodity(ticker) ? "FRED" : "TWELVE DATA"}</div>
+              <div className="section-title">{ticker} · {interval === "1d" ? "DAILY" : "WEEKLY"} · {isCrypto(ticker) ? "BINANCE" : csvLoaded ? "CSV" : "TWELVE DATA"}</div>
               <div style={{ display: "flex", gap: 6 }}>
                 <button className="btn btn-outline" style={{ padding: "6px 14px", fontSize: 9 }}
                   onClick={() => {/* zoom handled in component */}}>SCROLL TO ZOOM · DRAG TO PAN</button>
