@@ -453,7 +453,7 @@ const DEFAULT_SETTINGS = {
 };
 
 // ── PRICE CHART (zoom/pan) ────────────────────────────────────────────────────
-function PriceChart({ candles, interval, activeIndicators, indSettings, compositeWave }) {
+function PriceChart({ candles, interval, activeIndicators, indSettings, compositeWave, pickingAnchor, onAnchorPick }) {
   const svgRef = useRef(null);
   const viewRef = useRef({ startIdx: 0, endIdx: Math.max(0, candles.length - 1) });
   const [viewVersion, setViewVersion] = useState(0); // trigger re-render
@@ -831,6 +831,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [progress, setProgress] = useState("");
+  const [csvLoaded, setCsvLoaded] = useState(false);
   const [selectedYears, setSelectedYears] = useState([]);
   const [yearInput, setYearInput] = useState("");
   const [rangeStart, setRangeStart] = useState("");
@@ -856,6 +857,7 @@ export default function App() {
 
   const load = async (t, iv) => {
     if (!t) return;
+    setCsvLoaded(false);
     setLoading(true); setError(false); setCandles([]);
     setProgress(isCrypto(t) ? "Fetching Binance history…" : "Fetching Stooq history…");
     try {
@@ -879,6 +881,18 @@ export default function App() {
       }, 50);
     }
   }, [candles]);
+
+  const handleCSV = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const parsed = parseCSV(ev.target.result, interval);
+      if (!parsed || parsed.length < 10) { setError(true); return; }
+      setTicker(file.name.replace(/\.csv$/i, "").toUpperCase());
+      setCandles(parsed); setCsvLoaded(true); setSelectedYears([]); setError(false);
+    };
+    reader.readAsText(file);
+  };
 
   const submit = () => {
     const raw = input.trim();
@@ -1038,6 +1052,11 @@ export default function App() {
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === "Enter" && submit()} />
         <button className="btn btn-gold" onClick={submit}>LOAD</button>
+        <label style={{ display:"flex", alignItems:"center", gap:6, padding:"11px 18px", background:"transparent", border:"1px solid #222", borderRadius:6, cursor:"pointer", fontFamily:"'Montserrat',sans-serif", fontSize:10, fontWeight:700, letterSpacing:"0.15em", color:"#555", textTransform:"uppercase", transition:"all 0.2s" }}
+          onMouseEnter={e=>e.currentTarget.style.borderColor="#333"} onMouseLeave={e=>e.currentTarget.style.borderColor="#222"}>
+          ↑ CSV
+          <input type="file" accept=".csv" style={{display:"none"}} onChange={handleCSV} />
+        </label>
         <div style={{ display: "flex", gap: 6, marginLeft: 8 }}>
           {["1d", "1w"].map(iv => (
             <button key={iv} className={`btn btn-outline ${interval === iv ? "active" : ""}`}
@@ -1101,7 +1120,7 @@ export default function App() {
         <>
           <div className="section">
             <div className="section-header">
-              <div className="section-title">{ticker} · {interval === "1d" ? "DAILY" : "WEEKLY"} · {isCrypto(ticker) ? "BINANCE" : "TWELVE DATA"}</div>
+              <div className="section-title">{ticker} · {interval === "1d" ? "DAILY" : "WEEKLY"} · {csvLoaded ? "CSV" : isCrypto(ticker) ? "BINANCE" : isCommodity(ticker) ? "NASDAQ" : "TWELVE DATA"}</div>
               <div style={{ display: "flex", gap: 6 }}>
                 <button className="btn btn-outline" style={{ padding: "6px 14px", fontSize: 9 }}
                   onClick={() => {/* zoom handled in component */}}>SCROLL TO ZOOM · DRAG TO PAN</button>
