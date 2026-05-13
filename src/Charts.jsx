@@ -74,7 +74,95 @@ const fetchTwelveDataHistory = async (ticker, interval) => {
   return allCandles.length > 10 ? allCandles : null;
 };
 
-// ── DETECT SOURCE ─────────────────────────────────────────────────────────────
+// ── FRED (Federal Reserve) — Commodities ─────────────────────────────────────
+const FRED_MAP = {
+  // WTI Crude Oil
+  "WTI": "DCOILWTICO", "CRUDE": "DCOILWTICO", "CL": "DCOILWTICO", "OIL": "DCOILWTICO",
+  // Gold
+  "GOLD": "GOLDAMGBD228NLBM", "XAU": "GOLDAMGBD228NLBM", "GC": "GOLDAMGBD228NLBM",
+  // Silver
+  "SILVER": "SLVPRUSD", "XAG": "SLVPRUSD", "SI": "SLVPRUSD",
+  // Platinum
+  "PLATINUM": "PLATINUMUSD", "XPT": "PLATINUMUSD", "PL": "PLATINUMUSD",
+  // Palladium
+  "PALLADIUM": "PALLADIUMUSD", "XPD": "PALLADIUMUSD", "PA": "PALLADIUMUSD",
+  // Copper
+  "COPPER": "PCOPPUSDM", "HG": "PCOPPUSDM",
+  // Aluminum
+  "ALUMINUM": "PALUMUSDM", "ALUMINIUM": "PALUMUSDM", "ALU": "PALUMUSDM",
+  // Wheat
+  "WHEAT": "PWHEAMTUSDM", "ZW": "PWHEAMTUSDM",
+};
+
+const COMMODITY_KEYS = new Set(Object.keys(FRED_MAP));
+
+const isCommodity = (ticker) => COMMODITY_KEYS.has(ticker.toUpperCase().trim());
+
+const fetchFREDHistory = async (ticker, interval) => {
+  const seriesId = FRED_MAP[ticker.toUpperCase().trim()];
+  if (!seriesId) return null;
+
+  // FRED API — no key needed for public series, no CORS issue
+  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}`;
+
+  try {
+    // Try direct first
+    const res = await fetch(url);
+    if (res.ok) {
+      const text = await res.text();
+      return parseFREDcsv(text, interval);
+    }
+  } catch {}
+
+  // CORS proxy fallback
+  const proxies = [
+    `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+    `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  ];
+  for (const px of proxies) {
+    try {
+      const res = await fetch(px);
+      if (!res.ok) continue;
+      const json = await res.json();
+      const text = json.contents ?? json;
+      if (typeof text === "string" && text.includes(",")) {
+        return parseFREDcsv(text, interval);
+      }
+    } catch { continue; }
+  }
+  return null;
+};
+
+const parseFREDcsv = (csv, interval) => {
+  const lines = csv.trim().split("\n").slice(1);
+  const daily = [];
+  for (const line of lines) {
+    const [date, val] = line.split(",");
+    if (!date || !val || val.trim() === ".") continue;
+    const t = new Date(date.trim()).getTime();
+    const c = parseFloat(val.trim());
+    if (isNaN(c) || isNaN(t)) continue;
+    daily.push({ t, o: c, h: c, l: c, c, date: new Date(t) });
+  }
+  daily.sort((a, b) => a.t - b.t);
+
+  if (interval === "1w") {
+    // Aggregate to weekly (take last close of each week)
+    const weeks = {};
+    for (const d of daily) {
+      const wd = new Date(d.t);
+      const day = wd.getDay();
+      const diff = wd.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(wd.setDate(diff));
+      const key = monday.toISOString().split("T")[0];
+      weeks[key] = d;
+    }
+    return Object.values(weeks).sort((a, b) => a.t - b.t);
+  }
+  return daily;
+};
+
+// ── DETECT SOURCE ─────────────────────────────────────────────────────────────// ── DETECT SOURCE ─────────────────────────────────────────────────────────────
 const CRYPTO_LIST = ["BTC","ETH","SOL","BNB","XRP","ADA","AVAX","DOT","LINK","MATIC","DOGE","SHIB","UNI","ATOM","HYPE","SUI","APT","INJ","TIA","SEI","WIF","BONK","PEPE","ARB","OP","NEAR","FTM","ALGO","VET","SAND","MANA","AXS","GALA","ENJ","CHZ","LRC","CRV","AAVE","MKR","SNX","COMP","YFI","SUSHI","1INCH"];
 
 const isCrypto = (ticker) => {
@@ -84,6 +172,7 @@ const isCrypto = (ticker) => {
 
 const fetchHistory = async (ticker, interval) => {
   if (isCrypto(ticker)) return await fetchBinanceHistory(ticker, interval);
+  if (isCommodity(ticker)) return await fetchFREDHistory(ticker, interval);
   return await fetchTwelveDataHistory(ticker, interval);
 };
 
@@ -927,7 +1016,7 @@ export default function App() {
   const load = async (t, iv) => {
     if (!t) return;
     setLoading(true); setError(false); setCandles([]);
-    setProgress(isCrypto(t) ? "Fetching Binance history…" : "Fetching Stooq history…");
+    setProgress(isCrypto(t) ? "Fetching Binance history…" : isCommodity(t) ? "Fetching FRED history…" : "Fetching Twelve Data history…");
     try {
       const data = await fetchHistory(t, iv);
       if (!data || data.length < 10) { setError(true); }
@@ -1160,7 +1249,7 @@ export default function App() {
           <div className="empty-sub">Crypto: BTC · ETH · SOL · HYPE</div>
           <div className="empty-sub" style={{ marginTop: 6 }}>Stocks: AAPL · MSFT · ADS · BMW</div>
           <div className="empty-sub" style={{ marginTop: 4 }}>Indices: SPX · NDX · DAX · FTSE</div>
-          <div className="empty-sub" style={{ marginTop: 4 }}>Commodities: XAU/USD · XAG/USD · WTI/USD</div>
+          <div className="empty-sub" style={{ marginTop: 4 }}>Commodities: GOLD · SILVER · WTI · PLATINUM · PALLADIUM · COPPER · WHEAT</div>
         </div>
       ) : error ? (
         <div className="empty">
@@ -1171,7 +1260,7 @@ export default function App() {
         <>
           <div className="section">
             <div className="section-header">
-              <div className="section-title">{ticker} · {interval === "1d" ? "DAILY" : "WEEKLY"} · {isCrypto(ticker) ? "BINANCE" : "TWELVE DATA"}</div>
+              <div className="section-title">{ticker} · {interval === "1d" ? "DAILY" : "WEEKLY"} · {isCrypto(ticker) ? "BINANCE" : isCommodity(ticker) ? "FRED" : "TWELVE DATA"}</div>
               <div style={{ display: "flex", gap: 6 }}>
                 <button className="btn btn-outline" style={{ padding: "6px 14px", fontSize: 9 }}
                   onClick={() => {/* zoom handled in component */}}>SCROLL TO ZOOM · DRAG TO PAN</button>
