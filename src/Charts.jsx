@@ -501,7 +501,10 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
     let ne = endIdx - delta * rightStep;
     if (ne - ns < 5) return;
     ns = Math.max(0, ns);
-    ne = Math.min(candlesRef.current.length - 1, ne);
+    const lastReal = candlesRef.current.length - 1;
+    const viewLen = ne - ns;
+    const maxEnd = lastReal + Math.floor(viewLen * 0.5);
+    ne = Math.min(maxEnd, ne);
     viewRef.current = { startIdx: ns, endIdx: ne };
     setViewVersion(v => v + 1);
   }, []);
@@ -522,15 +525,14 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   }); // no deps — re-attach every render so ref is always fresh
 
   const handleMouseDown = (e) => {
-    e.preventDefault();
     if (pickingAnchor && onAnchorPick) {
       const svg = svgRef.current;
       if (svg) {
         const rect = svg.getBoundingClientRect();
         const x = (e.clientX - rect.left) * (W / rect.width);
         const { startIdx, endIdx } = viewRef.current;
-        const visLen = endIdx - startIdx + 1;
-        const idx = Math.max(0, Math.min(visLen - 1, Math.round((x - PAD.left) / iW * (visLen - 1))));
+        const slots = endIdx - startIdx + 1;
+        const idx = Math.max(0, Math.min(slots - 1, Math.round((x - PAD.left) / iW * (slots - 1))));
         onAnchorPick(startIdx + idx);
       }
       return;
@@ -541,19 +543,22 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
 
   const handleMouseUp = () => { isPanningRef.current = false; };
 
+  // Hover-only mousemove — pan is handled by document listener below
   const handleMouseMove = (e) => {
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
     const x = (e.clientX - rect.left) * (W / rect.width);
     const { startIdx, endIdx } = viewRef.current;
-    const visLen = endIdx - startIdx + 1;
-    const idx = Math.max(0, Math.min(visLen - 1, Math.round((x - PAD.left) / iW * (visLen - 1))));
+    const slots = endIdx - startIdx + 1;
+    const idx = Math.max(0, Math.min(slots - 1, Math.round((x - PAD.left) / iW * (slots - 1))));
     const absIdx = startIdx + idx;
     const c = candlesRef.current[absIdx];
-    const xPos = PAD.left + (idx / Math.max(visLen - 1, 1)) * iW;
+    const xPos = PAD.left + (idx / Math.max(slots - 1, 1)) * iW;
     if (c) {
-      const slice = candlesRef.current.slice(startIdx, endIdx + 1);
+      const realCandles = candlesRef.current;
+      const realEnd = Math.min(endIdx, realCandles.length - 1);
+      const slice = realCandles.slice(startIdx, realEnd + 1);
       const prices2 = slice.flatMap(c => [c.h, c.l]);
       const minP2 = Math.min(...prices2), maxP2 = Math.max(...prices2);
       const r2 = maxP2 - minP2 || 1, p2 = r2 * 0.05;
@@ -562,12 +567,20 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
     } else {
       setHover({ x: xPos, y: PAD.top + iH / 2, candle: null });
     }
-    if (isPanningRef.current && panStart.current) {
+  };
+
+  // Pan on document so mouse-leave doesn't kill it
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!isPanningRef.current || !panStart.current) return;
+      const svg = svgRef.current;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
       const dx = e.clientX - panStart.current.x;
       const { start: ps, end: pe } = panStart.current;
-      const pixPerCandle = iW * (rect.width / W) / Math.max(pe - ps, 1);
-      const shift = Math.round(-dx / pixPerCandle);
       const len = pe - ps;
+      const pixPerCandle = (iW * rect.width / W) / Math.max(len, 1);
+      const shift = Math.round(-dx / pixPerCandle);
       let ns = ps + shift;
       let ne = ns + len;
       const lastReal = candlesRef.current.length - 1;
@@ -576,8 +589,15 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
       if (ne > maxEnd) { ne = maxEnd; ns = Math.max(0, ne - len); }
       viewRef.current = { startIdx: ns, endIdx: ne };
       setViewVersion(v => v + 1);
-    }
-  };
+    };
+    const onUp = () => { isPanningRef.current = false; };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, [iW]);
 
   // ALL hooks done — early return safe here
   if (!candles.length) return null;
@@ -614,8 +634,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
         style={{ width: "100%", height: "auto", display: "block", cursor: pickingAnchor ? "cell" : "crosshair" }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={() => { isPanningRef.current = false; setHover(null); }}>
+        onMouseLeave={() => { setHover(null); }}>
 
         <defs>
           <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
