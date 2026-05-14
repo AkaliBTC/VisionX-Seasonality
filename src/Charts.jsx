@@ -616,12 +616,8 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   const totalSlots = endIdx - startIdx + 1;
 
   const prices = visible.flatMap(c => [c.h, c.l]);
-  const waveVals = compositeWave
-    ? compositeWave.filter(p => p.t >= startIdx && p.t <= endIdx).map(p => p.v).filter(v => isFinite(v))
-    : [];
-  const allVals = [...prices, ...waveVals];
-  const minP = Math.min(...allVals);
-  const maxP = Math.max(...allVals);
+  const minP = Math.min(...prices);
+  const maxP = Math.max(...prices);
   const range = maxP - minP || 1;
   const pad = range * 0.05;
 
@@ -772,11 +768,17 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
 
         {/* ── COMPOSITE CYCLE WAVE ── */}
         {compositeWave && compositeWave.length > 1 && (() => {
-          // Map composite wave values to visible range
+          // Normalize wave to fit within visible price range
+          const visibleWave = compositeWave.filter(p => p.t >= startIdx && p.t <= endIdx);
+          const waveMin = Math.min(...visibleWave.map(p => p.v));
+          const waveMax = Math.max(...visibleWave.map(p => p.v));
+          const waveRange = waveMax - waveMin || 1;
+          // Map wave [waveMin,waveMax] → [minP, maxP] (price range)
+          const waveToPrice = (v) => minP + ((v - waveMin) / waveRange) * (maxP - minP);
+
           const histPoints = compositeWave.filter(p => !p.isFuture);
           const futPoints = compositeWave.filter(p => p.isFuture);
 
-          // Scale: map index within visible range
           const buildPath = (pts, offset) => {
             let d = "";
             pts.forEach((p, i) => {
@@ -784,7 +786,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
               if (absIdx < startIdx || absIdx > endIdx) return;
               const xi = absIdx - startIdx;
               const x = xScale(xi);
-              const y = yScale(p.v);
+              const y = yScale(waveToPrice(p.v));
               d += d ? ` L ${x} ${y}` : `M ${x} ${y}`;
             });
             return d;
@@ -795,7 +797,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
             let d = "";
             futPoints.forEach((p, i) => {
               const x = xScale(visible.length + i);
-              const y = yScale(p.v);
+              const y = yScale(waveToPrice(p.v));
               if (x > W - PAD.right + 60) return;
               d += d ? ` L ${x} ${y}` : `M ${x} ${y}`;
             });
