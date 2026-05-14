@@ -142,91 +142,100 @@ const calcSeasonality = (candles, years) => {
 };
 
 
-// ── CYCLE ANALYSIS — proper spectral analysis with peak picking ───────────────
-const analyzeCycles = (candles, topN = 20) => {
+// ── CYCLE ANALYSIS — bottom detection + inter-low spacing ────────────────────
+const findSignificantLows = (candles, lookback) => {
+  const n = candles.length;
+  const lows_map = candles.map(c => c.l);
+  const scales = [
+    Math.max(3, Math.floor(lookback * 0.4)),
+    lookback,
+    Math.min(n / 4, Math.floor(lookback * 2)),
+  ];
+  const candidates = new Set();
+  for (const lb of scales) {
+    for (let i = lb; i < n - lb; i++) {
+      const win = lows_map.slice(i - lb, i + lb + 1);
+      const minV = Math.min(...win);
+      if (lows_map[i] <= minV) candidates.add(i);
+    }
+  }
+  const minProminence = 0.03;
+  const prominent = [...candidates].filter(i => {
+    const price = lows_map[i];
+    const leftHigh = Math.max(...lows_map.slice(Math.max(0, i - lookback * 2), i).map((_, j) => candles[Math.max(0, i - lookback * 2) + j].h));
+    const rightHigh = Math.max(...lows_map.slice(i + 1, Math.min(n, i + lookback * 2 + 1)).map((_, j) => candles[i + 1 + j].h));
+    const refHigh = Math.min(leftHigh, rightHigh);
+    return refHigh > 0 && (refHigh - price) / refHigh >= minProminence;
+  });
+  prominent.sort((a, b) => a - b);
+  const deduped = [];
+  for (const idx of prominent) {
+    if (!deduped.length || idx - deduped[deduped.length - 1] > lookback) {
+      deduped.push(idx);
+    } else if (lows_map[idx] < lows_map[deduped[deduped.length - 1]]) {
+      deduped[deduped.length - 1] = idx;
+    }
+  }
+  return deduped;
+};
+
+const analyzeCycles = (candles, topN = 20, anchorIdx = null) => {
   if (candles.length < 20) return [];
-  const closes = candles.map(c => c.c);
-  const n = closes.length;
+  const n = candles.length;
+  const lookback = Math.min(40, Math.max(3, Math.floor(n * 0.08)));
+  const lows = findSignificantLows(candles, lookback);
+  if (lows.length < 2) return [];
 
-  // 1. Detrend via first differences (returns), then smooth slightly
-  const returns = closes.map((c, i) => i === 0 ? 0 : (c - closes[i-1]) / closes[i-1]);
-
-  // 2. Zero-mean
-  const mean = returns.reduce((a, b) => a + b, 0) / n;
-  const signal = returns.map(v => v - mean);
-
-  // 3. Apply Hann window to reduce spectral leakage
-  const windowed = signal.map((v, i) => v * 0.5 * (1 - Math.cos(2 * Math.PI * i / (n - 1))));
-
-  // 4. DFT with fine resolution — compute power spectrum
-  const minPeriod = 5;
-  const maxPeriod = Math.floor(n / 2.5); // need at least 2.5 cycles to detect
-  const spectrum = [];
-
-  for (let period = minPeriod; period <= maxPeriod; period++) {
-    const freq = 1 / period;
-    let re = 0, im = 0;
-    for (let t = 0; t < n; t++) {
-      const angle = 2 * Math.PI * freq * t;
-      re += windowed[t] * Math.cos(angle);
-      im -= windowed[t] * Math.sin(angle);
-    }
-    const power = re * re + im * im;
-    const amplitude = 2 * Math.sqrt(power) / n;
-    const phase = Math.atan2(im, re);
-    spectrum.push({ period, power, amplitude, phase });
+  let anchorLowIdx = null;
+  if (anchorIdx != null) {
+    let minDist = Infinity;
+    lows.forEach((li, i) => {
+      const d = Math.abs(li - anchorIdx);
+      if (d < minDist) { minDist = d; anchorLowIdx = i; }
+    });
   }
 
-  // 5. Peak picking — only keep local maxima (no adjacent periods)
-  // A peak must be larger than its neighbors on both sides
-  const peaks = [];
-  for (let i = 1; i < spectrum.length - 1; i++) {
-    const prev = spectrum[i - 1].power;
-    const cur = spectrum[i].power;
-    const next = spectrum[i + 1].power;
-    if (cur > prev && cur > next) {
-      peaks.push(spectrum[i]);
+  const distances = [];
+  for (let i = 1; i < lows.length; i++) distances.push({ d: lows[i] - lows[i-1], i1: i-1, i2: i });
+  for (let i = 2; i < lows.length; i++) distances.push({ d: lows[i] - lows[i-2], i1: i-2, i2: i });
+
+  const anchorBoost = (i1, i2) => {
+    if (anchorLowIdx == null) return 1;
+    const nearby = [anchorLowIdx - 1, anchorLowIdx, anchorLowIdx + 1];
+    return (nearby.includes(i1) || nearby.includes(i2)) ? 3 : 1;
+  };
+
+  const clusters = [];
+  for (const { d, i1, i2 } of distances) {
+    if (d < 3) continue;
+    const boost = anchorBoost(i1, i2);
+    const ex = clusters.find(c => Math.abs(c.mean - d) / c.mean < 0.15);
+    if (ex) {
+      for (let b = 0; b < boost; b++) ex.vals.push(d);
+      ex.mean = ex.vals.reduce((a, b) => a + b, 0) / ex.vals.length;
+    } else {
+      clusters.push({ mean: d, vals: Array(boost).fill(d) });
     }
   }
 
-  // 6. For each peak, compute accuracy via R² of sine fit to original signal
-  const withAccuracy = peaks.map(p => {
-    const freq = 1 / p.period;
-    // Fit amplitude and phase via least squares
-    let sumSS = 0, sumSC = 0, sumCC = 0, sumCS = 0, sumSig = 0, sumSigS = 0, sumSigC = 0;
-    for (let t = 0; t < n; t++) {
-      const s = Math.sin(2 * Math.PI * freq * t);
-      const c = Math.cos(2 * Math.PI * freq * t);
-      sumSS += s * s; sumCC += c * c; sumSC += s * c;
-      sumSigS += signal[t] * s; sumSigC += signal[t] * c;
-    }
-    const det = sumSS * sumCC - sumSC * sumSC;
-    const A = det ? (sumSigS * sumCC - sumSigC * sumSC) / det : 0;
-    const B = det ? (sumSigC * sumSS - sumSigS * sumSC) / det : 0;
-    const amp = Math.sqrt(A * A + B * B);
-    const phase = Math.atan2(B, A);
-
-    // R² against signal
-    const sigMean = signal.reduce((a, b) => a + b, 0) / n;
-    let ssTot = 0, ssRes = 0;
-    for (let t = 0; t < n; t++) {
-      const pred = amp * Math.sin(2 * Math.PI * freq * t + phase);
-      ssTot += (signal[t] - sigMean) ** 2;
-      ssRes += (signal[t] - pred) ** 2;
-    }
-    const r2 = ssTot > 0 ? Math.max(0, 1 - ssRes / ssTot) : 0;
-    return { period: p.period, amplitude: amp, phase, power: p.power, accuracy: r2 * 100 };
+  const scored = clusters.map(c => {
+    const m = c.mean;
+    const variance = c.vals.reduce((a, v) => a + (v - m) ** 2, 0) / c.vals.length;
+    const std = Math.sqrt(variance);
+    const consistency = m > 0 ? Math.max(0, 1 - std / m) : 0;
+    const accuracy = Math.min(99, consistency * 85 * Math.min(1, c.vals.length / 3));
+    return { period: Math.round(m), accuracy, score: c.vals.length * consistency, amplitude: 1, phase: -Math.PI / 2, lowCount: c.vals.length };
   });
 
-  // 7. Sort by power descending, deduplicate (min 3 period gap between selected cycles)
-  withAccuracy.sort((a, b) => b.power - a.power);
+  scored.sort((a, b) => b.score - a.score);
   const selected = [];
-  for (const cyc of withAccuracy) {
-    const tooClose = selected.some(s => Math.abs(s.period - cyc.period) < 3);
-    if (!tooClose) selected.push(cyc);
+  for (const s of scored) {
+    if (s.period < 3) continue;
+    if (!selected.some(x => Math.abs(x.period - s.period) / Math.max(x.period, s.period) < 0.1))
+      selected.push(s);
     if (selected.length >= topN) break;
   }
-
+  selected.sort((a, b) => b.accuracy - a.accuracy);
   return selected;
 };
 
@@ -863,6 +872,9 @@ export default function App() {
   const [cycleTweaks, setCycleTweaks] = useState({});
   const [showCycles, setShowCycles] = useState(false);
   const [cyclesPanelOpen, setCyclesPanelOpen] = useState(false);
+  const [pickingAnchor, setPickingAnchor] = useState(false);
+  const [cycleAnchorIdx, setCycleAnchorIdx] = useState(null);
+  const [cycleSlopeMult, setCycleSlopeMult] = useState(1.0);
 
   const availableYears = [...new Set(candles.map(c => c.date.getFullYear()))].sort();
 
