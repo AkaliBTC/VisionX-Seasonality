@@ -990,6 +990,7 @@ export default function App() {
   const [error, setError] = useState(false);
   const [progress, setProgress] = useState("");
   const [csvLoaded, setCsvLoaded] = useState(false);
+  const csvLoadedRef = useRef(false);
   const [selectedYears, setSelectedYears] = useState([]);
   const [yearInput, setYearInput] = useState("");
   const [rangeStart, setRangeStart] = useState("");
@@ -1049,8 +1050,7 @@ export default function App() {
     reader.onload = (ev) => {
       const parsed = parseCSV(ev.target.result, interval);
       if (!parsed || parsed.length < 10) { setError(true); return; }
-      if (csvLoaded) {
-        // Merge with existing
+      if (csvLoadedRef.current) {
         setCandles(prev => {
           const merged = [...prev, ...parsed];
           const seen = new Map();
@@ -1058,11 +1058,11 @@ export default function App() {
           return [...seen.values()].sort((a, b) => a.t - b.t);
         });
       } else {
-        // First load
         setTicker(file.name.replace(/\.csv$/i, "").toUpperCase());
         setCandles(parsed);
         setSelectedYears([]);
         setError(false);
+        csvLoadedRef.current = true;
         setCsvLoaded(true);
       }
       e.target.value = "";
@@ -1234,7 +1234,7 @@ export default function App() {
           <input type="file" accept=".csv" style={{display:"none"}} onChange={handleCSV} />
         </label>
         {csvLoaded && (
-          <button className="btn btn-outline" onClick={() => { setCandles([]); setCsvLoaded(false); setTicker(""); setSelectedYears([]); }} style={{ padding: "11px 16px", fontSize: 9, color: "#ef4444", borderColor: "#2a1a1a" }}>✕ RESET</button>
+          <button className="btn btn-outline" onClick={() => { setCandles([]); setCsvLoaded(false); csvLoadedRef.current = false; setTicker(""); setSelectedYears([]); }} style={{ padding: "11px 16px", fontSize: 9, color: "#ef4444", borderColor: "#2a1a1a" }}>✕ RESET</button>
         )}
         <div style={{ display: "flex", gap: 6, marginLeft: 8 }}>
           {["1d", "1w"].map(iv => (
