@@ -1186,13 +1186,36 @@ export default function App() {
                       {/* Panel header */}
                       <div style={{ padding: "12px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 14, letterSpacing: "0.1em", color: "#e8e8e8" }}>Cycle Analysis</span>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#444" }}>{selectedCycles.size} selected</span>
+                          <button onClick={() => setPickingAnchor(p => !p)}
+                            title="Click a low on the chart to anchor the wave"
+                            style={{ background: pickingAnchor ? "rgba(239,68,68,0.15)" : cycleAnchorIdx != null ? "rgba(212,175,55,0.1)" : "transparent", border: `1px solid ${pickingAnchor ? "#ef4444" : cycleAnchorIdx != null ? "#d4af37" : "#222"}`, color: pickingAnchor ? "#ef4444" : cycleAnchorIdx != null ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", padding: "4px 10px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase", transition: "all 0.2s" }}>
+                            {pickingAnchor ? "↗ CLICK LOW" : cycleAnchorIdx != null ? "⊕ LOW SET" : "📍 SET LOW"}
+                          </button>
                           <button onClick={() => setShowCycles(s => !s)}
                             style={{ background: showCycles ? "rgba(212,175,55,0.15)" : "transparent", border: `1px solid ${showCycles ? "#d4af37" : "#222"}`, color: showCycles ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", padding: "4px 10px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase" }}>
                             {showCycles ? "ON" : "OFF"}
                           </button>
                         </div>
+                      </div>
+                      {/* Peak Shift slider */}
+                      <div style={{ padding: "10px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Peak Shift</span>
+                        <input type="range" min="0.5" max="1.5" step="0.01" value={cycleSlopeMult}
+                          onChange={e => {
+                            const raw = parseFloat(e.target.value);
+                            const snapped = Math.round(raw * 10) / 10;
+                            const dist = Math.abs(raw - snapped);
+                            if (dist < 0.035) { setCycleSlopeMult(snapped); }
+                            else if (dist < 0.08) {
+                              const t = (dist - 0.035) / (0.08 - 0.035);
+                              setCycleSlopeMult(snapped + (raw - snapped) * t * t * 0.25);
+                            } else { setCycleSlopeMult(raw); }
+                          }}
+                          style={{ flex: 1, accentColor: "#d4af37", height: 2, cursor: "pointer" }} />
+                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 36, textAlign: "right" }}>{cycleSlopeMult.toFixed(2)}x</span>
+                        <button onClick={() => setCycleSlopeMult(1.0)} style={{ background: "transparent", border: "1px solid #222", color: "#333", fontFamily: "'DM Mono', monospace", fontSize: 8, padding: "2px 6px", borderRadius: 3, cursor: "pointer" }}>↺</button>
                       </div>
                       {/* Table header */}
                       <div style={{ display: "grid", gridTemplateColumns: "28px 56px 1fr 40px", gap: 0, padding: "6px 16px", borderBottom: "1px solid #1a1a1a" }}>
