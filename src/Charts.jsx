@@ -460,6 +460,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   const [hover, setHover] = useState(null);
   const isPanningRef = useRef(false);
   const panStart = useRef(null);
+  const candlesRef = useRef(candles);
   const priceScaleRef = useRef({ minP: 0, pad: 0, range: 1 });
   candlesRef.current = candles;
 
