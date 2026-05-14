@@ -606,7 +606,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   const fmtLabel = (ts) => {
     const d = new Date(ts);
     return interval === "1d"
-      ? d.toLocaleDateString([], { month: "short", day: "numeric" })
+      ? d.toLocaleDateString([], { day: "numeric", month: "short", year: "2-digit" })
       : d.toLocaleDateString([], { month: "short", year: "2-digit" });
   };
 
@@ -963,7 +963,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
 
       {/* Tooltip */}
       {hover && hover.candle && (
-        <div style={{ position: "absolute", top: 12, left: 90, background: "#111", border: "1px solid #222", borderRadius: 8, padding: "8px 14px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: "#e8e8e8", pointerEvents: "none" }}>
+        <div style={{ position: "absolute", top: 12, left: hover.x / W * 100 > 60 ? 90 : "auto", right: hover.x / W * 100 > 60 ? "auto" : 30, background: "#111", border: "1px solid #222", borderRadius: 8, padding: "8px 14px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: "#e8e8e8", pointerEvents: "none" }}>
           <div style={{ color: "#555", fontSize: 10, marginBottom: 2 }}>{fmtLabel(hover.candle.t)}</div>
           <div style={{ color, fontSize: 16, fontWeight: 600 }}>{fmtPrice(hover.candle.c)}</div>
         </div>
