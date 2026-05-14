@@ -1049,8 +1049,21 @@ export default function App() {
     reader.onload = (ev) => {
       const parsed = parseCSV(ev.target.result, interval);
       if (!parsed || parsed.length < 10) { setError(true); return; }
-      setTicker(file.name.replace(/\.csv$/i, "").toUpperCase());
-      setCandles(parsed); setCsvLoaded(true); setSelectedYears([]); setError(false);
+      setCandles(prev => {
+        if (prev.length > 0 && csvLoaded) {
+          // Merge: combine, deduplicate by timestamp, sort
+          const merged = [...prev, ...parsed];
+          const seen = new Map();
+          for (const c of merged) seen.set(c.t, c);
+          return [...seen.values()].sort((a, b) => a.t - b.t);
+        }
+        setTicker(file.name.replace(/\.csv$/i, "").toUpperCase());
+        return parsed;
+      });
+      if (!csvLoaded) setTicker(file.name.replace(/\.csv$/i, "").toUpperCase());
+      setCsvLoaded(true); setSelectedYears([]); setError(false);
+      // Reset file input so same file can be re-uploaded
+      e.target.value = "";
     };
     reader.readAsText(file);
   };
@@ -1215,9 +1228,12 @@ export default function App() {
         <button className="btn btn-gold" onClick={submit}>LOAD</button>
         <label style={{ display:"flex", alignItems:"center", gap:6, padding:"11px 18px", background:"transparent", border:"1px solid #222", borderRadius:6, cursor:"pointer", fontFamily:"'Montserrat',sans-serif", fontSize:10, fontWeight:700, letterSpacing:"0.15em", color:"#555", textTransform:"uppercase", transition:"all 0.2s" }}
           onMouseEnter={e=>e.currentTarget.style.borderColor="#333"} onMouseLeave={e=>e.currentTarget.style.borderColor="#222"}>
-          ↑ CSV
+          ↑ CSV {csvLoaded ? `+ MERGE (${candles.length.toLocaleString()})` : ""}
           <input type="file" accept=".csv" style={{display:"none"}} onChange={handleCSV} />
         </label>
+        {csvLoaded && (
+          <button className="btn btn-outline" onClick={() => { setCandles([]); setCsvLoaded(false); setTicker(""); setSelectedYears([]); }} style={{ padding: "11px 16px", fontSize: 9, color: "#ef4444", borderColor: "#2a1a1a" }}>✕ RESET</button>
+        )}
         <div style={{ display: "flex", gap: 6, marginLeft: 8 }}>
           {["1d", "1w"].map(iv => (
             <button key={iv} className={`btn btn-outline ${interval === iv ? "active" : ""}`}
