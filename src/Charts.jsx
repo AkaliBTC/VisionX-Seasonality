@@ -231,40 +231,42 @@ const analyzeCycles = (candles, topN = 20) => {
 };
 
 // Build composite sine wave — arithmetic, auto-scaled to visible price range
-const buildComposite = (candles, selectedCycles, tweaks) => {
+const buildComposite = (candles, selectedCycles, tweaks, anchorIdx, slopeMult = 1.0) => {
   if (!candles.length || !selectedCycles.length) return [];
   const n = candles.length;
-  const fwdBars = Math.ceil(n * 0.25);
+  const fwdBars = Math.ceil(n * 0.5);
   const totalBars = n + fwdBars;
+  const anchor = anchorIdx != null ? Math.min(anchorIdx, n - 1) : n - 1;
 
-  // Raw composite (unitless sum of sines)
-  const raw = Array(totalBars).fill(0);
+  const anchorPrice = candles[anchor].l;
+  const priceMin = Math.min(...candles.map(c => c.l));
+  const priceMax = Math.max(...candles.map(c => c.h));
+  const priceRange = priceMax - priceMin;
+  const numCyc = selectedCycles.length;
+
+  // Skewed composite: -cos pins trough at anchor, peak shift via slopeMult
+  const skewed = Array(totalBars).fill(0);
   for (const cyc of selectedCycles) {
-    const tw = tweaks[cyc.period] || { periodMult: 1, ampMult: 1 };
-    const period = cyc.period * tw.periodMult;
-    const amp = cyc.amplitude * tw.ampMult;
-    const freq = 1 / period;
+    const tw = tweaks[cyc.period] || {};
+    const period = cyc.period * (tw.periodMult || 1);
+    const split = slopeMult / (1 + slopeMult);
     for (let t = 0; t < totalBars; t++) {
-      raw[t] += amp * Math.sin(2 * Math.PI * freq * t + cyc.phase);
+      const phase = ((t - anchor) % period + period) % period / period;
+      let distorted;
+      if (phase < split) {
+        distorted = (phase / split) * Math.PI;
+      } else {
+        distorted = Math.PI + ((phase - split) / (1 - split)) * Math.PI;
+      }
+      skewed[t] += -Math.cos(distorted);
     }
   }
 
-  // Price stats for scaling
-  const closes = candles.map(c => c.c);
-  const priceMin = Math.min(...closes);
-  const priceMax = Math.max(...closes);
-  const priceMid = (priceMin + priceMax) / 2;
-  const priceRange = (priceMax - priceMin) * 0.45; // use 45% of price range as amplitude
-
-  // Scale raw composite to price space
-  const rawMin = Math.min(...raw);
-  const rawMax = Math.max(...raw);
-  const rawRange = rawMax - rawMin || 1;
-
-  return raw.map((v, t) => ({
+  // skewed in [-numCyc, +numCyc], anchor = trough = -numCyc
+  const amplitude = (priceRange * 0.35) / numCyc;
+  return skewed.map((v, t) => ({
     t,
-    // Normalize to [-1,1] then scale to price range around midpoint
-    v: priceMid + ((v - (rawMin + rawMax) / 2) / (rawRange / 2)) * priceRange,
+    v: anchorPrice + (v + numCyc) * amplitude,
     isFuture: t >= n,
   }));
 };
@@ -953,7 +955,7 @@ export default function App() {
 
   const selectedCycleObjs = cycles.filter(c => selectedCycles.has(c.period));
   const compositeWave = (showCycles && selectedCycleObjs.length > 0)
-    ? buildComposite(candles, selectedCycleObjs, cycleTweaks)
+    ? buildComposite(candles, selectedCycleObjs, cycleTweaks, cycleAnchorIdx, cycleSlopeMult)
     : [];
 
   const toggleIndicator = (id) => setActiveIndicators(prev => {
@@ -1146,7 +1148,18 @@ export default function App() {
             <div style={{ display: "flex", position: "relative" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="section-body" style={{ padding: "12px 8px 4px" }}>
-                  <PriceChart candles={candles} interval={interval} activeIndicators={activeIndicators} indSettings={indSettings} compositeWave={compositeWave} />
+                  <PriceChart candles={candles} interval={interval} activeIndicators={activeIndicators} indSettings={indSettings} compositeWave={compositeWave}
+                    pickingAnchor={pickingAnchor}
+                    onAnchorPick={(idx) => {
+                      setCycleAnchorIdx(idx);
+                      setPickingAnchor(false);
+                      setShowCycles(true);
+                      setTimeout(() => {
+                        const c = analyzeCycles(candles, 20, idx);
+                        setCycles(c);
+                        setSelectedCycles(new Set());
+                      }, 10);
+                    }} />
                 </div>
               </div>
               {/* Cycle Panel Toggle */}
