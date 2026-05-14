@@ -1049,20 +1049,22 @@ export default function App() {
     reader.onload = (ev) => {
       const parsed = parseCSV(ev.target.result, interval);
       if (!parsed || parsed.length < 10) { setError(true); return; }
-      setCandles(prev => {
-        if (prev.length > 0 && csvLoaded) {
-          // Merge: combine, deduplicate by timestamp, sort
+      if (csvLoaded) {
+        // Merge with existing
+        setCandles(prev => {
           const merged = [...prev, ...parsed];
           const seen = new Map();
           for (const c of merged) seen.set(c.t, c);
           return [...seen.values()].sort((a, b) => a.t - b.t);
-        }
+        });
+      } else {
+        // First load
         setTicker(file.name.replace(/\.csv$/i, "").toUpperCase());
-        return parsed;
-      });
-      if (!csvLoaded) setTicker(file.name.replace(/\.csv$/i, "").toUpperCase());
-      setCsvLoaded(true); setSelectedYears([]); setError(false);
-      // Reset file input so same file can be re-uploaded
+        setCandles(parsed);
+        setSelectedYears([]);
+        setError(false);
+        setCsvLoaded(true);
+      }
       e.target.value = "";
     };
     reader.readAsText(file);
