@@ -616,8 +616,12 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   const totalSlots = endIdx - startIdx + 1;
 
   const prices = visible.flatMap(c => [c.h, c.l]);
-  const minP = Math.min(...prices);
-  const maxP = Math.max(...prices);
+  const waveVals = compositeWave
+    ? compositeWave.filter(p => p.t >= startIdx && p.t <= endIdx).map(p => p.v).filter(v => isFinite(v))
+    : [];
+  const allVals = [...prices, ...waveVals];
+  const minP = Math.min(...allVals);
+  const maxP = Math.max(...allVals);
   const range = maxP - minP || 1;
   const pad = range * 0.05;
 
