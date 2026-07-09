@@ -245,22 +245,25 @@ const calcSeasonality = (candles, years) => {
     byMonth[mo].push(pct);
   }
 
+  const wr = arr => arr.length ? (arr.filter(v => v > 0).length / arr.length) * 100 : 0;
+  const mk = (label, arr) => ({ label, val: avg(arr), n: arr.length, wr: wr(arr) });
+
   const hasWeekend = byWeekday[6].length > 0 || byWeekday[0].length > 0;
   const weekdays = [
-    { label: "Mon", val: avg(byWeekday[1]), n: byWeekday[1].length },
-    { label: "Tue", val: avg(byWeekday[2]), n: byWeekday[2].length },
-    { label: "Wed", val: avg(byWeekday[3]), n: byWeekday[3].length },
-    { label: "Thu", val: avg(byWeekday[4]), n: byWeekday[4].length },
-    { label: "Fri", val: avg(byWeekday[5]), n: byWeekday[5].length },
+    mk("Mon", byWeekday[1]),
+    mk("Tue", byWeekday[2]),
+    mk("Wed", byWeekday[3]),
+    mk("Thu", byWeekday[4]),
+    mk("Fri", byWeekday[5]),
     ...(hasWeekend ? [
-      { label: "Sat", val: avg(byWeekday[6]), n: byWeekday[6].length },
-      { label: "Sun", val: avg(byWeekday[0]), n: byWeekday[0].length },
+      mk("Sat", byWeekday[6]),
+      mk("Sun", byWeekday[0]),
     ] : []),
   ];
 
   const months = [
     "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"
-  ].map((label, i) => ({ label, val: avg(byMonth[i + 1]), n: byMonth[i + 1].length }));
+  ].map((label, i) => mk(label, byMonth[i + 1]));
 
   return { weekdays, months };
 };
@@ -404,11 +407,241 @@ const buildComposite = (candles, selectedCycles, tweaks, anchorIdx, slopeMult = 
   }));
 };
 
+// ── SEASONAL PATTERN (Seasonax-style average annual price path) ──────────────
+const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const dayKey = (d) => (d.getMonth() + 1) * 100 + d.getDate();
+const fmtKey = (k) => `${MONTH_SHORT[Math.floor(k / 100) - 1]} ${k % 100}`;
+
+const calcSeasonalPattern = (candles, years) => {
+  // average log return per calendar day → cumulated to the classic seasonal curve (indexed to 100)
+  const dayLogRets = new Map();
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i], p = candles[i - 1];
+    const yr = c.date.getFullYear();
+    if (!years.includes(yr) || p.c <= 0 || c.c <= 0) continue;
+    const key = dayKey(c.date);
+    if (!dayLogRets.has(key)) dayLogRets.set(key, []);
+    dayLogRets.get(key).push(Math.log(c.c / p.c));
+  }
+  const keys = [...dayLogRets.keys()].sort((a, b) => a - b);
+  if (keys.length < 10) return null;
+  let cum = 0;
+  return keys.map(k => {
+    const arr = dayLogRets.get(k);
+    const avgR = arr.reduce((a, b) => a + b, 0) / arr.length;
+    cum += avgR;
+    const wins = arr.filter(v => v > 0).length;
+    return { key: k, v: Math.exp(cum) * 100, winRate: (wins / arr.length) * 100, n: arr.length };
+  });
+};
+
+const calcCurrentYearPath = (candles) => {
+  const yr = new Date().getFullYear();
+  const cur = candles.filter(c => c.date.getFullYear() === yr);
+  if (cur.length < 2 || cur[0].c <= 0) return null;
+  const base = cur[0].c;
+  return { year: yr, points: cur.map(c => ({ key: dayKey(c.date), v: (c.c / base) * 100 })) };
+};
+
+// ── PATTERN STATISTICS (Seasonax-style window backtest) ──────────────────────
+const idxAtOrAfter = (candles, ts) => {
+  let lo = 0, hi = candles.length - 1, ans = null;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (candles[m].t >= ts) { ans = m; hi = m - 1; } else lo = m + 1; }
+  return ans;
+};
+const idxAtOrBefore = (candles, ts) => {
+  let lo = 0, hi = candles.length - 1, ans = null;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (candles[m].t <= ts) { ans = m; lo = m + 1; } else hi = m - 1; }
+  return ans;
+};
+
+const calcWindowStats = (candles, startKey, endKey, years) => {
+  const sm = Math.floor(startKey / 100), sd = startKey % 100;
+  const em = Math.floor(endKey / 100), ed = endKey % 100;
+  const wrap = endKey <= startKey;
+  const DAY = 86400000;
+  const rows = [];
+  for (const y of years) {
+    const t0 = new Date(y, sm - 1, sd).getTime();
+    const t1 = new Date(wrap ? y + 1 : y, em - 1, ed, 23, 59).getTime();
+    if (t1 > Date.now()) continue; // skip incomplete/ongoing window
+    const i0 = idxAtOrAfter(candles, t0);
+    const i1 = idxAtOrBefore(candles, t1);
+    if (i0 == null || i1 == null || i1 <= i0) continue;
+    // require entry & exit candles to actually sit near the intended dates
+    if (candles[i0].t - t0 > 12 * DAY) continue;
+    if (t1 - candles[i1].t > 12 * DAY) continue;
+    const entry = candles[i0].c, exit = candles[i1].c;
+    if (entry <= 0) continue;
+    rows.push({ year: y, ret: (exit / entry - 1) * 100 });
+  }
+  if (!rows.length) return null;
+  const rets = rows.map(r => r.ret);
+  const wins = rets.filter(r => r > 0).length;
+  const avgV = rets.reduce((a, b) => a + b, 0) / rets.length;
+  const sorted = [...rets].sort((a, b) => a - b);
+  const median = sorted.length % 2 ? sorted[(sorted.length - 1) / 2]
+    : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+  let lenDays = Math.round((new Date(wrap ? 2002 : 2001, em - 1, ed) - new Date(2001, sm - 1, sd)) / DAY);
+  if (lenDays <= 0) lenDays = 1;
+  const annualized = (Math.pow(1 + Math.max(avgV, -99) / 100, 365 / lenDays) - 1) * 100;
+  return {
+    rows, trades: rets.length,
+    winRate: (wins / rets.length) * 100,
+    avg: avgV, median,
+    best: sorted[sorted.length - 1], worst: sorted[0],
+    lenDays, annualized,
+  };
+};
+
+// ── PATTERN SCANNER — best long/short seasonal windows ──────────────────────
+const scanPatterns = (candles, years) => {
+  const all = [];
+  const lengths = [14, 21, 30, 45, 60, 91];
+  const minTrades = Math.min(4, Math.max(2, years.length - 1));
+  for (let m = 1; m <= 12; m++) for (const d of [1, 8, 15, 22]) {
+    const startKey = m * 100 + d;
+    const doy = Math.floor((new Date(2001, m - 1, d) - new Date(2001, 0, 1)) / 86400000);
+    for (const L of lengths) {
+      const end = new Date(2001, m - 1, d + L);
+      const endKey = (end.getMonth() + 1) * 100 + end.getDate();
+      const st = calcWindowStats(candles, startKey, endKey, years);
+      if (!st || st.trades < minTrades) continue;
+      all.push({ startKey, endKey, st, doy, L });
+    }
+  }
+  const pickNonOverlapping = (sorted) => {
+    const chosen = [];
+    for (const x of sorted) {
+      if (chosen.some(c => Math.abs(c.doy - x.doy) < Math.max(c.L, x.L) * 0.6)) continue;
+      chosen.push(x);
+      if (chosen.length >= 5) break;
+    }
+    return chosen;
+  };
+  const longs = pickNonOverlapping(
+    all.filter(x => x.st.avg > 0)
+      .sort((a, b) => b.st.avg * b.st.winRate - a.st.avg * a.st.winRate)
+  );
+  const shorts = pickNonOverlapping(
+    all.filter(x => x.st.avg < 0)
+      .sort((a, b) => (-b.st.avg) * (100 - b.st.winRate) - (-a.st.avg) * (100 - a.st.winRate))
+  );
+  return { longs, shorts };
+};
+
+// ── SPECTRAL CYCLE DETECTION (von-Thienen-style: DFT projection + Bartels) ──
+// Detrends log price, measures amplitude/phase per period via Goertzel-style
+// projection, validates each candidate with a Bartels phase-stability test,
+// and returns the dominant cycles with exact a·cos + b·sin coefficients so the
+// composite can be reconstructed and projected forward in real price space.
+const detectCyclesSpectral = (candles, maxCycles = 20) => {
+  const n = candles.length;
+  if (n < 80) return { cycles: [], trend: null, spectrum: [] };
+
+  const y = candles.map(c => Math.log(Math.max(c.c, 1e-12)));
+
+  // Linear detrend in log space
+  let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (let i = 0; i < n; i++) { sx += i; sy += y[i]; sxx += i * i; sxy += i * y[i]; }
+  const den = n * sxx - sx * sx;
+  const slope = den ? (n * sxy - sx * sy) / den : 0;
+  const icept = (sy - slope * sx) / n;
+  const r = new Float64Array(n);
+  for (let i = 0; i < n; i++) r[i] = y[i] - (icept + slope * i);
+
+  const minP = 8;
+  const maxP = Math.min(Math.floor(n / 2.5), 650);
+  if (maxP <= minP) return { cycles: [], trend: null, spectrum: [] };
+
+  // Full amplitude spectrum
+  const spec = [];
+  for (let P = minP; P <= maxP; P++) {
+    const w = (2 * Math.PI) / P;
+    let ca = 0, sb = 0;
+    for (let i = 0; i < n; i++) { ca += r[i] * Math.cos(w * i); sb += r[i] * Math.sin(w * i); }
+    const a = (2 * ca) / n, b = (2 * sb) / n;
+    spec.push({ period: P, a, b, amp: Math.hypot(a, b) });
+  }
+
+  // Bartels-style phase-stability test: split into full-cycle segments (most
+  // recent data first), check how coherent the phase is across segments (0–1)
+  const bartels = (P) => {
+    const w = (2 * Math.PI) / P;
+    const k = Math.min(8, Math.floor(n / P));
+    if (k < 2) return 0.35;
+    let re = 0, im = 0;
+    for (let s = 0; s < k; s++) {
+      const off = n - (s + 1) * P;
+      let ca = 0, sb = 0;
+      for (let i = 0; i < P; i++) { const g = off + i; ca += r[g] * Math.cos(w * g); sb += r[g] * Math.sin(w * g); }
+      const m = Math.hypot(ca, sb) || 1;
+      re += ca / m; im += sb / m;
+    }
+    return Math.hypot(re, im) / k;
+  };
+
+  // Local maxima of the spectrum → candidates
+  const peaks = [];
+  for (let i = 1; i < spec.length - 1; i++) {
+    if (spec[i].amp > spec[i - 1].amp && spec[i].amp >= spec[i + 1].amp) peaks.push(spec[i]);
+  }
+  peaks.sort((a, b) => b.amp - a.amp);
+
+  const scored = peaks.slice(0, 40).map(p => {
+    const bt = bartels(p.period);
+    return { ...p, bartels: bt, strength: p.amp * (0.4 + 0.6 * bt) };
+  }).sort((a, b) => b.strength - a.strength);
+
+  // Dedupe near-identical periods, keep strongest
+  const sel = [];
+  for (const s of scored) {
+    if (sel.some(x => Math.abs(x.period - s.period) / Math.max(x.period, s.period) < 0.12)) continue;
+    sel.push(s);
+    if (sel.length >= maxCycles) break;
+  }
+  const maxStr = sel.length ? sel[0].strength : 1;
+  const cycles = sel.map(s => ({
+    ...s,
+    strengthPct: maxStr > 0 ? (s.strength / maxStr) * 100 : 0,
+    bartelsPct: s.bartels * 100,
+  }));
+
+  // Downsampled spectrum for the mini strip chart
+  const stripBins = 110;
+  const chunk = Math.max(1, Math.ceil(spec.length / stripBins));
+  const spectrum = [];
+  for (let i = 0; i < spec.length; i += chunk) {
+    let best = spec[i];
+    for (let j = i; j < Math.min(i + chunk, spec.length); j++) if (spec[j].amp > best.amp) best = spec[j];
+    spectrum.push({ period: best.period, amp: best.amp });
+  }
+
+  return { cycles, trend: { slope, icept }, spectrum };
+};
+
+// Reconstruct composite in real price space (trend + selected cycles), project forward
+const buildSpectralComposite = (candles, cycles, trend) => {
+  if (!candles.length || !cycles.length || !trend) return [];
+  const n = candles.length;
+  const fwd = Math.min(Math.ceil(n * 0.5), 500);
+  const pts = [];
+  for (let t = 0; t < n + fwd; t++) {
+    let v = trend.icept + trend.slope * t;
+    for (const c of cycles) {
+      const w = (2 * Math.PI) / c.period;
+      v += c.a * Math.cos(w * t) + c.b * Math.sin(w * t);
+    }
+    pts.push({ t, v: Math.exp(v), isFuture: t >= n });
+  }
+  return pts;
+};
+
 // ── BAR CHART ─────────────────────────────────────────────────────────────────
 function BarChart({ data, title }) {
   const vals = data.map(d => d.val);
   const maxAbs = Math.max(...vals.map(Math.abs), 0.001);
-  const H = 240, PAD = { top: 40, bottom: 44, left: 52, right: 16 };
+  const H = 248, PAD = { top: 40, bottom: 52, left: 52, right: 16 };
   const W = 560;
   const iW = W - PAD.left - PAD.right;
   const iH = H - PAD.top - PAD.bottom;
@@ -458,10 +691,17 @@ function BarChart({ data, title }) {
                 {d.val >= 0 ? "+" : ""}{d.val.toFixed(2)}%
               </text>
               {/* X label */}
-              <text x={x + barW / 2} y={H - 10} textAnchor="middle"
+              <text x={x + barW / 2} y={H - 18} textAnchor="middle"
                 fill="#444" fontSize="9.5" fontFamily="'DM Mono', monospace">
                 {d.label}
               </text>
+              {/* Win rate */}
+              {d.wr != null && d.n > 0 && (
+                <text x={x + barW / 2} y={H - 6} textAnchor="middle"
+                  fill={d.wr >= 60 ? "#22c55e" : d.wr <= 40 ? "#ef4444" : "#333"} fontSize="7.5" fontFamily="'DM Mono', monospace">
+                  {d.wr.toFixed(0)}% WR
+                </text>
+              )}
             </g>
           );
         })}
@@ -588,7 +828,7 @@ const DEFAULT_SETTINGS = {
 };
 
 // ── PRICE CHART (zoom/pan) ────────────────────────────────────────────────────
-function PriceChart({ candles, interval, activeIndicators, indSettings, compositeWave, pickingAnchor, onAnchorPick }) {
+function PriceChart({ candles, interval, activeIndicators, indSettings, compositeWave, waveDirect, pickingAnchor, onAnchorPick }) {
   const svgRef = useRef(null);
   const viewRef = useRef({ startIdx: 0, endIdx: Math.max(0, candles.length - 1) });
   const [viewVersion, setViewVersion] = useState(0); // trigger re-render
@@ -774,6 +1014,9 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
             <stop offset="0%" stopColor={color} stopOpacity="0.15" />
             <stop offset="100%" stopColor={color} stopOpacity="0" />
           </linearGradient>
+          <clipPath id="chartClip">
+            <rect x={PAD.left} y={PAD.top} width={iW} height={iH} />
+          </clipPath>
         </defs>
 
         {/* Grid */}
@@ -892,13 +1135,19 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
 
         {/* ── COMPOSITE CYCLE WAVE ── */}
         {compositeWave && compositeWave.length > 1 && (() => {
-          // Normalize wave to fit within visible price range
           const visibleWave = compositeWave.filter(p => p.t >= startIdx && p.t <= endIdx);
-          const waveMin = Math.min(...visibleWave.map(p => p.v));
-          const waveMax = Math.max(...visibleWave.map(p => p.v));
-          const waveRange = waveMax - waveMin || 1;
-          // Map wave [waveMin,waveMax] → [minP, maxP] (price range)
-          const waveToPrice = (v) => minP + ((v - waveMin) / waveRange) * (maxP - minP);
+          if (visibleWave.length < 2) return null;
+          let waveToPrice;
+          if (waveDirect) {
+            // Spectral composite is already in real price space — plot 1:1
+            waveToPrice = (v) => v;
+          } else {
+            // Trough composite: normalize wave to fit within visible price range
+            const waveMin = Math.min(...visibleWave.map(p => p.v));
+            const waveMax = Math.max(...visibleWave.map(p => p.v));
+            const waveRange = waveMax - waveMin || 1;
+            waveToPrice = (v) => minP + ((v - waveMin) / waveRange) * (maxP - minP);
+          }
 
           const histPoints = compositeWave.filter(p => !p.isFuture);
           const futPoints = compositeWave.filter(p => p.isFuture);
@@ -929,7 +1178,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           })();
 
           return (
-            <g>
+            <g clipPath="url(#chartClip)">
               {histPath && <path d={histPath} fill="none" stroke="#d4af37" strokeWidth="1.5" opacity="0.85" strokeLinejoin="round" />}
               {futPath && <path d={futPath} fill="none" stroke="#d4af37" strokeWidth="1.5" opacity="0.45" strokeDasharray="6 4" strokeLinejoin="round" />}
             </g>
@@ -972,6 +1221,165 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   );
 }
 
+// ── SEASONAL CHART (Seasonax-style, drag to select a window) ─────────────────
+function SeasonalChart({ pattern, curPath, showCur, selection, onSelect }) {
+  const svgRef = useRef(null);
+  const dragRef = useRef(null);
+  const [dragSel, setDragSel] = useState(null); // {a, b} indices while dragging
+  const [hoverI, setHoverI] = useState(null);
+
+  const W = 1000, H = 300, PAD = { top: 20, right: 20, bottom: 34, left: 64 };
+  const iW = W - PAD.left - PAD.right;
+  const iH = H - PAD.top - PAD.bottom;
+
+  const idxFromEvent = (e) => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const rect = svg.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (W / rect.width);
+    return Math.max(0, Math.min(pattern.length - 1, Math.round((x - PAD.left) / iW * (pattern.length - 1))));
+  };
+
+  // Finish drag even if mouse leaves the SVG
+  useEffect(() => {
+    const onUp = () => {
+      if (dragRef.current == null) return;
+      const { a, b } = dragRef.current;
+      dragRef.current = null;
+      setDragSel(null);
+      if (Math.abs(a - b) >= 3) {
+        const lo = Math.min(a, b), hi = Math.max(a, b);
+        onSelect({ startKey: pattern[lo].key, endKey: pattern[hi].key });
+      } else {
+        onSelect(null);
+      }
+    };
+    document.addEventListener("mouseup", onUp);
+    return () => document.removeEventListener("mouseup", onUp);
+  }, [pattern, onSelect]);
+
+  if (!pattern || pattern.length < 10) return null;
+
+  const keyToIdx = new Map(pattern.map((p, i) => [p.key, i]));
+  const curPts = showCur && curPath
+    ? curPath.points.map(p => ({ i: keyToIdx.get(p.key), v: p.v })).filter(p => p.i != null)
+    : [];
+
+  const vals = [...pattern.map(p => p.v), ...curPts.map(p => p.v)];
+  const minV = Math.min(...vals), maxV = Math.max(...vals);
+  const range = maxV - minV || 1;
+  const vpad = range * 0.08;
+  const xS = (i) => PAD.left + (i / (pattern.length - 1)) * iW;
+  const yS = (v) => PAD.top + iH - ((v - (minV - vpad)) / (range + 2 * vpad)) * iH;
+
+  // Month boundaries
+  const monthMarks = [];
+  let lastM = null;
+  pattern.forEach((p, i) => {
+    const m = Math.floor(p.key / 100);
+    if (m !== lastM) { monthMarks.push({ i, m }); lastM = m; }
+  });
+
+  const pathD = pattern.map((p, i) => `${i ? "L" : "M"} ${xS(i)} ${yS(p.v)}`).join(" ");
+  const areaD = pathD + ` L ${xS(pattern.length - 1)} ${PAD.top + iH} L ${PAD.left} ${PAD.top + iH} Z`;
+  const curD = curPts.map((p, j) => `${j ? "L" : "M"} ${xS(p.i)} ${yS(p.v)}`).join(" ");
+
+  const yTicks = 5;
+  const yLabels = Array.from({ length: yTicks }, (_, i) => minV - vpad + ((range + 2 * vpad) / (yTicks - 1)) * i);
+
+  // Active selection region (drag preview wins over committed selection)
+  let selRange = null;
+  if (dragSel) selRange = [Math.min(dragSel.a, dragSel.b), Math.max(dragSel.a, dragSel.b)];
+  else if (selection) {
+    const a = keyToIdx.get(selection.startKey), b = keyToIdx.get(selection.endKey);
+    if (a != null && b != null) selRange = [Math.min(a, b), Math.max(a, b)];
+  }
+
+  return (
+    <div style={{ position: "relative", userSelect: "none" }}>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
+        style={{ width: "100%", height: "auto", display: "block", cursor: "crosshair" }}
+        onMouseDown={(e) => {
+          const i = idxFromEvent(e);
+          if (i == null) return;
+          dragRef.current = { a: i, b: i };
+          setDragSel({ a: i, b: i });
+        }}
+        onMouseMove={(e) => {
+          const i = idxFromEvent(e);
+          if (i == null) return;
+          setHoverI(i);
+          if (dragRef.current) {
+            dragRef.current.b = i;
+            setDragSel({ ...dragRef.current });
+          }
+        }}
+        onMouseLeave={() => setHoverI(null)}>
+
+        {/* Month grid + labels */}
+        {monthMarks.map(({ i, m }, j) => (
+          <g key={j}>
+            <line x1={xS(i)} x2={xS(i)} y1={PAD.top} y2={PAD.top + iH} stroke="#161616" strokeWidth="1" />
+            <text x={xS(i) + 4} y={H - 10} fill="#444" fontSize="9.5" fontFamily="'DM Mono', monospace">
+              {MONTH_SHORT[m - 1]}
+            </text>
+          </g>
+        ))}
+
+        {/* Y grid + labels (indexed to 100 at start of year) */}
+        {yLabels.map((v, i) => (
+          <g key={i}>
+            <line x1={PAD.left} x2={W - PAD.right} y1={yS(v)} y2={yS(v)} stroke="#181818" strokeWidth="1" />
+            <text x={PAD.left - 8} y={yS(v) + 4} textAnchor="end" fill="#444" fontSize="10" fontFamily="'DM Mono', monospace">
+              {(v - 100 >= 0 ? "+" : "") + (v - 100).toFixed(1)}%
+            </text>
+          </g>
+        ))}
+
+        {/* Selection highlight */}
+        {selRange && (
+          <rect x={xS(selRange[0])} y={PAD.top} width={Math.max(xS(selRange[1]) - xS(selRange[0]), 1)} height={iH}
+            fill="rgba(212,175,55,0.08)" stroke="#d4af37" strokeWidth="1" strokeDasharray="4 3" />
+        )}
+
+        {/* Seasonal curve */}
+        <defs>
+          <linearGradient id="seasonGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#d4af37" stopOpacity="0.14" />
+            <stop offset="100%" stopColor="#d4af37" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={areaD} fill="url(#seasonGrad)" stroke="none" />
+        <path d={pathD} fill="none" stroke="#d4af37" strokeWidth="1.6" strokeLinejoin="round" />
+
+        {/* Current year overlay */}
+        {curD && <path d={curD} fill="none" stroke="#e8e8e8" strokeWidth="1.2" opacity="0.75" strokeLinejoin="round" />}
+
+        {/* Hover crosshair */}
+        {hoverI != null && pattern[hoverI] && (
+          <>
+            <line x1={xS(hoverI)} x2={xS(hoverI)} y1={PAD.top} y2={PAD.top + iH} stroke="#2a2a2a" strokeWidth="1" strokeDasharray="4 3" />
+            <circle cx={xS(hoverI)} cy={yS(pattern[hoverI].v)} r="3.5" fill="#d4af37" stroke="#0a0a0a" strokeWidth="2" />
+          </>
+        )}
+      </svg>
+
+      {/* Hover tooltip */}
+      {hoverI != null && pattern[hoverI] && (
+        <div style={{ position: "absolute", top: 10, left: hoverI / pattern.length > 0.6 ? 76 : "auto", right: hoverI / pattern.length > 0.6 ? "auto" : 26, background: "#111", border: "1px solid #222", borderRadius: 8, padding: "7px 12px", fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#e8e8e8", pointerEvents: "none" }}>
+          <div style={{ color: "#555", fontSize: 9, marginBottom: 2 }}>{fmtKey(pattern[hoverI].key)} · {pattern[hoverI].n} yrs</div>
+          <div style={{ color: "#f8e49b", fontSize: 13, fontWeight: 600 }}>
+            {(pattern[hoverI].v - 100 >= 0 ? "+" : "") + (pattern[hoverI].v - 100).toFixed(2)}% YTD avg
+          </div>
+          <div style={{ color: pattern[hoverI].winRate >= 55 ? "#22c55e" : pattern[hoverI].winRate <= 45 ? "#ef4444" : "#666", fontSize: 9, marginTop: 2 }}>
+            day win rate {pattern[hoverI].winRate.toFixed(0)}%
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── APP ───────────────────────────────────────────────────────────────────────
 const VSXLogo = ({ size = 52 }) => (
   <img src="https://i.postimg.cc/pd4xzT1r/87011e66-b8e4-4d2b-9977-a06bb4b29902.png"
@@ -1006,6 +1414,16 @@ export default function App() {
   const [pickingAnchor, setPickingAnchor] = useState(false);
   const [cycleAnchorIdx, setCycleAnchorIdx] = useState(null);
   const [cycleSlopeMult, setCycleSlopeMult] = useState(1.0);
+  // Spectral cycle detection (auto)
+  const [cycleMode, setCycleMode] = useState("trough"); // 'trough' | 'spectral'
+  const [spectral, setSpectral] = useState(null);
+  const [selectedSpectral, setSelectedSpectral] = useState(new Set());
+  const [detecting, setDetecting] = useState(false);
+  // Seasonal pattern (Seasonax-style)
+  const [seasonSel, setSeasonSel] = useState(null); // {startKey, endKey}
+  const [showCurYear, setShowCurYear] = useState(true);
+  const [scanResults, setScanResults] = useState(null);
+  const [scanning, setScanning] = useState(false);
 
   const availableYears = [...new Set(candles.map(c => c.date.getFullYear()))].sort();
 
@@ -1015,6 +1433,14 @@ export default function App() {
 
   const seasonality = candles.length > 0 && activeYears.length > 0
     ? calcSeasonality(candles, activeYears)
+    : null;
+
+  const seasonalPattern = candles.length > 0 && activeYears.length > 0
+    ? calcSeasonalPattern(candles, activeYears)
+    : null;
+  const curYearPath = candles.length > 0 ? calcCurrentYearPath(candles) : null;
+  const windowStats = seasonSel && candles.length > 0
+    ? calcWindowStats(candles, seasonSel.startKey, seasonSel.endKey, activeYears)
     : null;
 
   const load = async (t, iv) => {
@@ -1042,6 +1468,10 @@ export default function App() {
         setProgress("");
       }, 50);
     }
+    setSpectral(null);
+    setSelectedSpectral(new Set());
+    setSeasonSel(null);
+    setScanResults(null);
   }, [candles]);
 
   const handleCSV = (e) => {
@@ -1110,10 +1540,41 @@ export default function App() {
     });
   };
 
+  const toggleSpectral = (period) => {
+    setSelectedSpectral(prev => {
+      const next = new Set(prev);
+      next.has(period) ? next.delete(period) : next.add(period);
+      return next;
+    });
+  };
+
+  const runSpectralDetect = () => {
+    if (candles.length < 80 || detecting) return;
+    setDetecting(true);
+    setTimeout(() => {
+      const res = detectCyclesSpectral(candles, 20);
+      setSpectral(res);
+      setSelectedSpectral(new Set(res.cycles.slice(0, 3).map(c => c.period)));
+      setShowCycles(true);
+      setDetecting(false);
+    }, 30);
+  };
+
+  const runScan = () => {
+    if (!candles.length || scanning) return;
+    setScanning(true);
+    setTimeout(() => {
+      setScanResults(scanPatterns(candles, activeYears));
+      setScanning(false);
+    }, 30);
+  };
+
   const selectedCycleObjs = cycles.filter(c => selectedCycles.has(c.period));
-  const compositeWave = (showCycles && selectedCycleObjs.length > 0)
-    ? buildComposite(candles, selectedCycleObjs, cycleTweaks, cycleAnchorIdx, cycleSlopeMult)
-    : [];
+  const selectedSpectralObjs = spectral ? spectral.cycles.filter(c => selectedSpectral.has(c.period)) : [];
+  const compositeWave = !showCycles ? []
+    : cycleMode === "spectral"
+      ? (selectedSpectralObjs.length > 0 ? buildSpectralComposite(candles, selectedSpectralObjs, spectral.trend) : [])
+      : (selectedCycleObjs.length > 0 ? buildComposite(candles, selectedCycleObjs, cycleTweaks, cycleAnchorIdx, cycleSlopeMult) : []);
 
   const toggleIndicator = (id) => setActiveIndicators(prev => {
     const next = new Set(prev);
@@ -1309,6 +1770,7 @@ export default function App() {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="section-body" style={{ padding: "12px 8px 4px" }}>
                   <PriceChart candles={candles} interval={interval} activeIndicators={activeIndicators} indSettings={indSettings} compositeWave={compositeWave}
+                    waveDirect={cycleMode === "spectral"}
                     pickingAnchor={pickingAnchor}
                     onAnchorPick={(idx) => {
                       setCycleAnchorIdx(idx);
@@ -1323,7 +1785,7 @@ export default function App() {
                 </div>
               </div>
               {/* Cycle Panel Toggle */}
-              {cycles.length > 0 && (
+              {(cycles.length > 0 || candles.length > 80) && (
                 <div style={{ position: "relative" }}>
                   <button onClick={() => setCyclesPanelOpen(o => !o)}
                     style={{ position: "absolute", top: 12, right: -1, background: cyclesPanelOpen ? "#1a1a1a" : "#111", border: "1px solid #222", borderRight: "none", color: cyclesPanelOpen ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", padding: "8px 10px", cursor: "pointer", borderRadius: "6px 0 0 6px", writingMode: "vertical-rl", textTransform: "uppercase", transition: "all 0.2s" }}>
@@ -1335,18 +1797,30 @@ export default function App() {
                       <div style={{ padding: "12px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 14, letterSpacing: "0.1em", color: "#e8e8e8" }}>Cycle Analysis</span>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#444" }}>{selectedCycles.size} selected</span>
+                          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#444" }}>{cycleMode === "trough" ? selectedCycles.size : selectedSpectral.size} selected</span>
+                          {cycleMode === "trough" && (
                           <button onClick={() => setPickingAnchor(p => !p)}
                             title="Click a low on the chart to anchor the wave"
                             style={{ background: pickingAnchor ? "rgba(239,68,68,0.15)" : cycleAnchorIdx != null ? "rgba(212,175,55,0.1)" : "transparent", border: `1px solid ${pickingAnchor ? "#ef4444" : cycleAnchorIdx != null ? "#d4af37" : "#222"}`, color: pickingAnchor ? "#ef4444" : cycleAnchorIdx != null ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", padding: "4px 10px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase", transition: "all 0.2s" }}>
                             {pickingAnchor ? "↗ CLICK LOW" : cycleAnchorIdx != null ? "⊕ LOW SET" : "📍 SET LOW"}
                           </button>
+                          )}
                           <button onClick={() => setShowCycles(s => !s)}
                             style={{ background: showCycles ? "rgba(212,175,55,0.15)" : "transparent", border: `1px solid ${showCycles ? "#d4af37" : "#222"}`, color: showCycles ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", padding: "4px 10px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase" }}>
                             {showCycles ? "ON" : "OFF"}
                           </button>
                         </div>
                       </div>
+                      {/* Mode tabs: manual trough scan vs auto spectral detection */}
+                      <div style={{ display: "flex", gap: 4, padding: "8px 16px", borderBottom: "1px solid #1a1a1a" }}>
+                        {[["trough", "TROUGH SCAN"], ["spectral", "AUTO SPECTRAL"]].map(([m, lbl]) => (
+                          <button key={m} onClick={() => setCycleMode(m)}
+                            style={{ flex: 1, background: cycleMode === m ? "rgba(212,175,55,0.1)" : "transparent", border: `1px solid ${cycleMode === m ? "#d4af37" : "#1e1e1e"}`, color: cycleMode === m ? "#f8e49b" : "#444", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", padding: "6px 0", borderRadius: 4, cursor: "pointer", textTransform: "uppercase", transition: "all 0.15s" }}>
+                            {lbl}
+                          </button>
+                        ))}
+                      </div>
+                      {cycleMode === "trough" && (<>
                       {/* Peak Shift slider */}
                       <div style={{ padding: "10px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", gap: 10 }}>
                         <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Peak Shift</span>
@@ -1393,6 +1867,77 @@ export default function App() {
                           );
                         })}
                       </div>
+                      </>)}
+
+                      {cycleMode === "spectral" && (<>
+                      {/* Detect button */}
+                      <div style={{ padding: "10px 16px", borderBottom: "1px solid #1a1a1a" }}>
+                        <button onClick={runSpectralDetect} disabled={detecting}
+                          style={{ width: "100%", background: "linear-gradient(135deg, #d4af37, #c59958)", border: "none", color: "#0a0a0a", fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.15em", padding: "9px 0", borderRadius: 5, cursor: detecting ? "wait" : "pointer", textTransform: "uppercase", opacity: detecting ? 0.6 : 1 }}>
+                          {detecting ? "ANALYZING…" : spectral ? "↻ RE-DETECT CYCLES" : "⚡ DETECT DOMINANT CYCLES"}
+                        </button>
+                        <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#333", marginTop: 6, lineHeight: 1.5 }}>
+                          Goertzel spectrum on detrended log price · Bartels phase-stability test · composite projected forward
+                        </div>
+                      </div>
+                      {/* Spectrum strip */}
+                      {spectral && spectral.spectrum.length > 2 && (() => {
+                        const sp = spectral.spectrum;
+                        const maxAmp = Math.max(...sp.map(s => s.amp), 1e-9);
+                        const sw = 248, sh = 44;
+                        const bw = sw / sp.length;
+                        return (
+                          <div style={{ padding: "8px 16px 4px", borderBottom: "1px solid #1a1a1a" }}>
+                            <svg viewBox={`0 0 ${sw} ${sh}`} style={{ width: "100%", height: "auto", display: "block" }}>
+                              {sp.map((s, i) => {
+                                const isSel = spectral.cycles.some(c => Math.abs(c.period - s.period) / c.period < 0.05 && selectedSpectral.has(c.period));
+                                const h = Math.max((s.amp / maxAmp) * (sh - 6), 1);
+                                return <rect key={i} x={i * bw + 0.5} y={sh - h} width={Math.max(bw - 1, 0.8)} height={h}
+                                  fill={isSel ? "#d4af37" : "#2a2a2a"} opacity={isSel ? 0.95 : 0.8} />;
+                              })}
+                            </svg>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "'DM Mono', monospace", fontSize: 7, color: "#333", marginTop: 2 }}>
+                              <span>{sp[0].period}{interval === "1d" ? "d" : "w"}</span>
+                              <span>spectrum</span>
+                              <span>{sp[sp.length - 1].period}{interval === "1d" ? "d" : "w"}</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      {/* Spectral table header */}
+                      <div style={{ display: "grid", gridTemplateColumns: "24px 52px 1fr 44px 24px", gap: 0, padding: "6px 16px", borderBottom: "1px solid #1a1a1a" }}>
+                        {["#", "Period", "Strength", "Bartels", ""].map((h, i) => (
+                          <span key={i} style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#2a2a2a", textTransform: "uppercase" }}>{h}</span>
+                        ))}
+                      </div>
+                      {/* Spectral cycle rows */}
+                      <div style={{ overflowY: "auto", flex: 1, maxHeight: 300 }}>
+                        {!spectral && !detecting && (
+                          <div style={{ padding: "20px 16px", fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#333", textAlign: "center", lineHeight: 1.6 }}>
+                            Run detection to extract the dominant cycles automatically
+                          </div>
+                        )}
+                        {spectral && spectral.cycles.map((cyc, i) => {
+                          const isOn = selectedSpectral.has(cyc.period);
+                          return (
+                            <div key={cyc.period} onClick={() => toggleSpectral(cyc.period)}
+                              style={{ display: "grid", gridTemplateColumns: "24px 52px 1fr 44px 24px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid #0f0f0f", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.05)" : "transparent", transition: "background 0.15s" }}>
+                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#2a2a2a" }}>{i + 1}</span>
+                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: isOn ? "#f8e49b" : "#555", fontWeight: isOn ? 600 : 400 }}>{cyc.period}{interval === "1d" ? "d" : "w"}</span>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6, paddingRight: 6 }}>
+                                <div style={{ flex: 1, height: 2, background: "#1a1a1a", borderRadius: 2 }}>
+                                  <div style={{ width: `${Math.min(cyc.strengthPct, 100)}%`, height: "100%", background: "#d4af37", borderRadius: 2, opacity: isOn ? 1 : 0.5 }} />
+                                </div>
+                              </div>
+                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: cyc.bartelsPct > 65 ? "#22c55e" : cyc.bartelsPct > 45 ? "#f59e0b" : "#ef4444" }}>{cyc.bartelsPct.toFixed(0)}%</span>
+                              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                                <div style={{ width: 7, height: 7, borderRadius: "50%", background: isOn ? "#d4af37" : "transparent", border: `1px solid ${isOn ? "#d4af37" : "#2a2a2a"}`, transition: "all 0.15s" }} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      </>)}
                     </div>
                   )}
                 </div>
@@ -1448,6 +1993,108 @@ export default function App() {
                   <BarChart data={seasonality.months} title="Avg Return by Month (%)" />
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* SEASONAL PATTERN (Seasonax-style) */}
+          {seasonalPattern && (
+            <div className="section">
+              <div className="section-header">
+                <div className="section-title">SEASONAL PATTERN · AVG ANNUAL PATH</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#333" }}>drag on chart to backtest a window</span>
+                  {curYearPath && (
+                    <button className={`btn btn-outline ${showCurYear ? "active" : ""}`} style={{ padding: "6px 14px", fontSize: 9 }}
+                      onClick={() => setShowCurYear(s => !s)}>
+                      {curYearPath.year} OVERLAY
+                    </button>
+                  )}
+                  <button className="btn btn-outline" style={{ padding: "6px 14px", fontSize: 9, borderColor: scanResults ? "#d4af37" : undefined, color: scanResults ? "#f8e49b" : undefined }}
+                    onClick={runScan} disabled={scanning}>
+                    {scanning ? "SCANNING…" : "⚡ SCAN PATTERNS"}
+                  </button>
+                  {seasonSel && (
+                    <button className="btn btn-outline" style={{ padding: "6px 14px", fontSize: 9, color: "#ef4444", borderColor: "#2a1a1a" }}
+                      onClick={() => setSeasonSel(null)}>✕ CLEAR</button>
+                  )}
+                </div>
+              </div>
+              <div className="section-body" style={{ padding: "12px 8px 4px" }}>
+                <SeasonalChart pattern={seasonalPattern} curPath={curYearPath} showCur={showCurYear}
+                  selection={seasonSel} onSelect={setSeasonSel} />
+              </div>
+
+              {/* Window statistics */}
+              {windowStats && seasonSel && (
+                <div style={{ borderTop: "1px solid #1a1a1a", padding: "16px 24px 20px" }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+                    <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.12em", color: "#f8e49b" }}>
+                      {fmtKey(seasonSel.startKey)} → {fmtKey(seasonSel.endKey)}
+                    </span>
+                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#444" }}>
+                      {windowStats.lenDays} calendar days · {windowStats.trades} completed windows
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+                    {[
+                      ["Win Rate", `${windowStats.winRate.toFixed(0)}%`, windowStats.winRate >= 60 ? "#22c55e" : windowStats.winRate <= 40 ? "#ef4444" : "#e8e8e8"],
+                      ["Avg Return", `${windowStats.avg >= 0 ? "+" : ""}${windowStats.avg.toFixed(2)}%`, windowStats.avg >= 0 ? "#22c55e" : "#ef4444"],
+                      ["Median", `${windowStats.median >= 0 ? "+" : ""}${windowStats.median.toFixed(2)}%`, windowStats.median >= 0 ? "#22c55e" : "#ef4444"],
+                      ["Best", `+${windowStats.best.toFixed(2)}%`, "#22c55e"],
+                      ["Worst", `${windowStats.worst.toFixed(2)}%`, "#ef4444"],
+                      ["Annualized", `${windowStats.annualized >= 0 ? "+" : ""}${windowStats.annualized.toFixed(1)}%`, "#d4af37"],
+                    ].map(([lbl, val, clr], i) => (
+                      <div key={i} style={{ background: "#0d0d0d", border: "1px solid #1a1a1a", borderRadius: 8, padding: "10px 16px", minWidth: 104 }}>
+                        <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.2em", color: "#333", textTransform: "uppercase", marginBottom: 4 }}>{lbl}</div>
+                        <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 16, fontWeight: 600, color: clr }}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Per-year returns */}
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {windowStats.rows.map(r => (
+                      <div key={r.year} style={{ background: r.ret >= 0 ? "rgba(34,197,94,0.07)" : "rgba(239,68,68,0.07)", border: `1px solid ${r.ret >= 0 ? "rgba(34,197,94,0.25)" : "rgba(239,68,68,0.25)"}`, borderRadius: 6, padding: "6px 10px", textAlign: "center" }}>
+                        <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#555" }}>{r.year}</div>
+                        <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 600, color: r.ret >= 0 ? "#22c55e" : "#ef4444" }}>
+                          {r.ret >= 0 ? "+" : ""}{r.ret.toFixed(1)}%
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Pattern scanner results */}
+              {scanResults && (
+                <div style={{ borderTop: "1px solid #1a1a1a", padding: "16px 24px 20px" }}>
+                  <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
+                    {[["STRONGEST BULLISH WINDOWS", scanResults.longs, "#22c55e"], ["STRONGEST BEARISH WINDOWS", scanResults.shorts, "#ef4444"]].map(([title, list, clr]) => (
+                      <div key={title} style={{ flex: 1, minWidth: 340 }}>
+                        <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.22em", color: clr, textTransform: "uppercase", marginBottom: 10, opacity: 0.85 }}>{title}</div>
+                        {list.length === 0 && (
+                          <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#333" }}>No qualifying windows found</div>
+                        )}
+                        {list.map((p, i) => {
+                          const isSel = seasonSel && seasonSel.startKey === p.startKey && seasonSel.endKey === p.endKey;
+                          return (
+                            <div key={i} onClick={() => setSeasonSel({ startKey: p.startKey, endKey: p.endKey })}
+                              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 12px", borderRadius: 6, border: `1px solid ${isSel ? "#d4af37" : "#1a1a1a"}`, background: isSel ? "rgba(212,175,55,0.06)" : "#0d0d0d", cursor: "pointer", marginBottom: 5, transition: "all 0.15s" }}>
+                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: isSel ? "#f8e49b" : "#888" }}>
+                                {fmtKey(p.startKey)} → {fmtKey(p.endKey)}
+                              </span>
+                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#444" }}>{p.st.lenDays}d</span>
+                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, fontWeight: 600, color: clr }}>
+                                {p.st.avg >= 0 ? "+" : ""}{p.st.avg.toFixed(2)}% avg
+                              </span>
+                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#666" }}>{p.st.winRate.toFixed(0)}% WR</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           <div style={{ height: 48 }} />
