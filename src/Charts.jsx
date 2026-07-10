@@ -551,7 +551,7 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   for (let i = 0; i < n; i++) r[i] = y[i] - (icept + slope * i);
 
   const minP = 8;
-  const maxP = Math.min(Math.floor(n / 2.5), 650);
+  const maxP = Math.min(Math.floor(n / 4), 500);
   if (maxP <= minP) return { cycles: [], trend: null, spectrum: [] };
 
   // Full amplitude spectrum
@@ -590,7 +590,9 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
 
   const scored = peaks.slice(0, 40).map(p => {
     const bt = bartels(p.period);
-    return { ...p, bartels: bt, strength: p.amp * (0.4 + 0.6 * bt) };
+    // Bartels dominates the ranking: a big-amplitude wiggle with unstable
+    // phase is trend residue, not a tradeable cycle
+    return { ...p, bartels: bt, strength: p.amp * bt * bt };
   }).sort((a, b) => b.strength - a.strength);
 
   // Dedupe near-identical periods, keep strongest
@@ -600,8 +602,11 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     sel.push(s);
     if (sel.length >= maxCycles) break;
   }
-  const maxStr = sel.length ? sel[0].strength : 1;
-  const cycles = sel.map(s => ({
+  // Drop phase-unstable candidates entirely unless that leaves too few
+  let kept = sel.filter(s => s.bartels >= 0.25);
+  if (kept.length < 3) kept = sel;
+  const maxStr = kept.length ? kept[0].strength : 1;
+  const cycles = kept.map(s => ({
     ...s,
     strengthPct: maxStr > 0 ? (s.strength / maxStr) * 100 : 0,
     bartelsPct: s.bartels * 100,
@@ -620,19 +625,21 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   return { cycles, trend: { slope, icept }, spectrum };
 };
 
-// Reconstruct composite in real price space (trend + selected cycles), project forward
-const buildSpectralComposite = (candles, cycles, trend) => {
-  if (!candles.length || !cycles.length || !trend) return [];
+// Cycles-only composite oscillator (detrended). Rendered normalized into the
+// visible price band like the trough wave, so it never clips out of the chart —
+// what matters here is the TIMING of highs/lows, not price targets.
+const buildSpectralComposite = (candles, cycles) => {
+  if (!candles.length || !cycles.length) return [];
   const n = candles.length;
   const fwd = Math.min(Math.ceil(n * 0.5), 500);
   const pts = [];
   for (let t = 0; t < n + fwd; t++) {
-    let v = trend.icept + trend.slope * t;
+    let v = 0;
     for (const c of cycles) {
       const w = (2 * Math.PI) / c.period;
       v += c.a * Math.cos(w * t) + c.b * Math.sin(w * t);
     }
-    pts.push({ t, v: Math.exp(v), isFuture: t >= n });
+    pts.push({ t, v, isFuture: t >= n });
   }
   return pts;
 };
@@ -1177,10 +1184,38 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
             return d;
           })();
 
+          // Projected turning points: local extrema of the future wave, with dates
+          const msPerBar = interval === "1d" ? 86400000 : 604800000;
+          const lastRealTs = candles[candles.length - 1].t;
+          const turns = [];
+          for (let i = 2; i < futPoints.length - 2; i++) {
+            const v = futPoints[i].v;
+            const isHigh = v >= futPoints[i-1].v && v >= futPoints[i-2].v && v > futPoints[i+1].v && v > futPoints[i+2].v;
+            const isLow  = v <= futPoints[i-1].v && v <= futPoints[i-2].v && v < futPoints[i+1].v && v < futPoints[i+2].v;
+            if (isHigh || isLow) turns.push({ i, v, type: isHigh ? "high" : "low" });
+          }
+          const turnEls = turns.slice(0, 5).map(({ i, v, type }, k) => {
+            const x = xScale(visible.length + i);
+            if (x > W - PAD.right || x < PAD.left) return null;
+            const y = yScale(waveToPrice(v));
+            const ts = lastRealTs + (i + 1) * msPerBar;
+            const clr = type === "low" ? "#22c55e" : "#ef4444";
+            return (
+              <g key={"turn" + k}>
+                <circle cx={x} cy={y} r="3.5" fill={clr} stroke="#0a0a0a" strokeWidth="1.5" />
+                <text x={x} y={type === "low" ? y + 16 : y - 10} textAnchor="middle"
+                  fill={clr} fontSize="9" fontFamily="'DM Mono', monospace" fontWeight="600">
+                  {type === "low" ? "▲ " : "▼ "}{fmtLabel(ts)}
+                </text>
+              </g>
+            );
+          });
+
           return (
             <g clipPath="url(#chartClip)">
               {histPath && <path d={histPath} fill="none" stroke="#d4af37" strokeWidth="1.5" opacity="0.85" strokeLinejoin="round" />}
               {futPath && <path d={futPath} fill="none" stroke="#d4af37" strokeWidth="1.5" opacity="0.45" strokeDasharray="6 4" strokeLinejoin="round" />}
+              {turnEls}
             </g>
           );
         })()}
@@ -1573,7 +1608,7 @@ export default function App() {
   const selectedSpectralObjs = spectral ? spectral.cycles.filter(c => selectedSpectral.has(c.period)) : [];
   const compositeWave = !showCycles ? []
     : cycleMode === "spectral"
-      ? (selectedSpectralObjs.length > 0 ? buildSpectralComposite(candles, selectedSpectralObjs, spectral.trend) : [])
+      ? (selectedSpectralObjs.length > 0 ? buildSpectralComposite(candles, selectedSpectralObjs) : [])
       : (selectedCycleObjs.length > 0 ? buildComposite(candles, selectedCycleObjs, cycleTweaks, cycleAnchorIdx, cycleSlopeMult) : []);
 
   const toggleIndicator = (id) => setActiveIndicators(prev => {
@@ -1770,7 +1805,6 @@ export default function App() {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="section-body" style={{ padding: "12px 8px 4px" }}>
                   <PriceChart candles={candles} interval={interval} activeIndicators={activeIndicators} indSettings={indSettings} compositeWave={compositeWave}
-                    waveDirect={cycleMode === "spectral"}
                     pickingAnchor={pickingAnchor}
                     onAnchorPick={(idx) => {
                       setCycleAnchorIdx(idx);
@@ -1877,7 +1911,7 @@ export default function App() {
                           {detecting ? "ANALYZING…" : spectral ? "↻ RE-DETECT CYCLES" : "⚡ DETECT DOMINANT CYCLES"}
                         </button>
                         <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#333", marginTop: 6, lineHeight: 1.5 }}>
-                          Goertzel spectrum on detrended log price · Bartels phase-stability test · composite projected forward
+                          Goertzel spectrum · Bartels-filtered (unstable cycles dropped) · projected turns dated on chart ▲▼
                         </div>
                       </div>
                       {/* Spectrum strip */}
