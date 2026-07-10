@@ -1448,7 +1448,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
             if (!majTurns.some(m => m.type === type && Math.abs(m.t - p.t) < glowTol)) return null;
             const idx = futPoints.indexOf(p);
             if (idx < 0) return null;
-            const thr = type === "high" ? p.v - 0.25 * vAmp : p.v + 0.25 * vAmp;
+            const thr = type === "high" ? p.v - 0.10 * vAmp : p.v + 0.10 * vAmp;
             const beyond = v => (type === "high" ? v >= thr : v <= thr);
             let i0 = idx, i1 = idx;
             while (i0 > 0 && beyond(futPoints[i0 - 1].v)) i0--;
@@ -1470,8 +1470,8 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
               <g key={"glow" + k}>
                 <linearGradient id={`tgl${k}`} gradientUnits="userSpaceOnUse" x1="0" y1={yThr} x2="0" y2={yExt}>
                   <stop offset="0%" stopColor="#d4af37" stopOpacity="0" />
-                  <stop offset="70%" stopColor="#d4af37" stopOpacity="0.045" />
-                  <stop offset="100%" stopColor="#d4af37" stopOpacity="0.09" />
+                  <stop offset="70%" stopColor="#d4af37" stopOpacity="0.025" />
+                  <stop offset="100%" stopColor="#d4af37" stopOpacity="0.055" />
                 </linearGradient>
                 <path d={d} fill={`url(#tgl${k})`} stroke="none" />
               </g>
