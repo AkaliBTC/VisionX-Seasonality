@@ -662,9 +662,6 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   // Drop phase-unstable candidates entirely unless that leaves too few
   let kept = found.filter(f => f.bartels >= 0.3);
   if (kept.length < 3) kept = found;
-  const maxStr = kept.length ? Math.max(...kept.map(f => f.score)) : 1;
-  // Final ordering: accuracy first — the list reads top-down as "most reliable"
-  kept.sort((a, b) => b.bartels - a.bartels || b.score - a.score);
 
   // NOTE: no joint least-squares refit here. With several long cycles the
   // sine bases are near-collinear over a recency-weighted window, the normal
@@ -778,14 +775,23 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     // ACCURACY = phase stability (Bartels) × bottom-timing regularity
     c.acc = c.bartels * (0.6 + 0.4 * spacingCons);
     c.spacingCons = spacingCons;
+    c.nBottoms = bottoms.length;
+    c.nSpacings = spacings.length;
   });
+
+  // QUALITY GATE: a cycle only makes the list if it proved itself on the chart —
+  // at least 3 confirmed swing pivot lows, with at least 2 consecutive
+  // bottom-to-bottom spacings inside the valid rhythm band (0.7–1.3 × P).
+  kept = kept.filter(c => (c.nBottoms ?? 0) >= 3 && (c.nSpacings ?? 0) >= 2);
   // Sort by accuracy, top-down
   kept.sort((a, b) => (b.acc ?? 0) - (a.acc ?? 0) || b.score - a.score);
+  const maxStr = kept.length ? Math.max(...kept.map(f => f.score)) : 1;
 
   const cycles = kept.map(s => ({
     period: s.period, pf: s.pf, a: s.a, b: s.b, amp: s.amp, bartels: s.bartels,
     anchor: s.anchor, skew: s.skew,
     acc: s.acc, accPct: (s.acc ?? s.bartels) * 100, spacingCons: s.spacingCons,
+    nBottoms: s.nBottoms,
     strength: s.score,
     strengthPct: maxStr > 0 ? (s.score / maxStr) * 100 : 0,
     bartelsPct: s.bartels * 100,
@@ -2173,7 +2179,7 @@ export default function App() {
                           {detecting ? "ANALYZING…" : spectral ? "↻ RE-DETECT CYCLES" : "⚡ DETECT DOMINANT CYCLES"}
                         </button>
                         <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#333", marginTop: 6, lineHeight: 1.5 }}>
-                          Sorted by accuracy (Bartels × bottom-timing) · bottom-to-bottom anchored, skew from top position · ♪ = harmonic (whole-number ratio)
+                          Only cycles with ≥3 confirmed swing lows · sorted by accuracy · bottom-to-bottom anchored · ♪ = harmonic (whole-number ratio)
                         </div>
                       </div>
                       {/* Spectrum strip */}
@@ -2225,6 +2231,11 @@ export default function App() {
                             Run detection to extract the dominant cycles automatically
                           </div>
                         )}
+                        {spectral && spectral.cycles.length === 0 && (
+                          <div style={{ padding: "20px 16px", fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#333", textAlign: "center", lineHeight: 1.6 }}>
+                            No cycle passed the quality gate (≥3 confirmed swing lows in rhythm) — this market is currently not cycling cleanly
+                          </div>
+                        )}
                         {spectral && spectral.cycles.map((cyc, i) => {
                           const isOn = selectedSpectral.has(cyc.period);
                           // Rule of harmony: flag unselected cycles in 2:1 / 3:1 / 3:2
@@ -2254,7 +2265,7 @@ export default function App() {
                                   <div style={{ width: `${Math.min(cyc.strengthPct, 100)}%`, height: "100%", background: "#d4af37", borderRadius: 2, opacity: isOn ? 1 : 0.5 }} />
                                 </div>
                               </div>
-                              <span title={`Bartels ${cyc.bartelsPct.toFixed(0)}% · bottom-timing ${((cyc.spacingCons ?? 0.75) * 100).toFixed(0)}%`}
+                              <span title={`Bartels ${cyc.bartelsPct.toFixed(0)}% · bottom-timing ${((cyc.spacingCons ?? 0.75) * 100).toFixed(0)}% · ${cyc.nBottoms} confirmed lows`}
                                 style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: cyc.accPct > 60 ? "#22c55e" : cyc.accPct > 42 ? "#f59e0b" : "#ef4444" }}>{cyc.accPct.toFixed(0)}%</span>
                               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                                 <div style={{ width: 7, height: 7, borderRadius: "50%", background: isOn ? "#d4af37" : "transparent", border: `1px solid ${isOn ? "#d4af37" : "#2a2a2a"}`, transition: "all 0.15s" }} />
