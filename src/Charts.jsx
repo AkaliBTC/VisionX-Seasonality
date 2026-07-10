@@ -1065,7 +1065,7 @@ const DEFAULT_SETTINGS = {
 };
 
 // ── PRICE CHART (zoom/pan) ────────────────────────────────────────────────────
-function PriceChart({ candles, interval, activeIndicators, indSettings, compositeWave, waveDirect, pickingAnchor, onAnchorPick }) {
+function PriceChart({ candles, interval, activeIndicators, indSettings, compositeWave, majorWave, waveDirect, pickingAnchor, onAnchorPick }) {
   const svgRef = useRef(null);
   const viewRef = useRef({ startIdx: 0, endIdx: Math.max(0, candles.length - 1) });
   const [viewVersion, setViewVersion] = useState(0); // trigger re-render
@@ -1430,9 +1430,22 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           // the cycle curve and a threshold level (25% of the wave's swing away
           // from the extreme). Gradient runs from nothing at the threshold to
           // gold at the curve — capped on the price axis by construction.
+          // Zones appear ONLY at the turns of the LARGEST selected cycle.
+          const majFut = (majorWave && majorWave.length ? majorWave : compositeWave).filter(q => q.isFuture);
+          const majTurns = [];
+          for (let i = 2; i < majFut.length - 2; i++) {
+            const v = majFut[i].v;
+            if (v >= majFut[i-1].v && v >= majFut[i-2].v && v > majFut[i+1].v && v > majFut[i+2].v) majTurns.push({ t: majFut[i].t, type: "high" });
+            else if (v <= majFut[i-1].v && v <= majFut[i-2].v && v < majFut[i+1].v && v < majFut[i+2].v) majTurns.push({ t: majFut[i].t, type: "low" });
+          }
+          const majGaps = [];
+          for (let i = 1; i < majTurns.length; i++) majGaps.push(majTurns[i].t - majTurns[i - 1].t);
+          const medMajGap = majGaps.length ? majGaps.slice().sort((a, b) => a - b)[Math.floor(majGaps.length / 2)] : 80;
+          const glowTol = Math.max(10, medMajGap * 0.35);
           const visVals = visibleWave.map(q => q.v);
           const vAmp = (Math.max(...visVals) - Math.min(...visVals)) || 1;
           const glowEls = turns.slice(0, 8).map(({ p, type }, k) => {
+            if (!majTurns.some(m => m.type === type && Math.abs(m.t - p.t) < glowTol)) return null;
             const idx = futPoints.indexOf(p);
             if (idx < 0) return null;
             const thr = type === "high" ? p.v - 0.25 * vAmp : p.v + 0.25 * vAmp;
@@ -1457,8 +1470,8 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
               <g key={"glow" + k}>
                 <linearGradient id={`tgl${k}`} gradientUnits="userSpaceOnUse" x1="0" y1={yThr} x2="0" y2={yExt}>
                   <stop offset="0%" stopColor="#d4af37" stopOpacity="0" />
-                  <stop offset="70%" stopColor="#d4af37" stopOpacity="0.12" />
-                  <stop offset="100%" stopColor="#d4af37" stopOpacity="0.22" />
+                  <stop offset="70%" stopColor="#d4af37" stopOpacity="0.045" />
+                  <stop offset="100%" stopColor="#d4af37" stopOpacity="0.09" />
                 </linearGradient>
                 <path d={d} fill={`url(#tgl${k})`} stroke="none" />
               </g>
@@ -1917,6 +1930,20 @@ export default function App() {
       ? (selectedSpectralObjs.length > 0 ? buildSpectralComposite(candles, selectedSpectralObjs) : [])
       : (selectedCycleObjs.length > 0 ? buildComposite(candles, selectedCycleObjs, cycleTweaks, cycleAnchorIdx, cycleSlopeMult) : []);
 
+  // Reference wave of ONLY the largest selected cycle — the glow zones mark
+  // its turns, not every wiggle of the composite
+  const majorWave = (() => {
+    if (!showCycles) return [];
+    if (cycleMode === "spectral") {
+      if (selectedSpectralObjs.length <= 1) return compositeWave;
+      const major = selectedSpectralObjs.reduce((a, b) => ((b.pf || b.period) > (a.pf || a.period) ? b : a));
+      return buildSpectralComposite(candles, [major]);
+    }
+    if (selectedCycleObjs.length <= 1) return compositeWave;
+    const major = selectedCycleObjs.reduce((a, b) => (b.period > a.period ? b : a));
+    return buildComposite(candles, [major], cycleTweaks, cycleAnchorIdx, cycleSlopeMult);
+  })();
+
   const toggleIndicator = (id) => setActiveIndicators(prev => {
     const next = new Set(prev);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -2126,6 +2153,7 @@ export default function App() {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="section-body" style={{ padding: "12px 8px 4px" }}>
                   <PriceChart candles={candles} interval={interval} activeIndicators={activeIndicators} indSettings={indSettings} compositeWave={compositeWave}
+                    majorWave={majorWave}
                     pickingAnchor={pickingAnchor}
                     onAnchorPick={(idx) => {
                       setCycleAnchorIdx(idx);
