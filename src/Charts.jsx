@@ -542,18 +542,48 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
 
   const y = candles.map(c => Math.log(Math.max(c.c, 1e-12)));
 
-  // Linear detrend in log space
+  // Linear fit kept only for the returned trend object (compat)
   let sx = 0, sy = 0, sxx = 0, sxy = 0;
   for (let i = 0; i < n; i++) { sx += i; sy += y[i]; sxx += i * i; sxy += i * y[i]; }
   const den = n * sxx - sx * sx;
   const slope = den ? (n * sxy - sx * sy) / den : 0;
   const icept = (sy - slope * sx) / n;
-  const r = new Float64Array(n);
-  for (let i = 0; i < n; i++) r[i] = y[i] - (icept + slope * i);
 
   const minP = 8;
   const maxP = Math.min(Math.floor(n / 4), 500);
   if (maxP <= minP) return { cycles: [], trend: null, spectrum: [] };
+
+  // HIGH-PASS detrend: subtract a centered moving average (window ≈ 1.2×maxP).
+  // A linear detrend leaves the multi-year trend wiggle in the residual, which
+  // then masquerades as huge phantom "cycles". The high-pass removes everything
+  // slower than the analysis band while leaving phase intact (centered window).
+  const L = Math.min(n - 1, (Math.round(maxP * 1.2) | 1));
+  const halfL = Math.floor(L / 2);
+  const ps = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) ps[i + 1] = ps[i] + y[i];
+  const smooth = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const lo = Math.max(0, i - halfL), hi = Math.min(n - 1, i + halfL);
+    smooth[i] = (ps[hi + 1] - ps[lo]) / (hi - lo + 1);
+  }
+  // Right-edge fix: the centered window shrinks near the end and bends the
+  // trend estimate exactly where the phase refit anchors. Extrapolate the last
+  // clean stretch of the smooth linearly instead.
+  const eEnd = n - halfL;
+  if (eEnd > 60) {
+    const fitLen = Math.min(300, eEnd - 1);
+    let fx = 0, fy = 0, fxx = 0, fxy = 0;
+    for (let j = 0; j < fitLen; j++) {
+      const idx = eEnd - fitLen + j;
+      fx += j; fy += smooth[idx]; fxx += j * j; fxy += j * smooth[idx];
+    }
+    const fden = fitLen * fxx - fx * fx;
+    const fsl = fden ? (fitLen * fxy - fx * fy) / fden : 0;
+    const fic = (fy - fsl * fx) / fitLen;
+    for (let i = eEnd; i < n; i++) smooth[i] = fic + fsl * (i - (eEnd - fitLen));
+  }
+  const r = new Float64Array(n);
+  for (let i = 0; i < n; i++) r[i] = y[i] - smooth[i];
 
   // Amplitude spectrum of an arbitrary series
   const scanSpectrum = (arr) => {
@@ -635,6 +665,56 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   const maxStr = kept.length ? Math.max(...kept.map(f => f.score)) : 1;
   // Final ordering: accuracy first — the list reads top-down as "most reliable"
   kept.sort((a, b) => b.bartels - a.bartels || b.score - a.score);
+
+  // JOINT REFIT: re-estimate all (a,b) simultaneously by weighted least squares
+  // on the recent window (exp. half-life 250 bars). Extraction phases are
+  // full-history averages; markets drift, so we anchor amplitude & phase to NOW
+  // — this is what makes the composite actually sit on current price swings.
+  if (kept.length > 0 && kept.length <= 14) {
+    const k = kept.length, m = 2 * k;
+    const Wn = Math.min(n, 1250), off0 = n - Wn, hl = 250;
+    const A = Array.from({ length: m }, () => new Float64Array(m));
+    const bv = new Float64Array(m);
+    const basis = new Float64Array(m);
+    for (let t = off0; t < n; t++) {
+      const wgt = Math.pow(2, (t - n + 1) / hl);
+      for (let j = 0; j < k; j++) {
+        const w = (2 * Math.PI) / kept[j].period;
+        basis[2 * j] = Math.cos(w * t); basis[2 * j + 1] = Math.sin(w * t);
+      }
+      for (let p = 0; p < m; p++) {
+        const bp = basis[p] * wgt;
+        bv[p] += bp * r[t];
+        for (let q = p; q < m; q++) A[p][q] += bp * basis[q];
+      }
+    }
+    for (let p = 0; p < m; p++) { for (let q = 0; q < p; q++) A[p][q] = A[q][p]; A[p][p] += 1e-9; }
+    // Gaussian elimination with partial pivoting
+    const X = A.map((row, i) => { const e = new Float64Array(m + 1); e.set(row); e[m] = bv[i]; return e; });
+    let ok = true;
+    for (let col = 0; col < m && ok; col++) {
+      let piv = col;
+      for (let rr = col + 1; rr < m; rr++) if (Math.abs(X[rr][col]) > Math.abs(X[piv][col])) piv = rr;
+      if (Math.abs(X[piv][col]) < 1e-12) { ok = false; break; }
+      [X[col], X[piv]] = [X[piv], X[col]];
+      for (let rr = col + 1; rr < m; rr++) {
+        const f = X[rr][col] / X[col][col];
+        for (let cc = col; cc <= m; cc++) X[rr][cc] -= f * X[col][cc];
+      }
+    }
+    if (ok) {
+      const sol = new Float64Array(m);
+      for (let rr = m - 1; rr >= 0; rr--) {
+        let s = X[rr][m];
+        for (let cc = rr + 1; cc < m; cc++) s -= X[rr][cc] * sol[cc];
+        sol[rr] = s / X[rr][rr];
+      }
+      kept.forEach((c, j) => {
+        c.a = sol[2 * j]; c.b = sol[2 * j + 1]; c.amp = Math.hypot(c.a, c.b);
+      });
+    }
+  }
+
   const cycles = kept.map(s => ({
     period: s.period, a: s.a, b: s.b, amp: s.amp, bartels: s.bartels,
     strength: s.score,
@@ -1656,13 +1736,30 @@ export default function App() {
     });
   };
 
+  const isHarmonicPair = (p, q) =>
+    [2, 3].some(R => Math.abs(p / q - R) / R < 0.1 || Math.abs(q / p - R) / R < 0.1);
+
   const runSpectralDetect = () => {
     if (candles.length < 80 || detecting) return;
     setDetecting(true);
     setTimeout(() => {
       const res = detectCyclesSpectral(candles, 20);
       setSpectral(res);
-      setSelectedSpectral(new Set(res.cycles.slice(0, 3).map(c => c.period)));
+      // Auto-select: best cycle first, then prefer its harmonics (Hurst 2:1/3:1)
+      const cs = res.cycles;
+      const pick = [];
+      if (cs.length) {
+        pick.push(cs[0]);
+        for (const c of cs.slice(1)) {
+          if (pick.length >= 3) break;
+          if (pick.some(s => isHarmonicPair(c.period, s.period))) pick.push(c);
+        }
+        for (const c of cs.slice(1)) {
+          if (pick.length >= 3) break;
+          if (!pick.includes(c)) pick.push(c);
+        }
+      }
+      setSelectedSpectral(new Set(pick.map(c => c.period)));
       setShowCycles(true);
       setDetecting(false);
     }, 30);
@@ -1700,13 +1797,13 @@ export default function App() {
   ];
 
   return (
-    <div style={{ minHeight: "100vh", background: "radial-gradient(1100px 700px at 85% -5%, rgba(212,175,55,0.07), transparent 60%), radial-gradient(800px 550px at 8% 110%, rgba(255,255,255,0.035), transparent 60%), #16171b", backgroundAttachment: "fixed", color: "#e8e8e8", fontFamily: "'Montserrat', sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: "radial-gradient(1100px 700px at 85% -5%, rgba(212,175,55,0.07), transparent 60%), radial-gradient(800px 550px at 8% 110%, rgba(255,255,255,0.035), transparent 60%), #121212", backgroundAttachment: "fixed", color: "#e8e8e8", fontFamily: "'Montserrat', sans-serif" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Bebas+Neue&family=DM+Mono:wght@300;400;500&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #16171b; }
+        body { background: #121212; }
 
-        .header { height: 76px; padding: 0 48px; display: flex; align-items: center; justify-content: space-between; background: rgba(22,23,27,0.55); backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%); border-bottom: 1px solid rgba(255,255,255,0.06); position: sticky; top: 0; z-index: 100; }
+        .header { height: 76px; padding: 0 48px; display: flex; align-items: center; justify-content: space-between; background: rgba(18,18,18,0.55); backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%); border-bottom: 1px solid rgba(255,255,255,0.06); position: sticky; top: 0; z-index: 100; }
         .logo-area { display: flex; align-items: center; gap: 14px; }
         .logo-divider { width: 1px; height: 32px; background: linear-gradient(180deg, transparent, rgba(212,175,55,0.4), transparent); }
         .logo-name { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 0.25em; background: linear-gradient(135deg,#fff,#e8e8e8); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
@@ -1914,7 +2011,7 @@ export default function App() {
                     {cyclesPanelOpen ? "◀ Cycles" : "▶ Cycles"}
                   </button>
                   {cyclesPanelOpen && (
-                    <div style={{ width: 280, background: "rgba(24,25,30,0.55)", backdropFilter: "blur(26px) saturate(150%)", WebkitBackdropFilter: "blur(26px) saturate(150%)", borderLeft: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column" }}>
+                    <div style={{ width: 280, background: "rgba(20,20,20,0.55)", backdropFilter: "blur(26px) saturate(150%)", WebkitBackdropFilter: "blur(26px) saturate(150%)", borderLeft: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column" }}>
                       {/* Panel header */}
                       <div style={{ padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 14, letterSpacing: "0.1em", color: "#e8e8e8" }}>Cycle Analysis</span>
@@ -1999,7 +2096,7 @@ export default function App() {
                           {detecting ? "ANALYZING…" : spectral ? "↻ RE-DETECT CYCLES" : "⚡ DETECT DOMINANT CYCLES"}
                         </button>
                         <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#333", marginTop: 6, lineHeight: 1.5 }}>
-                          Goertzel spectrum · Bartels-filtered (unstable cycles dropped) · projected turns dated on chart ▲▼
+                          High-pass Goertzel · Bartels-filtered · phase refit on recent data · ♪ = harmonic (2:1 / 3:1) to your selection
                         </div>
                       </div>
                       {/* Spectrum strip */}
@@ -2041,11 +2138,27 @@ export default function App() {
                         )}
                         {spectral && spectral.cycles.map((cyc, i) => {
                           const isOn = selectedSpectral.has(cyc.period);
+                          // Rule of harmony: flag unselected cycles that stand in a
+                          // 2:1 or 3:1 relation to the current selection (1–2 picks)
+                          let harm = null;
+                          if (!isOn && selectedSpectral.size >= 1 && selectedSpectral.size <= 2) {
+                            for (const sp of spectral.cycles) {
+                              if (!selectedSpectral.has(sp.period)) continue;
+                              for (const R of [2, 3]) {
+                                if (Math.abs(cyc.period / sp.period - R) / R < 0.1) { harm = `×${R} of ${sp.period}${interval === "1d" ? "d" : "w"}`; break; }
+                                if (Math.abs(sp.period / cyc.period - R) / R < 0.1) { harm = `÷${R} of ${sp.period}${interval === "1d" ? "d" : "w"}`; break; }
+                              }
+                              if (harm) break;
+                            }
+                          }
                           return (
                             <div key={cyc.period} onClick={() => toggleSpectral(cyc.period)}
-                              style={{ display: "grid", gridTemplateColumns: "24px 52px 1fr 44px 24px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.04)", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.05)" : "transparent", transition: "background 0.15s" }}>
+                              title={harm ? `Harmonic: ${harm}` : undefined}
+                              style={{ display: "grid", gridTemplateColumns: "24px 52px 1fr 44px 24px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.04)", borderLeft: harm ? "2px solid rgba(212,175,55,0.55)" : "2px solid transparent", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.05)" : harm ? "rgba(212,175,55,0.03)" : "transparent", transition: "background 0.15s" }}>
                               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#2a2a2a" }}>{i + 1}</span>
-                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: isOn ? "#f8e49b" : "#555", fontWeight: isOn ? 600 : 400 }}>{cyc.period}{interval === "1d" ? "d" : "w"}</span>
+                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: isOn ? "#f8e49b" : harm ? "#d4af37" : "#555", fontWeight: isOn ? 600 : 400 }}>
+                                {cyc.period}{interval === "1d" ? "d" : "w"}{harm ? " ♪" : ""}
+                              </span>
                               <div style={{ display: "flex", alignItems: "center", gap: 6, paddingRight: 6 }}>
                                 <div style={{ flex: 1, height: 2, background: "#1a1a1a", borderRadius: 2 }}>
                                   <div style={{ width: `${Math.min(cyc.strengthPct, 100)}%`, height: "100%", background: "#d4af37", borderRadius: 2, opacity: isOn ? 1 : 0.5 }} />
