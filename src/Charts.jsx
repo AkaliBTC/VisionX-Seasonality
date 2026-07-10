@@ -744,8 +744,12 @@ const buildSpectralComposite = (candles, cycles) => {
   if (!candles.length || !cycles.length) return [];
   const n = candles.length;
   const fwd = Math.min(Math.ceil(n * 0.5), 500);
+  // Draw only over the ANALYSIS WINDOW (same window the phase refit anchors to).
+  // A dominant cycle is a statement about NOW — extending the wave back over
+  // 10 years of old regimes just creates meaningless historical mismatches.
+  const t0 = Math.max(0, n - 1250);
   const pts = [];
-  for (let t = 0; t < n + fwd; t++) {
+  for (let t = t0; t < n + fwd; t++) {
     let v = 0;
     for (const c of cycles) {
       const w = (2 * Math.PI) / c.period;
@@ -1301,12 +1305,13 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           const histPoints = compositeWave.filter(p => !p.isFuture);
           const futPoints = compositeWave.filter(p => p.isFuture);
 
-          const buildPath = (pts, offset) => {
+          // Paths keyed by the point's absolute index p.t — works for waves
+          // that start at 0 (trough) or mid-history (spectral analysis window)
+          const buildPath = (pts) => {
             let d = "";
-            pts.forEach((p, i) => {
-              const absIdx = offset + i;
-              if (absIdx < startIdx || absIdx > endIdx) return;
-              const xi = absIdx - startIdx;
+            pts.forEach(p => {
+              const xi = p.t - startIdx;
+              if (xi < 0 || xi > totalSlots - 1) return;
               const x = xScale(xi);
               const y = yScale(waveToPrice(p.v));
               d += d ? ` L ${x} ${y}` : `M ${x} ${y}`;
@@ -1314,45 +1319,44 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
             return d;
           };
 
-          const histPath = buildPath(histPoints, 0);
-          const futPath = (() => {
-            let d = "";
-            futPoints.forEach((p, i) => {
-              const x = xScale(visible.length + i);
-              const y = yScale(waveToPrice(p.v));
-              if (x > W - PAD.right + 60) return;
-              d += d ? ` L ${x} ${y}` : `M ${x} ${y}`;
-            });
-            return d;
-          })();
+          const histPath = buildPath(histPoints);
+          const futPath = buildPath(futPoints);
 
           // Projected turning points: local extrema of the future wave, with dates
           const msPerBar = interval === "1d" ? 86400000 : 604800000;
-          const lastRealTs = candles[candles.length - 1].t;
+          const nReal = candles.length;
+          const lastRealTs = candles[nReal - 1].t;
           const turns = [];
           for (let i = 2; i < futPoints.length - 2; i++) {
             const v = futPoints[i].v;
             const isHigh = v >= futPoints[i-1].v && v >= futPoints[i-2].v && v > futPoints[i+1].v && v > futPoints[i+2].v;
             const isLow  = v <= futPoints[i-1].v && v <= futPoints[i-2].v && v < futPoints[i+1].v && v < futPoints[i+2].v;
-            if (isHigh || isLow) turns.push({ i, v, type: isHigh ? "high" : "low" });
+            if (isHigh || isLow) turns.push({ p: futPoints[i], type: isHigh ? "high" : "low" });
           }
-          const turnEls = turns.slice(0, 5).map(({ i, v, type }, k) => {
-            const x = xScale(visible.length + i);
+          // Only label turns with enough horizontal breathing room (dots always drawn)
+          let lastLblX = -1e9;
+          const turnEls = turns.slice(0, 8).map(({ p, type }, k) => {
+            const xi = p.t - startIdx;
+            if (xi < 0 || xi > totalSlots - 1) return null;
+            const x = xScale(xi);
             if (x > W - PAD.right || x < PAD.left) return null;
-            const y = yScale(waveToPrice(v));
-            const ts = lastRealTs + (i + 1) * msPerBar;
+            const y = yScale(waveToPrice(p.v));
+            const ts = lastRealTs + (p.t - (nReal - 1)) * msPerBar;
             const clr = type === "low" ? "#22c55e" : "#ef4444";
-            // Keep the date label clearly separated from the dot and inside the plot
+            const showLbl = x - lastLblX >= 115;
+            if (showLbl) lastLblX = x;
             const yLbl = type === "low"
               ? Math.min(y + 26, PAD.top + iH - 6)
               : Math.max(y - 18, PAD.top + 12);
             return (
               <g key={"turn" + k}>
                 <circle cx={x} cy={y} r="3.5" fill={clr} stroke="#0a0a0a" strokeWidth="1.5" />
-                <text x={x} y={yLbl} textAnchor="middle"
-                  fill={clr} fontSize="9" fontFamily="'DM Mono', monospace" fontWeight="600">
-                  {type === "low" ? "▲ " : "▼ "}{fmtLabel(ts)}
-                </text>
+                {showLbl && (
+                  <text x={x} y={yLbl} textAnchor="middle"
+                    fill={clr} fontSize="9" fontFamily="'DM Mono', monospace" fontWeight="600">
+                    {type === "low" ? "▲ " : "▼ "}{fmtLabel(ts)}
+                  </text>
+                )}
               </g>
             );
           });
