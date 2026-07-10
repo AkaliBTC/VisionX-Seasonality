@@ -747,19 +747,40 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
       bottoms.push(best);
     }
     bottoms.sort((x, z) => x - z);
-    // Anchor = circular mean of real bottom positions (mod P)
+
+    // Refined period = measured bottom-to-bottom spacing, blended with the
+    // spectral bin (the DFT grid is coarse; real bottoms aren't)
+    const spacings = [];
+    for (let k = 1; k < bottoms.length; k++) {
+      const d = bottoms[k] - bottoms[k - 1];
+      if (d > P * 0.7 && d < P * 1.3) spacings.push(d);
+    }
+    let spacingCons = 0.75; // unknown regularity → mild penalty
+    if (spacings.length >= 1) {
+      const mean = spacings.reduce((x, z) => x + z, 0) / spacings.length;
+      c.pf = 0.5 * P + 0.5 * mean;
+      if (spacings.length >= 2) {
+        const sd = Math.sqrt(spacings.reduce((x, z) => x + (z - mean) ** 2, 0) / spacings.length);
+        spacingCons = Math.max(0, Math.min(1, 1 - (sd / mean) * 2));
+      }
+    } else c.pf = P;
+
+    // Anchor = recency-weighted circular mean of real bottom positions (mod P)
     if (bottoms.length) {
       let re = 0, im = 0;
-      for (const bt of bottoms) {
+      bottoms.forEach((bt, idx) => {
+        const wgt = Math.pow(0.75, bottoms.length - 1 - idx); // newest weighs most
         const ang = 2 * Math.PI * ((((bt % P) + P) % P) / P);
-        re += Math.cos(ang); im += Math.sin(ang);
-      }
+        re += wgt * Math.cos(ang); im += wgt * Math.sin(ang);
+      });
       let ang = Math.atan2(im, re);
       if (ang < 0) ang += 2 * Math.PI;
       c.anchor = (ang / (2 * Math.PI)) * P;
     } else c.anchor = t0;
-    // Skew = average relative top position between consecutive REAL bottoms
-    // (sharper smoothing here — heavy smoothing drags the top toward center)
+
+    // Skew = average relative top position between consecutive REAL bottoms.
+    // Sharp smoothing + parabolic sub-bar refinement of the peak, then a gentle
+    // de-bias (smoothing systematically compresses the estimate toward 0.5)
     const h2 = Math.max(2, Math.round(P / 24));
     let sum = 0, cnt = 0;
     for (let k = 1; k < bottoms.length; k++) {
@@ -769,15 +790,29 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
       const lo = a0 + Math.round(len * 0.08), hi = b0 - Math.round(len * 0.08);
       let best = lo, bv = -Infinity;
       for (let i = lo; i <= hi; i++) { const v = smoothAt(i, h2); if (v > bv) { bv = v; best = i; } }
-      const pos = (best - a0) / len;
+      let bestF = best;
+      if (best > lo && best < hi) {
+        const y0 = smoothAt(best - 1, h2), y1 = smoothAt(best, h2), y2 = smoothAt(best + 1, h2);
+        const dnm = y0 - 2 * y1 + y2;
+        if (dnm) bestF = best + Math.max(-0.5, Math.min(0.5, 0.5 * (y0 - y2) / dnm));
+      }
+      const pos = (bestF - a0) / len;
       if (pos > 0.05 && pos < 0.95) { sum += pos; cnt++; }
     }
-    c.skew = cnt ? Math.min(0.8, Math.max(0.2, sum / cnt)) : 0.5;
+    const rawSkew = cnt ? sum / cnt : 0.5;
+    c.skew = Math.min(0.85, Math.max(0.15, 0.5 + (rawSkew - 0.5) * 1.5));
+
+    // ACCURACY = phase stability (Bartels) × bottom-timing regularity
+    c.acc = c.bartels * (0.6 + 0.4 * spacingCons);
+    c.spacingCons = spacingCons;
   });
+  // Sort by accuracy, top-down
+  kept.sort((a, b) => (b.acc ?? 0) - (a.acc ?? 0) || b.score - a.score);
 
   const cycles = kept.map(s => ({
-    period: s.period, a: s.a, b: s.b, amp: s.amp, bartels: s.bartels,
+    period: s.period, pf: s.pf, a: s.a, b: s.b, amp: s.amp, bartels: s.bartels,
     anchor: s.anchor, skew: s.skew,
+    acc: s.acc, accPct: (s.acc ?? s.bartels) * 100, spacingCons: s.spacingCons,
     strength: s.score,
     strengthPct: maxStr > 0 ? (s.score / maxStr) * 100 : 0,
     bartelsPct: s.bartels * 100,
@@ -813,7 +848,7 @@ const buildSpectralComposite = (candles, cycles) => {
   for (let t = 0; t < n + fwd; t++) {
     let v = 0;
     for (const c of cycles) {
-      const P = c.period;
+      const P = c.pf || c.period;
       const anchor = c.anchor ?? 0;
       const split = c.skew ?? 0.5;
       const phase = (((t - anchor) % P) + P) % P / P;
@@ -1809,12 +1844,12 @@ export default function App() {
     });
   };
 
-  // Rule of harmony (octave series): for a 200d cycle the harmonics are
-  // ~400d, ~100d, ~50d … — ratios of 2^k (2:1, 4:1, 8:1), in both directions.
+  // Rule of harmony, simple: two cycles are harmonic when one divides into the
+  // other — ratio ≈ whole number (2:1, 3:1, 4:1 …), with tolerance.
   const harmonicRatio = (p, q) => {
     const rr = Math.max(p, q) / Math.min(p, q);
-    const k = Math.round(Math.log2(rr));
-    if (k >= 1 && k <= 3 && Math.abs(rr / Math.pow(2, k) - 1) < 0.12) return `${Math.pow(2, k)}:1`;
+    const k = Math.round(rr);
+    if (k >= 2 && k <= 8 && Math.abs(rr - k) / k < 0.10) return `${k}:1`;
     return null;
   };
   // Periods closer than ~1.35:1 beat against each other → ugly, meaningless wave
@@ -2178,7 +2213,7 @@ export default function App() {
                           {detecting ? "ANALYZING…" : spectral ? "↻ RE-DETECT CYCLES" : "⚡ DETECT DOMINANT CYCLES"}
                         </button>
                         <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#333", marginTop: 6, lineHeight: 1.5 }}>
-                          Bottom-to-bottom anchored · skew from top position in cycle · ♪ = octave harmonic (2:1 / 4:1 / 8:1)
+                          Sorted by accuracy (Bartels × bottom-timing) · bottom-to-bottom anchored, skew from top position · ♪ = harmonic (whole-number ratio)
                         </div>
                       </div>
                       {/* Spectrum strip */}
@@ -2219,7 +2254,7 @@ export default function App() {
                       })()}
                       {/* Spectral table header */}
                       <div style={{ display: "grid", gridTemplateColumns: "24px 52px 1fr 44px 24px", gap: 0, padding: "6px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                        {["#", "Period", "Strength", "Bartels", ""].map((h, i) => (
+                        {["#", "Period", "Strength", "Acc", ""].map((h, i) => (
                           <span key={i} style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#2a2a2a", textTransform: "uppercase" }}>{h}</span>
                         ))}
                       </div>
@@ -2259,7 +2294,8 @@ export default function App() {
                                   <div style={{ width: `${Math.min(cyc.strengthPct, 100)}%`, height: "100%", background: "#d4af37", borderRadius: 2, opacity: isOn ? 1 : 0.5 }} />
                                 </div>
                               </div>
-                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: cyc.bartelsPct > 65 ? "#22c55e" : cyc.bartelsPct > 45 ? "#f59e0b" : "#ef4444" }}>{cyc.bartelsPct.toFixed(0)}%</span>
+                              <span title={`Bartels ${cyc.bartelsPct.toFixed(0)}% · bottom-timing ${((cyc.spacingCons ?? 0.75) * 100).toFixed(0)}%`}
+                                style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: cyc.accPct > 60 ? "#22c55e" : cyc.accPct > 42 ? "#f59e0b" : "#ef4444" }}>{cyc.accPct.toFixed(0)}%</span>
                               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                                 <div style={{ width: 7, height: 7, borderRadius: "50%", background: isOn ? "#d4af37" : "transparent", border: `1px solid ${isOn ? "#d4af37" : "#2a2a2a"}`, transition: "all 0.15s" }} />
                               </div>
