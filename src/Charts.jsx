@@ -735,9 +735,11 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   return { cycles, trend: { slope, icept }, spectrum };
 };
 
-// Cycles-only composite oscillator (detrended). Rendered normalized into the
-// visible price band like the trough wave, so it never clips out of the chart —
-// what matters here is the TIMING of highs/lows, not price targets.
+// Composite oscillator: each selected cycle contributes with UNIT amplitude
+// (real detected phase, normalized swing) — same visual philosophy as the
+// trough composite. Raw detected amplitudes create ugly beating envelopes when
+// periods are close; equal weights keep the wave clean and readable while the
+// timing information (what cycles are for) stays exact.
 const buildSpectralComposite = (candles, cycles) => {
   if (!candles.length || !cycles.length) return [];
   const n = candles.length;
@@ -747,7 +749,8 @@ const buildSpectralComposite = (candles, cycles) => {
     let v = 0;
     for (const c of cycles) {
       const w = (2 * Math.PI) / c.period;
-      v += c.a * Math.cos(w * t) + c.b * Math.sin(w * t);
+      const amp = c.amp || Math.hypot(c.a, c.b) || 1;
+      v += (c.a / amp) * Math.cos(w * t) + (c.b / amp) * Math.sin(w * t);
     }
     pts.push({ t, v, isFuture: t >= n });
   }
@@ -1736,8 +1739,17 @@ export default function App() {
     });
   };
 
-  const isHarmonicPair = (p, q) =>
-    [2, 3].some(R => Math.abs(p / q - R) / R < 0.1 || Math.abs(q / p - R) / R < 0.1);
+  // Hurst's harmonic principle: adjacent cycles in the nominal model relate by
+  // small integer ratios — dominantly 2:1, plus 3:1 and 3:2 (e.g. 4.5y→3y).
+  const harmonicRatio = (p, q) => {
+    const rr = Math.max(p, q) / Math.min(p, q);
+    if (Math.abs(rr - 2) / 2 < 0.10) return "2:1";
+    if (Math.abs(rr - 3) / 3 < 0.10) return "3:1";
+    if (Math.abs(rr - 1.5) / 1.5 < 0.08) return "3:2";
+    return null;
+  };
+  // Periods closer than ~1.35:1 beat against each other → ugly, meaningless wave
+  const beats = (p, q) => Math.max(p, q) / Math.min(p, q) < 1.35;
 
   const runSpectralDetect = () => {
     if (candles.length < 80 || detecting) return;
@@ -1745,18 +1757,19 @@ export default function App() {
     setTimeout(() => {
       const res = detectCyclesSpectral(candles, 20);
       setSpectral(res);
-      // Auto-select: best cycle first, then prefer its harmonics (Hurst 2:1/3:1)
+      // Auto-select: best cycle, then its harmonics, then non-beating fillers —
+      // never two near-identical periods (that's what made the wave ugly)
       const cs = res.cycles;
       const pick = [];
       if (cs.length) {
         pick.push(cs[0]);
         for (const c of cs.slice(1)) {
           if (pick.length >= 3) break;
-          if (pick.some(s => isHarmonicPair(c.period, s.period))) pick.push(c);
+          if (pick.every(s => !beats(c.period, s.period)) && pick.some(s => harmonicRatio(c.period, s.period))) pick.push(c);
         }
         for (const c of cs.slice(1)) {
           if (pick.length >= 3) break;
-          if (!pick.includes(c)) pick.push(c);
+          if (!pick.includes(c) && pick.every(s => !beats(c.period, s.period))) pick.push(c);
         }
       }
       setSelectedSpectral(new Set(pick.map(c => c.period)));
@@ -2123,6 +2136,18 @@ export default function App() {
                           </div>
                         );
                       })()}
+                      {/* Beat warning: selected periods too close together */}
+                      {spectral && (() => {
+                        const sel = spectral.cycles.filter(c => selectedSpectral.has(c.period));
+                        for (let a = 0; a < sel.length; a++) for (let b = a + 1; b < sel.length; b++) {
+                          if (beats(sel[a].period, sel[b].period)) return (
+                            <div style={{ padding: "7px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", fontFamily: "'DM Mono', monospace", fontSize: 8.5, color: "#f59e0b", lineHeight: 1.5, background: "rgba(245,158,11,0.05)" }}>
+                              ⚠ {sel[a].period}{interval === "1d" ? "d" : "w"} & {sel[b].period}{interval === "1d" ? "d" : "w"} are too close — they beat against each other. Prefer ♪ harmonics.
+                            </div>
+                          );
+                        }
+                        return null;
+                      })()}
                       {/* Spectral table header */}
                       <div style={{ display: "grid", gridTemplateColumns: "24px 52px 1fr 44px 24px", gap: 0, padding: "6px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                         {["#", "Period", "Strength", "Bartels", ""].map((h, i) => (
@@ -2138,26 +2163,27 @@ export default function App() {
                         )}
                         {spectral && spectral.cycles.map((cyc, i) => {
                           const isOn = selectedSpectral.has(cyc.period);
-                          // Rule of harmony: flag unselected cycles that stand in a
-                          // 2:1 or 3:1 relation to the current selection (1–2 picks)
-                          let harm = null;
-                          if (!isOn && selectedSpectral.size >= 1 && selectedSpectral.size <= 2) {
+                          // Rule of harmony: flag unselected cycles in 2:1 / 3:1 / 3:2
+                          // relation to the selection; warn on beat-danger picks
+                          let harm = null, clash = false;
+                          if (selectedSpectral.size >= 1 && selectedSpectral.size <= 3) {
                             for (const sp of spectral.cycles) {
-                              if (!selectedSpectral.has(sp.period)) continue;
-                              for (const R of [2, 3]) {
-                                if (Math.abs(cyc.period / sp.period - R) / R < 0.1) { harm = `×${R} of ${sp.period}${interval === "1d" ? "d" : "w"}`; break; }
-                                if (Math.abs(sp.period / cyc.period - R) / R < 0.1) { harm = `÷${R} of ${sp.period}${interval === "1d" ? "d" : "w"}`; break; }
+                              if (!selectedSpectral.has(sp.period) || sp.period === cyc.period) continue;
+                              if (!isOn && !harm) {
+                                const m = harmonicRatio(cyc.period, sp.period);
+                                if (m) harm = `${m} to ${sp.period}${interval === "1d" ? "d" : "w"}`;
                               }
-                              if (harm) break;
+                              if (beats(cyc.period, sp.period)) clash = true;
                             }
                           }
+                          if (isOn) harm = null; else if (clash) harm = null;
                           return (
                             <div key={cyc.period} onClick={() => toggleSpectral(cyc.period)}
-                              title={harm ? `Harmonic: ${harm}` : undefined}
-                              style={{ display: "grid", gridTemplateColumns: "24px 52px 1fr 44px 24px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.04)", borderLeft: harm ? "2px solid rgba(212,175,55,0.55)" : "2px solid transparent", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.05)" : harm ? "rgba(212,175,55,0.03)" : "transparent", transition: "background 0.15s" }}>
+                              title={harm ? `Harmonic: ${harm}` : clash && !isOn ? "Too close to a selected period — would beat against it" : undefined}
+                              style={{ display: "grid", gridTemplateColumns: "24px 52px 1fr 44px 24px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.04)", borderLeft: harm ? "2px solid rgba(212,175,55,0.55)" : "2px solid transparent", cursor: "pointer", opacity: clash && !isOn ? 0.4 : 1, background: isOn ? "rgba(212,175,55,0.05)" : harm ? "rgba(212,175,55,0.03)" : "transparent", transition: "background 0.15s, opacity 0.15s" }}>
                               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#2a2a2a" }}>{i + 1}</span>
                               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: isOn ? "#f8e49b" : harm ? "#d4af37" : "#555", fontWeight: isOn ? 600 : 400 }}>
-                                {cyc.period}{interval === "1d" ? "d" : "w"}{harm ? " ♪" : ""}
+                                {cyc.period}{interval === "1d" ? "d" : "w"}{harm ? " ♪" : clash && !isOn ? " ≈" : ""}
                               </span>
                               <div style={{ display: "flex", alignItems: "center", gap: 6, paddingRight: 6 }}>
                                 <div style={{ flex: 1, height: 2, background: "#1a1a1a", borderRadius: 2 }}>
