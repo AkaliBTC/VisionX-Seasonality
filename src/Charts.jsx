@@ -1426,33 +1426,41 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
             const isLow  = v <= futPoints[i-1].v && v <= futPoints[i-2].v && v < futPoints[i+1].v && v < futPoints[i+2].v;
             if (isHigh || isLow) turns.push({ p: futPoints[i], type: isHigh ? "high" : "low" });
           }
-          // Subtle gold halos laid INTO the curve bend at each projected turn:
-          // a half-disk hugging the trough/peak, strongest at the curve and
-          // fading to nothing outward — capped on the price axis, no full bands
-          const gaps = [];
-          for (let i = 1; i < turns.length; i++) gaps.push(turns[i].p.t - turns[i - 1].p.t);
-          const medGap = gaps.length ? gaps.slice().sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : 60;
-          const halfWBars = Math.max(4, medGap * 0.30);
-          const pxPerBar = iW / Math.max(totalSlots - 1, 1);
+          // RSI-style fill: in each projected turn zone, fill the area BETWEEN
+          // the cycle curve and a threshold level (25% of the wave's swing away
+          // from the extreme). Gradient runs from nothing at the threshold to
+          // gold at the curve — capped on the price axis by construction.
+          const visVals = visibleWave.map(q => q.v);
+          const vAmp = (Math.max(...visVals) - Math.min(...visVals)) || 1;
           const glowEls = turns.slice(0, 8).map(({ p, type }, k) => {
-            const xi = p.t - startIdx;
-            if (xi < 0 || xi > totalSlots - 1) return null;
-            const x = xScale(xi);
-            if (x < PAD.left || x > W - PAD.right) return null;
-            const y = yScale(waveToPrice(p.v));
-            const rx = Math.min(Math.max(halfWBars * pxPerBar, 26), 95);
-            const ry = Math.min(rx, iH * 0.30);
-            // low (U-bend) → upper half-disk (sweep 0); high (∩) → lower half (sweep 1)
-            const sweep = type === "low" ? 0 : 1;
-            const d = `M ${x - rx} ${y} A ${rx} ${ry} 0 0 ${sweep} ${x + rx} ${y} Z`;
+            const idx = futPoints.indexOf(p);
+            if (idx < 0) return null;
+            const thr = type === "high" ? p.v - 0.25 * vAmp : p.v + 0.25 * vAmp;
+            const beyond = v => (type === "high" ? v >= thr : v <= thr);
+            let i0 = idx, i1 = idx;
+            while (i0 > 0 && beyond(futPoints[i0 - 1].v)) i0--;
+            while (i1 < futPoints.length - 1 && beyond(futPoints[i1 + 1].v)) i1++;
+            if (i1 - i0 < 3) return null;
+            const pts = [];
+            for (let i = i0; i <= i1; i++) {
+              const xi = futPoints[i].t - startIdx;
+              if (xi < 0 || xi > totalSlots - 1) continue;
+              pts.push({ x: xScale(xi), y: yScale(waveToPrice(futPoints[i].v)) });
+            }
+            if (pts.length < 3) return null;
+            const yThr = yScale(waveToPrice(thr));
+            const yExt = yScale(waveToPrice(p.v));
+            let d = `M ${pts[0].x} ${yThr}`;
+            pts.forEach(q => { d += ` L ${q.x} ${q.y}`; });
+            d += ` L ${pts[pts.length - 1].x} ${yThr} Z`;
             return (
               <g key={"glow" + k}>
-                <radialGradient id={`tgr${k}`} gradientUnits="userSpaceOnUse" cx={x} cy={y} r={rx}>
-                  <stop offset="0%" stopColor="#d4af37" stopOpacity="0.13" />
-                  <stop offset="55%" stopColor="#d4af37" stopOpacity="0.055" />
-                  <stop offset="100%" stopColor="#d4af37" stopOpacity="0" />
-                </radialGradient>
-                <path d={d} fill={`url(#tgr${k})`} />
+                <linearGradient id={`tgl${k}`} gradientUnits="userSpaceOnUse" x1="0" y1={yThr} x2="0" y2={yExt}>
+                  <stop offset="0%" stopColor="#d4af37" stopOpacity="0" />
+                  <stop offset="70%" stopColor="#d4af37" stopOpacity="0.12" />
+                  <stop offset="100%" stopColor="#d4af37" stopOpacity="0.22" />
+                </linearGradient>
+                <path d={d} fill={`url(#tgl${k})`} stroke="none" />
               </g>
             );
           });
