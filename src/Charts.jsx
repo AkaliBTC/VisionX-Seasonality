@@ -666,54 +666,10 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   // Final ordering: accuracy first — the list reads top-down as "most reliable"
   kept.sort((a, b) => b.bartels - a.bartels || b.score - a.score);
 
-  // JOINT REFIT: re-estimate all (a,b) simultaneously by weighted least squares
-  // on the recent window (exp. half-life 250 bars). Extraction phases are
-  // full-history averages; markets drift, so we anchor amplitude & phase to NOW
-  // — this is what makes the composite actually sit on current price swings.
-  if (kept.length > 0 && kept.length <= 14) {
-    const k = kept.length, m = 2 * k;
-    const Wn = Math.min(n, 1250), off0 = n - Wn, hl = 250;
-    const A = Array.from({ length: m }, () => new Float64Array(m));
-    const bv = new Float64Array(m);
-    const basis = new Float64Array(m);
-    for (let t = off0; t < n; t++) {
-      const wgt = Math.pow(2, (t - n + 1) / hl);
-      for (let j = 0; j < k; j++) {
-        const w = (2 * Math.PI) / kept[j].period;
-        basis[2 * j] = Math.cos(w * t); basis[2 * j + 1] = Math.sin(w * t);
-      }
-      for (let p = 0; p < m; p++) {
-        const bp = basis[p] * wgt;
-        bv[p] += bp * r[t];
-        for (let q = p; q < m; q++) A[p][q] += bp * basis[q];
-      }
-    }
-    for (let p = 0; p < m; p++) { for (let q = 0; q < p; q++) A[p][q] = A[q][p]; A[p][p] += 1e-9; }
-    // Gaussian elimination with partial pivoting
-    const X = A.map((row, i) => { const e = new Float64Array(m + 1); e.set(row); e[m] = bv[i]; return e; });
-    let ok = true;
-    for (let col = 0; col < m && ok; col++) {
-      let piv = col;
-      for (let rr = col + 1; rr < m; rr++) if (Math.abs(X[rr][col]) > Math.abs(X[piv][col])) piv = rr;
-      if (Math.abs(X[piv][col]) < 1e-12) { ok = false; break; }
-      [X[col], X[piv]] = [X[piv], X[col]];
-      for (let rr = col + 1; rr < m; rr++) {
-        const f = X[rr][col] / X[col][col];
-        for (let cc = col; cc <= m; cc++) X[rr][cc] -= f * X[col][cc];
-      }
-    }
-    if (ok) {
-      const sol = new Float64Array(m);
-      for (let rr = m - 1; rr >= 0; rr--) {
-        let s = X[rr][m];
-        for (let cc = rr + 1; cc < m; cc++) s -= X[rr][cc] * sol[cc];
-        sol[rr] = s / X[rr][rr];
-      }
-      kept.forEach((c, j) => {
-        c.a = sol[2 * j]; c.b = sol[2 * j + 1]; c.amp = Math.hypot(c.a, c.b);
-      });
-    }
-  }
+  // NOTE: no joint least-squares refit here. With several long cycles the
+  // sine bases are near-collinear over a recency-weighted window, the normal
+  // equations explode, and phases turn to garbage. Anchoring happens on REAL
+  // bottoms below — far more robust than any regression.
 
   // BOTTOM-TO-BOTTOM anchoring + TOP-WITHIN-CYCLE skew:
   // From the fitted phase we know where each cycle's troughs sit. The skew is
@@ -734,22 +690,46 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     if (t0 < 0) t0 += P;
     const h = Math.max(2, Math.round(P / 12));
     const half = Math.round(P * 0.25);
+    // Band-isolate this cycle: short MA minus MA of length ~P. An SMA of
+    // window P has zero gain at period P, so subtracting it removes all slower
+    // leakage (which shifts minima) while passing this cycle untouched.
+    const hLong = Math.max(4, Math.round(P / 2));
+    const bandAt = (i, hs) => smoothAt(i, hs) - smoothAt(i, hLong);
     // Locate the ACTUAL bottoms: search ±P/4 around each phase-predicted trough
     // for the true minimum of the smoothed residual (last 5 cycles)
-    const bottoms = [];
-    let tk = t0 + Math.floor((n - 1 - t0) / P) * P;
-    for (let k = 0; k < 6 && bottoms.length < 5; k++) {
-      const center = Math.round(tk); tk -= P;
-      const lo = Math.max(0, center - half), hi = Math.min(n - 1, center + half);
-      if (hi - lo < P * 0.2) continue;
+    // Find the bottoms as a CHAIN: locate the most recent confirmed bottom
+    // (wide search, since the phase guess t0 is only approximate), then walk
+    // backwards one period at a time, re-centering each window on the last
+    // confirmed bottom — so a coarse t0 can't derail the whole chain.
+    const findBottom = (center, halfWin) => {
+      const lo = Math.max(0, Math.round(center - halfWin)), hi = Math.min(n - 1, Math.round(center + halfWin));
+      if (hi - lo < P * 0.2) return null;
       let best = lo, bv = Infinity;
-      for (let i = lo; i <= hi; i++) { const v = smoothAt(i, h); if (v < bv) { bv = v; best = i; } }
-      bottoms.push(best);
+      for (let i = lo; i <= hi; i++) { const v = bandAt(i, h); if (v < bv) { bv = v; best = i; } }
+      // Reject minima clamped to the search edge or the data edge — those are
+      // truncated / still-forming bottoms, not confirmed ones
+      if (best <= lo + 1 || best >= hi - 1) return null;
+      if (best > n - 1 - h) return null;
+      return best;
+    };
+    const bottoms = [];
+    let seed = null;
+    let tk = t0 + Math.floor((n - 1 - t0) / P) * P;
+    for (let k = 0; k < 4 && seed == null; k++) { seed = findBottom(tk, P * 0.45); tk -= P; }
+    if (seed != null) {
+      bottoms.push(seed);
+      let prev = seed;
+      for (let k = 0; k < 6 && bottoms.length < 5; k++) {
+        const found = findBottom(prev - P, P * 0.3);
+        if (found == null) { prev -= P; continue; }
+        bottoms.push(found);
+        prev = found;
+      }
     }
     bottoms.sort((x, z) => x - z);
 
-    // Refined period = measured bottom-to-bottom spacing, blended with the
-    // spectral bin (the DFT grid is coarse; real bottoms aren't)
+    // Refined period = measured bottom-to-bottom spacing. The more spacings we
+    // have, the more we trust the measurement over the coarse DFT bin.
     const spacings = [];
     for (let k = 1; k < bottoms.length; k++) {
       const d = bottoms[k] - bottoms[k - 1];
@@ -758,25 +738,18 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     let spacingCons = 0.75; // unknown regularity → mild penalty
     if (spacings.length >= 1) {
       const mean = spacings.reduce((x, z) => x + z, 0) / spacings.length;
-      c.pf = 0.5 * P + 0.5 * mean;
+      const trust = spacings.length >= 3 ? 0.85 : spacings.length === 2 ? 0.65 : 0.5;
+      c.pf = (1 - trust) * P + trust * mean;
       if (spacings.length >= 2) {
         const sd = Math.sqrt(spacings.reduce((x, z) => x + (z - mean) ** 2, 0) / spacings.length);
         spacingCons = Math.max(0, Math.min(1, 1 - (sd / mean) * 2));
       }
     } else c.pf = P;
 
-    // Anchor = recency-weighted circular mean of real bottom positions (mod P)
-    if (bottoms.length) {
-      let re = 0, im = 0;
-      bottoms.forEach((bt, idx) => {
-        const wgt = Math.pow(0.75, bottoms.length - 1 - idx); // newest weighs most
-        const ang = 2 * Math.PI * ((((bt % P) + P) % P) / P);
-        re += wgt * Math.cos(ang); im += wgt * Math.sin(ang);
-      });
-      let ang = Math.atan2(im, re);
-      if (ang < 0) ang += 2 * Math.PI;
-      c.anchor = (ang / (2 * Math.PI)) * P;
-    } else c.anchor = t0;
+    // Anchor = the MOST RECENT real bottom, as an absolute bar index — exactly
+    // like a manual Set Low. Averaging bottom phases mod the (coarse) bin
+    // period while the wave runs on the refined period caused a phase offset.
+    c.anchor = bottoms.length ? bottoms[bottoms.length - 1] : t0;
 
     // Skew = average relative top position between consecutive REAL bottoms.
     // Sharp smoothing + parabolic sub-bar refinement of the peak, then a gentle
@@ -789,10 +762,10 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
       if (len < P * 0.5 || len > P * 1.5) continue;
       const lo = a0 + Math.round(len * 0.08), hi = b0 - Math.round(len * 0.08);
       let best = lo, bv = -Infinity;
-      for (let i = lo; i <= hi; i++) { const v = smoothAt(i, h2); if (v > bv) { bv = v; best = i; } }
+      for (let i = lo; i <= hi; i++) { const v = bandAt(i, h2); if (v > bv) { bv = v; best = i; } }
       let bestF = best;
       if (best > lo && best < hi) {
-        const y0 = smoothAt(best - 1, h2), y1 = smoothAt(best, h2), y2 = smoothAt(best + 1, h2);
+        const y0 = bandAt(best - 1, h2), y1 = bandAt(best, h2), y2 = bandAt(best + 1, h2);
         const dnm = y0 - 2 * y1 + y2;
         if (dnm) bestF = best + Math.max(-0.5, Math.min(0.5, 0.5 * (y0 - y2) / dnm));
       }
@@ -1861,22 +1834,9 @@ export default function App() {
     setTimeout(() => {
       const res = detectCyclesSpectral(candles, 20);
       setSpectral(res);
-      // Auto-select: best cycle, then its harmonics, then non-beating fillers —
-      // never two near-identical periods (that's what made the wave ugly)
-      const cs = res.cycles;
-      const pick = [];
-      if (cs.length) {
-        pick.push(cs[0]);
-        for (const c of cs.slice(1)) {
-          if (pick.length >= 3) break;
-          if (pick.every(s => !beats(c.period, s.period)) && pick.some(s => harmonicRatio(c.period, s.period))) pick.push(c);
-        }
-        for (const c of cs.slice(1)) {
-          if (pick.length >= 3) break;
-          if (!pick.includes(c) && pick.every(s => !beats(c.period, s.period))) pick.push(c);
-        }
-      }
-      setSelectedSpectral(new Set(pick.map(c => c.period)));
+      // Select only the single most accurate cycle — the user composes the
+      // rest manually, guided by the ♪ harmonic hints
+      setSelectedSpectral(new Set(res.cycles.length ? [res.cycles[0].period] : []));
       setShowCycles(true);
       setDetecting(false);
     }, 30);
