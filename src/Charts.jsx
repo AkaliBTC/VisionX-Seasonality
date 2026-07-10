@@ -679,6 +679,21 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     const lo = Math.max(0, i - h), hi = Math.min(n - 1, i + h);
     return (psr[hi + 1] - psr[lo]) / (hi - lo + 1);
   };
+  // Raw price extremes for snapping: the band signal finds the cycle turn,
+  // but the user reads SWING lows/highs — so we snap to the actual wick
+  const rawLo = candles.map(c => c.l), rawHi = candles.map(c => c.h);
+  const snapToLow = (idx, hw) => {
+    const lo = Math.max(0, idx - hw), hi = Math.min(n - 1, idx + hw);
+    let b = idx, bv = Infinity;
+    for (let i = lo; i <= hi; i++) if (rawLo[i] < bv) { bv = rawLo[i]; b = i; }
+    return b;
+  };
+  const snapToHigh = (idx, hw) => {
+    const lo = Math.max(0, idx - hw), hi = Math.min(n - 1, idx + hw);
+    let b = idx, bv = -Infinity;
+    for (let i = lo; i <= hi; i++) if (rawHi[i] > bv) { bv = rawHi[i]; b = i; }
+    return b;
+  };
   kept.forEach(c => {
     const P = c.period;
     const w = (2 * Math.PI) / P;
@@ -707,7 +722,9 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
       // truncated / still-forming bottoms, not confirmed ones
       if (best <= lo + 1 || best >= hi - 1) return null;
       if (best > n - 1 - h) return null;
-      return best;
+      // Snap to the actual swing low (wick) near the band minimum — tight
+      // radius, otherwise a random deep wick nearby wins over the pivot
+      return snapToLow(best, Math.min(7, Math.max(2, Math.round(P / 40))));
     };
     const bottoms = [];
     let seed = null;
@@ -760,13 +777,9 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
       const lo = a0 + Math.round(len * 0.08), hi = b0 - Math.round(len * 0.08);
       let best = lo, bv = -Infinity;
       for (let i = lo; i <= hi; i++) { const v = bandAt(i, h2); if (v > bv) { bv = v; best = i; } }
-      let bestF = best;
-      if (best > lo && best < hi) {
-        const y0 = bandAt(best - 1, h2), y1 = bandAt(best, h2), y2 = bandAt(best + 1, h2);
-        const dnm = y0 - 2 * y1 + y2;
-        if (dnm) bestF = best + Math.max(-0.5, Math.min(0.5, 0.5 * (y0 - y2) / dnm));
-      }
-      const pos = (bestF - a0) / len;
+      // Snap to the actual swing high (wick) near the band maximum — tight radius
+      best = snapToHigh(best, Math.min(7, Math.max(2, Math.round(P / 40))));
+      const pos = (best - a0) / len;
       if (pos > 0.05 && pos < 0.95) { sum += pos; cnt++; }
     }
     const rawSkew = cnt ? sum / cnt : 0.5;
@@ -1241,6 +1254,11 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           <clipPath id="chartClip">
             <rect x={PAD.left} y={PAD.top} width={iW} height={iH} />
           </clipPath>
+          <linearGradient id="turnGlow" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#d4af37" stopOpacity="0" />
+            <stop offset="50%" stopColor="#d4af37" stopOpacity="0.07" />
+            <stop offset="100%" stopColor="#d4af37" stopOpacity="0" />
+          </linearGradient>
         </defs>
 
         {/* Grid */}
@@ -1413,6 +1431,21 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
             const isLow  = v <= futPoints[i-1].v && v <= futPoints[i-2].v && v < futPoints[i+1].v && v < futPoints[i+2].v;
             if (isHigh || isLow) turns.push({ p: futPoints[i], type: isHigh ? "high" : "low" });
           }
+          // Subtle gold glow zones: the AREA in which topping/bottoming is due,
+          // width scaled to the rhythm between projected turns
+          const gaps = [];
+          for (let i = 1; i < turns.length; i++) gaps.push(turns[i].p.t - turns[i - 1].p.t);
+          const medGap = gaps.length ? gaps.slice().sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : 60;
+          const halfWBars = Math.max(4, medGap * 0.22);
+          const glowEls = turns.slice(0, 8).map(({ p }, k) => {
+            const xi = p.t - startIdx;
+            if (xi < 0 || xi > totalSlots - 1) return null;
+            const x0 = xScale(Math.max(0, xi - halfWBars));
+            const x1 = xScale(Math.min(totalSlots - 1, xi + halfWBars));
+            if (x1 <= PAD.left || x0 >= W - PAD.right) return null;
+            return <rect key={"glow" + k} x={x0} y={PAD.top} width={Math.max(x1 - x0, 2)} height={iH} fill="url(#turnGlow)" />;
+          });
+
           // Only label turns with enough horizontal breathing room (dots always drawn)
           let lastLblX = -1e9;
           const turnEls = turns.slice(0, 8).map(({ p, type }, k) => {
@@ -1426,8 +1459,8 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
             const showLbl = x - lastLblX >= 115;
             if (showLbl) lastLblX = x;
             const yLbl = type === "low"
-              ? Math.min(y + 26, PAD.top + iH - 6)
-              : Math.max(y - 18, PAD.top + 12);
+              ? Math.min(y + 40, PAD.top + iH - 6)
+              : Math.max(y - 32, PAD.top + 12);
             return (
               <g key={"turn" + k}>
                 <circle cx={x} cy={y} r="3.5" fill={clr} stroke="#0a0a0a" strokeWidth="1.5" />
@@ -1443,6 +1476,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
 
           return (
             <g clipPath="url(#chartClip)">
+              {glowEls}
               {histPath && <path d={histPath} fill="none" stroke="#d4af37" strokeWidth="1.5" opacity="0.85" strokeLinejoin="round" />}
               {futPath && <path d={futPath} fill="none" stroke="#d4af37" strokeWidth="1.5" opacity="0.45" strokeDasharray="6 4" strokeLinejoin="round" />}
               {turnEls}
