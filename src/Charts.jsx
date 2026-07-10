@@ -1083,8 +1083,8 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
   const fmtLabel = (ts) => {
     const d = new Date(ts);
     return interval === "1d"
-      ? d.toLocaleDateString([], { day: "numeric", month: "short", year: "2-digit" })
-      : d.toLocaleDateString([], { month: "short", year: "2-digit" });
+      ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })
+      : d.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
   };
 
   const fmtPrice = (p) => {
@@ -1478,8 +1478,8 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
             const showLbl = x - lastLblX >= 115;
             if (showLbl) lastLblX = x;
             const yLbl = type === "low"
-              ? Math.min(y + 40, PAD.top + iH - 6)
-              : Math.max(y - 32, PAD.top + 12);
+              ? Math.min(y + 56, PAD.top + iH - 6)
+              : Math.max(y - 46, PAD.top + 12);
             return (
               <g key={"turn" + k}>
                 <circle cx={x} cy={y} r="3.5" fill={clr} stroke="#0a0a0a" strokeWidth="1.5" />
