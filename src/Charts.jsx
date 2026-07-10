@@ -1200,10 +1200,14 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
             const y = yScale(waveToPrice(v));
             const ts = lastRealTs + (i + 1) * msPerBar;
             const clr = type === "low" ? "#22c55e" : "#ef4444";
+            // Keep the date label inside the plot area even at extreme peaks/troughs
+            const yLbl = type === "low"
+              ? Math.min(y + 16, PAD.top + iH - 6)
+              : Math.max(y - 10, PAD.top + 12);
             return (
               <g key={"turn" + k}>
                 <circle cx={x} cy={y} r="3.5" fill={clr} stroke="#0a0a0a" strokeWidth="1.5" />
-                <text x={x} y={type === "low" ? y + 16 : y - 10} textAnchor="middle"
+                <text x={x} y={yLbl} textAnchor="middle"
                   fill={clr} fontSize="9" fontFamily="'DM Mono', monospace" fontWeight="600">
                   {type === "low" ? "▲ " : "▼ "}{fmtLabel(ts)}
                 </text>
@@ -1423,6 +1427,18 @@ const VSXLogo = ({ size = 52 }) => (
 );
 
 const ALL_YEARS = Array.from({ length: new Date().getFullYear() - 2009 }, (_, i) => 2010 + i);
+
+// Economy year-cycle presets (US presidential cycle + BTC halving cycle).
+// US elections fall on years divisible by 4 (2016, 2020, 2024) — BTC halvings
+// happen to share the same rhythm (2016, 2020, 2024).
+const YEAR_PRESETS = [
+  { label: "Election",      test: y => y % 4 === 0 },
+  { label: "Post-Election", test: y => y % 4 === 1 },
+  { label: "Midterm",       test: y => y % 4 === 2 },
+  { label: "Pre-Election",  test: y => y % 4 === 3 },
+  { label: "₿ Halving",     test: y => y % 4 === 0 },
+  { label: "₿ Halving+1",   test: y => y % 4 === 1 },
+];
 
 export default function App() {
   const [input, setInput] = useState("");
@@ -1770,6 +1786,21 @@ export default function App() {
                 onChange={e => setYearInput(e.target.value)} onKeyDown={e => e.key === "Enter" && applyManual()} />
               <button className="btn btn-outline" style={{ padding: "5px 12px", fontSize: 9 }} onClick={applyManual}>APPLY</button>
             </div>
+            <div className="filter-group">
+              <span className="filter-group-label">Cycle</span>
+              {YEAR_PRESETS.map(p => {
+                const yrs = availableYears.filter(p.test);
+                const isActive = selectedYears.length > 0 && selectedYears.length === yrs.length && yrs.every(y => selectedYears.includes(y));
+                return (
+                  <button key={p.label} className={`year-chip ${isActive ? "active" : ""}`}
+                    disabled={yrs.length === 0} style={{ opacity: yrs.length === 0 ? 0.3 : 1 }}
+                    title={yrs.join(" · ")}
+                    onClick={() => setSelectedYears(isActive ? [] : yrs)}>
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
             {activeYears.length > 0 && selectedYears.length > 0 && (
               <span className="active-years-tag">✦ {activeYears.join(" · ")}</span>
             )}
@@ -1822,7 +1853,7 @@ export default function App() {
               {(cycles.length > 0 || candles.length > 80) && (
                 <div style={{ position: "relative" }}>
                   <button onClick={() => setCyclesPanelOpen(o => !o)}
-                    style={{ position: "absolute", top: 12, right: -1, background: cyclesPanelOpen ? "#1a1a1a" : "#111", border: "1px solid #222", borderRight: "none", color: cyclesPanelOpen ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", padding: "8px 10px", cursor: "pointer", borderRadius: "6px 0 0 6px", writingMode: "vertical-rl", textTransform: "uppercase", transition: "all 0.2s" }}>
+                    style={{ position: "absolute", top: 12, right: cyclesPanelOpen ? 280 : -1, background: cyclesPanelOpen ? "#1a1a1a" : "#111", border: "1px solid #222", borderRight: "none", color: cyclesPanelOpen ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", padding: "8px 10px", cursor: "pointer", borderRadius: "6px 0 0 6px", writingMode: "vertical-rl", textTransform: "uppercase", transition: "all 0.2s", zIndex: 5 }}>
                     {cyclesPanelOpen ? "◀ Cycles" : "▶ Cycles"}
                   </button>
                   {cyclesPanelOpen && (
