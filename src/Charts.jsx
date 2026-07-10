@@ -715,8 +715,69 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     }
   }
 
+  // BOTTOM-TO-BOTTOM anchoring + TOP-WITHIN-CYCLE skew:
+  // From the fitted phase we know where each cycle's troughs sit. The skew is
+  // then measured from the data: where do the actual tops occur between two
+  // bottoms (relative position, averaged over the last complete cycles).
+  // Tops are located on a SMOOTHED residual so noise spikes can't fake them.
+  const psr = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) psr[i + 1] = psr[i] + r[i];
+  const smoothAt = (i, h) => {
+    const lo = Math.max(0, i - h), hi = Math.min(n - 1, i + h);
+    return (psr[hi + 1] - psr[lo]) / (hi - lo + 1);
+  };
+  kept.forEach(c => {
+    const P = c.period;
+    const w = (2 * Math.PI) / P;
+    const phi = Math.atan2(c.b, c.a);
+    let t0 = ((phi + Math.PI) / w) % P;
+    if (t0 < 0) t0 += P;
+    const h = Math.max(2, Math.round(P / 12));
+    const half = Math.round(P * 0.25);
+    // Locate the ACTUAL bottoms: search ±P/4 around each phase-predicted trough
+    // for the true minimum of the smoothed residual (last 5 cycles)
+    const bottoms = [];
+    let tk = t0 + Math.floor((n - 1 - t0) / P) * P;
+    for (let k = 0; k < 6 && bottoms.length < 5; k++) {
+      const center = Math.round(tk); tk -= P;
+      const lo = Math.max(0, center - half), hi = Math.min(n - 1, center + half);
+      if (hi - lo < P * 0.2) continue;
+      let best = lo, bv = Infinity;
+      for (let i = lo; i <= hi; i++) { const v = smoothAt(i, h); if (v < bv) { bv = v; best = i; } }
+      bottoms.push(best);
+    }
+    bottoms.sort((x, z) => x - z);
+    // Anchor = circular mean of real bottom positions (mod P)
+    if (bottoms.length) {
+      let re = 0, im = 0;
+      for (const bt of bottoms) {
+        const ang = 2 * Math.PI * ((((bt % P) + P) % P) / P);
+        re += Math.cos(ang); im += Math.sin(ang);
+      }
+      let ang = Math.atan2(im, re);
+      if (ang < 0) ang += 2 * Math.PI;
+      c.anchor = (ang / (2 * Math.PI)) * P;
+    } else c.anchor = t0;
+    // Skew = average relative top position between consecutive REAL bottoms
+    // (sharper smoothing here — heavy smoothing drags the top toward center)
+    const h2 = Math.max(2, Math.round(P / 24));
+    let sum = 0, cnt = 0;
+    for (let k = 1; k < bottoms.length; k++) {
+      const a0 = bottoms[k - 1], b0 = bottoms[k];
+      const len = b0 - a0;
+      if (len < P * 0.5 || len > P * 1.5) continue;
+      const lo = a0 + Math.round(len * 0.08), hi = b0 - Math.round(len * 0.08);
+      let best = lo, bv = -Infinity;
+      for (let i = lo; i <= hi; i++) { const v = smoothAt(i, h2); if (v > bv) { bv = v; best = i; } }
+      const pos = (best - a0) / len;
+      if (pos > 0.05 && pos < 0.95) { sum += pos; cnt++; }
+    }
+    c.skew = cnt ? Math.min(0.8, Math.max(0.2, sum / cnt)) : 0.5;
+  });
+
   const cycles = kept.map(s => ({
     period: s.period, a: s.a, b: s.b, amp: s.amp, bartels: s.bartels,
+    anchor: s.anchor, skew: s.skew,
     strength: s.score,
     strengthPct: maxStr > 0 ? (s.score / maxStr) * 100 : 0,
     bartelsPct: s.bartels * 100,
@@ -740,21 +801,26 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
 // trough composite. Raw detected amplitudes create ugly beating envelopes when
 // periods are close; equal weights keep the wave clean and readable while the
 // timing information (what cycles are for) stays exact.
+// Composite built EXACTLY like the trough (Set Low) mode: each cycle is a
+// trough-pinned skewed wave over the FULL history + projection. Anchor comes
+// from the detected phase (bottom-to-bottom), skew from where the real tops sit
+// between two bottoms. Unit amplitude per cycle for a clean, readable wave.
 const buildSpectralComposite = (candles, cycles) => {
   if (!candles.length || !cycles.length) return [];
   const n = candles.length;
   const fwd = Math.min(Math.ceil(n * 0.5), 500);
-  // Draw only over the ANALYSIS WINDOW (same window the phase refit anchors to).
-  // A dominant cycle is a statement about NOW — extending the wave back over
-  // 10 years of old regimes just creates meaningless historical mismatches.
-  const t0 = Math.max(0, n - 1250);
   const pts = [];
-  for (let t = t0; t < n + fwd; t++) {
+  for (let t = 0; t < n + fwd; t++) {
     let v = 0;
     for (const c of cycles) {
-      const w = (2 * Math.PI) / c.period;
-      const amp = c.amp || Math.hypot(c.a, c.b) || 1;
-      v += (c.a / amp) * Math.cos(w * t) + (c.b / amp) * Math.sin(w * t);
+      const P = c.period;
+      const anchor = c.anchor ?? 0;
+      const split = c.skew ?? 0.5;
+      const phase = (((t - anchor) % P) + P) % P / P;
+      const distorted = phase < split
+        ? (phase / split) * Math.PI
+        : Math.PI + ((phase - split) / (1 - split)) * Math.PI;
+      v += -Math.cos(distorted);
     }
     pts.push({ t, v, isFuture: t >= n });
   }
@@ -1743,13 +1809,12 @@ export default function App() {
     });
   };
 
-  // Hurst's harmonic principle: adjacent cycles in the nominal model relate by
-  // small integer ratios — dominantly 2:1, plus 3:1 and 3:2 (e.g. 4.5y→3y).
+  // Rule of harmony (octave series): for a 200d cycle the harmonics are
+  // ~400d, ~100d, ~50d … — ratios of 2^k (2:1, 4:1, 8:1), in both directions.
   const harmonicRatio = (p, q) => {
     const rr = Math.max(p, q) / Math.min(p, q);
-    if (Math.abs(rr - 2) / 2 < 0.10) return "2:1";
-    if (Math.abs(rr - 3) / 3 < 0.10) return "3:1";
-    if (Math.abs(rr - 1.5) / 1.5 < 0.08) return "3:2";
+    const k = Math.round(Math.log2(rr));
+    if (k >= 1 && k <= 3 && Math.abs(rr / Math.pow(2, k) - 1) < 0.12) return `${Math.pow(2, k)}:1`;
     return null;
   };
   // Periods closer than ~1.35:1 beat against each other → ugly, meaningless wave
@@ -2113,7 +2178,7 @@ export default function App() {
                           {detecting ? "ANALYZING…" : spectral ? "↻ RE-DETECT CYCLES" : "⚡ DETECT DOMINANT CYCLES"}
                         </button>
                         <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#333", marginTop: 6, lineHeight: 1.5 }}>
-                          High-pass Goertzel · Bartels-filtered · phase refit on recent data · ♪ = harmonic (2:1 / 3:1) to your selection
+                          Bottom-to-bottom anchored · skew from top position in cycle · ♪ = octave harmonic (2:1 / 4:1 / 8:1)
                         </div>
                       </div>
                       {/* Spectrum strip */}
