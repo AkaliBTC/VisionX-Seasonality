@@ -202,8 +202,8 @@ const fetchNasdaqHistory = async (ticker, interval) => {
   return null;
 };
 
-const fetchHistory = async (ticker, interval) => {
-  if (isCrypto(ticker)) return await fetchBinanceHistory(ticker, interval);
+const fetchHistory = async (ticker, interval, forceBinance = false) => {
+  if (forceBinance || isCrypto(ticker)) return await fetchBinanceHistory(ticker, interval);
   if (isCommodity(ticker)) {
     const nd = await fetchNasdaqHistory(ticker, interval);
     if (nd && nd.length > 10) return nd;
@@ -1739,6 +1739,7 @@ export default function App() {
   const [error, setError] = useState(false);
   const [progress, setProgress] = useState("");
   const [csvLoaded, setCsvLoaded] = useState(false);
+  const [forceBinance, setForceBinance] = useState(false);
   const csvLoadedRef = useRef(false);
   const [selectedYears, setSelectedYears] = useState([]);
   const [yearInput, setYearInput] = useState("");
@@ -1784,13 +1785,13 @@ export default function App() {
     ? calcWindowStats(candles, seasonSel.startKey, seasonSel.endKey, activeYears)
     : null;
 
-  const load = async (t, iv) => {
+  const load = async (t, iv, fb = forceBinance) => {
     if (!t) return;
     setCsvLoaded(false);
     setLoading(true); setError(false); setCandles([]);
-    setProgress(isCrypto(t) ? "Fetching Binance history…" : isCommodity(t) ? "Fetching commodity data…" : "Fetching Twelve Data history…");
+    setProgress(fb || isCrypto(t) ? "Fetching Binance history…" : isCommodity(t) ? "Fetching commodity data…" : "Fetching Twelve Data history…");
     try {
-      const data = await fetchHistory(t, iv);
+      const data = await fetchHistory(t, iv, fb);
       if (!data || data.length < 10) { setError(true); }
       else { setCandles(data); }
     } catch { setError(true); }
@@ -2071,6 +2072,15 @@ export default function App() {
               onClick={() => switchInterval(iv)}>{iv.toUpperCase()}</button>
           ))}
         </div>
+        <button className={`btn btn-outline ${forceBinance ? "active" : ""}`}
+          title="Force Binance as data source (ticker is queried as ‹TICKER›USDT)"
+          onClick={() => {
+            const nv = !forceBinance;
+            setForceBinance(nv);
+            if (ticker && !csvLoadedRef.current) load(ticker, interval, nv);
+          }}>
+          ₿ FORCE BINANCE
+        </button>
         {loading && <><div className="spinner" /><span style={{ fontSize: 10, color: "#444", letterSpacing: "0.1em" }}>{progress}</span></>}
       </div>
 
@@ -2143,7 +2153,7 @@ export default function App() {
         <>
           <div className="section">
             <div className="section-header">
-              <div className="section-title">{ticker} · {interval === "1d" ? "DAILY" : "WEEKLY"} · {csvLoaded ? "CSV" : isCrypto(ticker) ? "BINANCE" : isCommodity(ticker) ? "NASDAQ" : "TWELVE DATA"}</div>
+              <div className="section-title">{ticker} · {interval === "1d" ? "DAILY" : "WEEKLY"} · {csvLoaded ? "CSV" : forceBinance || isCrypto(ticker) ? "BINANCE" : isCommodity(ticker) ? "NASDAQ" : "TWELVE DATA"}</div>
               <div style={{ display: "flex", gap: 6 }}>
                 <button className="btn btn-outline" style={{ padding: "6px 14px", fontSize: 9 }}
                   onClick={() => {/* zoom handled in component */}}>SCROLL TO ZOOM · DRAG TO PAN</button>
