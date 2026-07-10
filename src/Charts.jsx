@@ -1254,11 +1254,6 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           <clipPath id="chartClip">
             <rect x={PAD.left} y={PAD.top} width={iW} height={iH} />
           </clipPath>
-          <linearGradient id="turnGlow" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#d4af37" stopOpacity="0" />
-            <stop offset="50%" stopColor="#d4af37" stopOpacity="0.07" />
-            <stop offset="100%" stopColor="#d4af37" stopOpacity="0" />
-          </linearGradient>
         </defs>
 
         {/* Grid */}
@@ -1431,19 +1426,35 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
             const isLow  = v <= futPoints[i-1].v && v <= futPoints[i-2].v && v < futPoints[i+1].v && v < futPoints[i+2].v;
             if (isHigh || isLow) turns.push({ p: futPoints[i], type: isHigh ? "high" : "low" });
           }
-          // Subtle gold glow zones: the AREA in which topping/bottoming is due,
-          // width scaled to the rhythm between projected turns
+          // Subtle gold halos laid INTO the curve bend at each projected turn:
+          // a half-disk hugging the trough/peak, strongest at the curve and
+          // fading to nothing outward — capped on the price axis, no full bands
           const gaps = [];
           for (let i = 1; i < turns.length; i++) gaps.push(turns[i].p.t - turns[i - 1].p.t);
           const medGap = gaps.length ? gaps.slice().sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : 60;
-          const halfWBars = Math.max(4, medGap * 0.22);
-          const glowEls = turns.slice(0, 8).map(({ p }, k) => {
+          const halfWBars = Math.max(4, medGap * 0.30);
+          const pxPerBar = iW / Math.max(totalSlots - 1, 1);
+          const glowEls = turns.slice(0, 8).map(({ p, type }, k) => {
             const xi = p.t - startIdx;
             if (xi < 0 || xi > totalSlots - 1) return null;
-            const x0 = xScale(Math.max(0, xi - halfWBars));
-            const x1 = xScale(Math.min(totalSlots - 1, xi + halfWBars));
-            if (x1 <= PAD.left || x0 >= W - PAD.right) return null;
-            return <rect key={"glow" + k} x={x0} y={PAD.top} width={Math.max(x1 - x0, 2)} height={iH} fill="url(#turnGlow)" />;
+            const x = xScale(xi);
+            if (x < PAD.left || x > W - PAD.right) return null;
+            const y = yScale(waveToPrice(p.v));
+            const rx = Math.min(Math.max(halfWBars * pxPerBar, 26), 95);
+            const ry = Math.min(rx, iH * 0.30);
+            // low (U-bend) → upper half-disk (sweep 0); high (∩) → lower half (sweep 1)
+            const sweep = type === "low" ? 0 : 1;
+            const d = `M ${x - rx} ${y} A ${rx} ${ry} 0 0 ${sweep} ${x + rx} ${y} Z`;
+            return (
+              <g key={"glow" + k}>
+                <radialGradient id={`tgr${k}`} gradientUnits="userSpaceOnUse" cx={x} cy={y} r={rx}>
+                  <stop offset="0%" stopColor="#d4af37" stopOpacity="0.13" />
+                  <stop offset="55%" stopColor="#d4af37" stopOpacity="0.055" />
+                  <stop offset="100%" stopColor="#d4af37" stopOpacity="0" />
+                </radialGradient>
+                <path d={d} fill={`url(#tgr${k})`} />
+              </g>
+            );
           });
 
           // Only label turns with enough horizontal breathing room (dots always drawn)
