@@ -531,10 +531,11 @@ const scanPatterns = (candles, years) => {
 };
 
 // ── SPECTRAL CYCLE DETECTION (von-Thienen-style: DFT projection + Bartels) ──
-// Detrends log price, measures amplitude/phase per period via Goertzel-style
-// projection, validates each candidate with a Bartels phase-stability test,
-// and returns the dominant cycles with exact a·cos + b·sin coefficients so the
-// composite can be reconstructed and projected forward in real price space.
+// v3: ITERATIVE extraction (matching pursuit). The dominant cycle is measured,
+// validated and then SUBTRACTED from the residual before re-scanning. Without
+// this, cycle #1 masks everything else — secondary cycles test against a signal
+// still full of #1's energy and score "dead". With it, each cycle is measured
+// on a cleaned residual, so genuine secondary cycles surface with real scores.
 const detectCyclesSpectral = (candles, maxCycles = 20) => {
   const n = candles.length;
   if (n < 80) return { cycles: [], trend: null, spectrum: [] };
@@ -554,21 +555,22 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   const maxP = Math.min(Math.floor(n / 4), 500);
   if (maxP <= minP) return { cycles: [], trend: null, spectrum: [] };
 
-  // Full amplitude spectrum
-  const spec = [];
-  for (let P = minP; P <= maxP; P++) {
-    const w = (2 * Math.PI) / P;
-    let ca = 0, sb = 0;
-    for (let i = 0; i < n; i++) { ca += r[i] * Math.cos(w * i); sb += r[i] * Math.sin(w * i); }
-    const a = (2 * ca) / n, b = (2 * sb) / n;
-    spec.push({ period: P, a, b, amp: Math.hypot(a, b) });
-  }
+  // Amplitude spectrum of an arbitrary series
+  const scanSpectrum = (arr) => {
+    const spec = [];
+    for (let P = minP; P <= maxP; P++) {
+      const w = (2 * Math.PI) / P;
+      let ca = 0, sb = 0;
+      for (let i = 0; i < n; i++) { ca += arr[i] * Math.cos(w * i); sb += arr[i] * Math.sin(w * i); }
+      const a = (2 * ca) / n, b = (2 * sb) / n;
+      spec.push({ period: P, a, b, amp: Math.hypot(a, b) });
+    }
+    return spec;
+  };
 
-  // Bartels-style phase-stability test: split into full-cycle segments (most
-  // recent data first) and check how coherent the phase is across segments.
-  // Each segment gets its own mean + linear drift removed first — otherwise
-  // trend leakage contaminates the phase estimate and drags real cycles down.
-  const bartels = (P) => {
+  // Bartels-style phase-stability test on an arbitrary series: full-cycle
+  // segments, each with its own mean + linear drift removed, phase coherence 0–1
+  const bartelsOn = (arr, P) => {
     const w = (2 * Math.PI) / P;
     const k = Math.min(10, Math.floor(n / P));
     if (k < 2) return 0.3;
@@ -579,15 +581,15 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     for (let s = 0; s < k; s++) {
       const off = n - (s + 1) * P;
       let m0 = 0;
-      for (let i = 0; i < P; i++) m0 += r[off + i];
+      for (let i = 0; i < P; i++) m0 += arr[off + i];
       m0 /= P;
       let num = 0;
-      for (let i = 0; i < P; i++) num += (i - half) * (r[off + i] - m0);
+      for (let i = 0; i < P; i++) num += (i - half) * (arr[off + i] - m0);
       const dr = den2 ? num / den2 : 0;
       let ca = 0, sb = 0;
       for (let i = 0; i < P; i++) {
         const g = off + i;
-        const val = r[g] - m0 - dr * (i - half);
+        const val = arr[g] - m0 - dr * (i - half);
         ca += val * Math.cos(w * g); sb += val * Math.sin(w * g);
       }
       const m = Math.hypot(ca, sb) || 1;
@@ -596,46 +598,57 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     return Math.hypot(re, im) / k;
   };
 
-  // Local maxima of the spectrum → candidates
-  const peaks = [];
-  for (let i = 1; i < spec.length - 1; i++) {
-    if (spec[i].amp > spec[i - 1].amp && spec[i].amp >= spec[i + 1].amp) peaks.push(spec[i]);
-  }
-  peaks.sort((a, b) => b.amp - a.amp);
+  const firstSpec = scanSpectrum(r);
+  const work = Float64Array.from(r);
+  const found = [];
+  let refAmp = null;
 
-  const scored = peaks.slice(0, 40).map(p => {
-    const bt = bartels(p.period);
-    // Bartels dominates the ranking: a big-amplitude wiggle with unstable
-    // phase is trend residue, not a tradeable cycle
-    return { ...p, bartels: bt, strength: p.amp * bt * bt };
-  }).sort((a, b) => b.strength - a.strength);
+  for (let iter = 0; iter < Math.min(maxCycles, 12); iter++) {
+    const spec = iter === 0 ? firstSpec : scanSpectrum(work);
+    const peaks = [];
+    for (let i = 1; i < spec.length - 1; i++) {
+      if (spec[i].amp > spec[i - 1].amp && spec[i].amp >= spec[i + 1].amp) peaks.push(spec[i]);
+    }
+    peaks.sort((a, b) => b.amp - a.amp);
 
-  // Dedupe near-identical periods, keep strongest
-  const sel = [];
-  for (const s of scored) {
-    if (sel.some(x => Math.abs(x.period - s.period) / Math.max(x.period, s.period) < 0.12)) continue;
-    sel.push(s);
-    if (sel.length >= maxCycles) break;
+    // Among the strongest candidates, pick the one with the best amp·bartels²
+    let best = null;
+    for (const p of peaks.slice(0, 12)) {
+      if (found.some(f => Math.abs(f.period - p.period) / Math.max(f.period, p.period) < 0.08)) continue;
+      const bt = bartelsOn(work, p.period);
+      const score = p.amp * bt * bt;
+      if (!best || score > best.score) best = { ...p, bartels: bt, score };
+    }
+    if (!best) break;
+    if (refAmp == null) refAmp = best.amp;
+    if (best.amp < refAmp * 0.10) break; // remaining energy is noise
+    found.push(best);
+
+    // Subtract this cycle so the next scan sees a cleaned residual
+    const w = (2 * Math.PI) / best.period;
+    for (let i = 0; i < n; i++) work[i] -= best.a * Math.cos(w * i) + best.b * Math.sin(w * i);
   }
+
   // Drop phase-unstable candidates entirely unless that leaves too few
-  let kept = sel.filter(s => s.bartels >= 0.3);
-  if (kept.length < 3) kept = sel;
-  const maxStr = kept.length ? Math.max(...kept.map(s => s.strength)) : 1;
+  let kept = found.filter(f => f.bartels >= 0.3);
+  if (kept.length < 3) kept = found;
+  const maxStr = kept.length ? Math.max(...kept.map(f => f.score)) : 1;
   // Final ordering: accuracy first — the list reads top-down as "most reliable"
-  kept.sort((a, b) => b.bartels - a.bartels || b.strength - a.strength);
+  kept.sort((a, b) => b.bartels - a.bartels || b.score - a.score);
   const cycles = kept.map(s => ({
-    ...s,
-    strengthPct: maxStr > 0 ? (s.strength / maxStr) * 100 : 0,
+    period: s.period, a: s.a, b: s.b, amp: s.amp, bartels: s.bartels,
+    strength: s.score,
+    strengthPct: maxStr > 0 ? (s.score / maxStr) * 100 : 0,
     bartelsPct: s.bartels * 100,
   }));
 
-  // Downsampled spectrum for the mini strip chart
+  // Downsampled spectrum for the mini strip chart (first pass, pre-extraction)
   const stripBins = 110;
-  const chunk = Math.max(1, Math.ceil(spec.length / stripBins));
+  const chunk = Math.max(1, Math.ceil(firstSpec.length / stripBins));
   const spectrum = [];
-  for (let i = 0; i < spec.length; i += chunk) {
-    let best = spec[i];
-    for (let j = i; j < Math.min(i + chunk, spec.length); j++) if (spec[j].amp > best.amp) best = spec[j];
+  for (let i = 0; i < firstSpec.length; i += chunk) {
+    let best = firstSpec[i];
+    for (let j = i; j < Math.min(i + chunk, firstSpec.length); j++) if (firstSpec[j].amp > best.amp) best = firstSpec[j];
     spectrum.push({ period: best.period, amp: best.amp });
   }
 
@@ -828,17 +841,37 @@ const calcSupertrend = (candles, period = 10, mult = 3) => {
   return result;
 };
 
-const calcResistance = (candles, visible, lookback = 20) => {
-  const levels = new Set();
-  for (let i = lookback; i < visible.length - lookback; i++) {
-    const absI = visible[i];
-    const slice = visible.slice(i - lookback, i + lookback + 1);
-    const maxH = Math.max(...slice.map(c => c.h));
-    const minL = Math.min(...slice.map(c => c.l));
-    if (absI.h === maxH) levels.add(+(absI.h.toFixed(2)));
-    if (absI.l === minL) levels.add(+(absI.l.toFixed(2)));
+// Support/Resistance: pivot highs/lows in the visible range, clustered within
+// 0.6% into levels. A level's weight = number of touches; top 6 returned.
+const calcResistance = (visible) => {
+  const n = visible.length;
+  if (n < 20) return [];
+  const lb = Math.max(4, Math.floor(n / 40));
+  const piv = [];
+  for (let i = lb; i < n - lb; i++) {
+    let isH = true, isL = true;
+    for (let j = i - lb; j <= i + lb; j++) {
+      if (visible[j].h > visible[i].h) isH = false;
+      if (visible[j].l < visible[i].l) isL = false;
+      if (!isH && !isL) break;
+    }
+    if (isH) piv.push({ p: visible[i].h, i });
+    if (isL) piv.push({ p: visible[i].l, i });
   }
-  return [...levels].slice(0, 8);
+  if (!piv.length) return [];
+  piv.sort((a, b) => a.p - b.p);
+  const clusters = [];
+  for (const pv of piv) {
+    const c = clusters[clusters.length - 1];
+    if (c && (pv.p - c.hi) / c.avg < 0.006) {
+      c.touches++; c.sum += pv.p; c.hi = Math.max(c.hi, pv.p); c.last = Math.max(c.last, pv.i);
+      c.avg = c.sum / c.touches;
+    } else {
+      clusters.push({ sum: pv.p, avg: pv.p, hi: pv.p, touches: 1, last: pv.i });
+    }
+  }
+  clusters.sort((a, b) => b.touches - a.touches || b.last - a.last);
+  return clusters.slice(0, 6).map(c => ({ level: c.avg, touches: c.touches }));
 };
 
 // ── INDICATOR SETTINGS DEFAULTS ───────────────────────────────────────────────
@@ -1146,12 +1179,21 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
             });
           }
           if (activeIndicators.has("resist")) {
-            const levels = calcResistance(candles, visible, 20);
-            levels.forEach((lvl, i) => {
-              const y = yScale(lvl);
-              if (y < PAD.top || y > PAD.top + iH) return;
-              els.push(<line key={"res"+i} x1={PAD.left} x2={W-PAD.right} y1={y} y2={y} stroke="#fbbf24" strokeWidth="0.8" strokeDasharray="6 4" opacity="0.6"/>);
-              els.push(<text key={"restxt"+i} x={W-PAD.right+4} y={y+4} fill="#fbbf24" fontSize="9" fontFamily="'DM Mono',monospace" opacity="0.7">{lvl.toLocaleString()}</text>);
+            const levels = calcResistance(visible);
+            const lastClose = visible[visible.length - 1].c;
+            levels.forEach(({ level, touches }, i) => {
+              const y = yScale(level);
+              if (y < PAD.top + 6 || y > PAD.top + iH - 4) return;
+              const isRes = level >= lastClose;
+              const clr = isRes ? "#ef4444" : "#22c55e";
+              const op = Math.min(0.35 + touches * 0.12, 0.85);
+              els.push(<line key={"res"+i} x1={PAD.left} x2={W-PAD.right} y1={y} y2={y} stroke={clr} strokeWidth={touches >= 3 ? 1.1 : 0.8} strokeDasharray="6 4" opacity={op}/>);
+              els.push(
+                <text key={"restxt"+i} x={W-PAD.right-6} y={y-4} textAnchor="end"
+                  fill={clr} fontSize="9" fontFamily="'DM Mono',monospace" opacity={Math.min(op + 0.15, 1)}>
+                  {fmtPrice(level)}{touches > 1 ? ` ·${touches}x` : ""}
+                </text>
+              );
             });
           }
           return els;
@@ -1658,13 +1700,13 @@ export default function App() {
   ];
 
   return (
-    <div style={{ minHeight: "100vh", background: "radial-gradient(1100px 700px at 85% -5%, rgba(212,175,55,0.08), transparent 60%), radial-gradient(900px 650px at -5% 108%, rgba(80,130,255,0.05), transparent 60%), radial-gradient(700px 500px at 50% 45%, rgba(255,255,255,0.015), transparent 70%), #06070b", backgroundAttachment: "fixed", color: "#e8e8e8", fontFamily: "'Montserrat', sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: "radial-gradient(1100px 700px at 85% -5%, rgba(212,175,55,0.07), transparent 60%), radial-gradient(800px 550px at 8% 110%, rgba(255,255,255,0.035), transparent 60%), #16171b", backgroundAttachment: "fixed", color: "#e8e8e8", fontFamily: "'Montserrat', sans-serif" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Bebas+Neue&family=DM+Mono:wght@300;400;500&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #0a0a0a; }
+        body { background: #16171b; }
 
-        .header { height: 76px; padding: 0 48px; display: flex; align-items: center; justify-content: space-between; background: rgba(8,9,13,0.5); backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%); border-bottom: 1px solid rgba(255,255,255,0.06); position: sticky; top: 0; z-index: 100; }
+        .header { height: 76px; padding: 0 48px; display: flex; align-items: center; justify-content: space-between; background: rgba(22,23,27,0.55); backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%); border-bottom: 1px solid rgba(255,255,255,0.06); position: sticky; top: 0; z-index: 100; }
         .logo-area { display: flex; align-items: center; gap: 14px; }
         .logo-divider { width: 1px; height: 32px; background: linear-gradient(180deg, transparent, rgba(212,175,55,0.4), transparent); }
         .logo-name { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 0.25em; background: linear-gradient(135deg,#fff,#e8e8e8); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
@@ -1872,7 +1914,7 @@ export default function App() {
                     {cyclesPanelOpen ? "◀ Cycles" : "▶ Cycles"}
                   </button>
                   {cyclesPanelOpen && (
-                    <div style={{ width: 280, background: "rgba(12,14,19,0.55)", backdropFilter: "blur(26px) saturate(150%)", WebkitBackdropFilter: "blur(26px) saturate(150%)", borderLeft: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column" }}>
+                    <div style={{ width: 280, background: "rgba(24,25,30,0.55)", backdropFilter: "blur(26px) saturate(150%)", WebkitBackdropFilter: "blur(26px) saturate(150%)", borderLeft: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column" }}>
                       {/* Panel header */}
                       <div style={{ padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 14, letterSpacing: "0.1em", color: "#e8e8e8" }}>Cycle Analysis</span>
