@@ -565,16 +565,31 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   }
 
   // Bartels-style phase-stability test: split into full-cycle segments (most
-  // recent data first), check how coherent the phase is across segments (0–1)
+  // recent data first) and check how coherent the phase is across segments.
+  // Each segment gets its own mean + linear drift removed first — otherwise
+  // trend leakage contaminates the phase estimate and drags real cycles down.
   const bartels = (P) => {
     const w = (2 * Math.PI) / P;
-    const k = Math.min(8, Math.floor(n / P));
-    if (k < 2) return 0.35;
+    const k = Math.min(10, Math.floor(n / P));
+    if (k < 2) return 0.3;
+    const half = (P - 1) / 2;
+    let den2 = 0;
+    for (let i = 0; i < P; i++) den2 += (i - half) * (i - half);
     let re = 0, im = 0;
     for (let s = 0; s < k; s++) {
       const off = n - (s + 1) * P;
+      let m0 = 0;
+      for (let i = 0; i < P; i++) m0 += r[off + i];
+      m0 /= P;
+      let num = 0;
+      for (let i = 0; i < P; i++) num += (i - half) * (r[off + i] - m0);
+      const dr = den2 ? num / den2 : 0;
       let ca = 0, sb = 0;
-      for (let i = 0; i < P; i++) { const g = off + i; ca += r[g] * Math.cos(w * g); sb += r[g] * Math.sin(w * g); }
+      for (let i = 0; i < P; i++) {
+        const g = off + i;
+        const val = r[g] - m0 - dr * (i - half);
+        ca += val * Math.cos(w * g); sb += val * Math.sin(w * g);
+      }
       const m = Math.hypot(ca, sb) || 1;
       re += ca / m; im += sb / m;
     }
@@ -603,9 +618,11 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     if (sel.length >= maxCycles) break;
   }
   // Drop phase-unstable candidates entirely unless that leaves too few
-  let kept = sel.filter(s => s.bartels >= 0.25);
+  let kept = sel.filter(s => s.bartels >= 0.3);
   if (kept.length < 3) kept = sel;
-  const maxStr = kept.length ? kept[0].strength : 1;
+  const maxStr = kept.length ? Math.max(...kept.map(s => s.strength)) : 1;
+  // Final ordering: accuracy first — the list reads top-down as "most reliable"
+  kept.sort((a, b) => b.bartels - a.bartels || b.strength - a.strength);
   const cycles = kept.map(s => ({
     ...s,
     strengthPct: maxStr > 0 ? (s.strength / maxStr) * 100 : 0,
@@ -1028,7 +1045,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
 
         {/* Grid */}
         {yLabels.map((v, i) => (
-          <line key={i} x1={PAD.left} x2={W - PAD.right} y1={yScale(v)} y2={yScale(v)} stroke="#181818" strokeWidth="1" />
+          <line key={i} x1={PAD.left} x2={W - PAD.right} y1={yScale(v)} y2={yScale(v)} stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
         ))}
 
         {/* Y labels */}
@@ -1200,10 +1217,10 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
             const y = yScale(waveToPrice(v));
             const ts = lastRealTs + (i + 1) * msPerBar;
             const clr = type === "low" ? "#22c55e" : "#ef4444";
-            // Keep the date label inside the plot area even at extreme peaks/troughs
+            // Keep the date label clearly separated from the dot and inside the plot
             const yLbl = type === "low"
-              ? Math.min(y + 16, PAD.top + iH - 6)
-              : Math.max(y - 10, PAD.top + 12);
+              ? Math.min(y + 26, PAD.top + iH - 6)
+              : Math.max(y - 18, PAD.top + 12);
             return (
               <g key={"turn" + k}>
                 <circle cx={x} cy={y} r="3.5" fill={clr} stroke="#0a0a0a" strokeWidth="1.5" />
@@ -1237,8 +1254,8 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
           const tagX = Math.max(PAD.left, Math.min(hover.x - tagW/2, W - PAD.right - tagW));
           return (
             <>
-              <line x1={hover.x} x2={hover.x} y1={PAD.top} y2={PAD.top + iH} stroke="#2a2a2a" strokeWidth="1" strokeDasharray="4,3" />
-              <line x1={PAD.left} x2={W - PAD.right} y1={hover.y} y2={hover.y} stroke="#2a2a2a" strokeWidth="1" strokeDasharray="4,3" />
+              <line x1={hover.x} x2={hover.x} y1={PAD.top} y2={PAD.top + iH} stroke="rgba(255,255,255,0.14)" strokeWidth="1" strokeDasharray="4,3" />
+              <line x1={PAD.left} x2={W - PAD.right} y1={hover.y} y2={hover.y} stroke="rgba(255,255,255,0.14)" strokeWidth="1" strokeDasharray="4,3" />
               {hover.candle && <circle cx={hover.x} cy={hover.y} r="4" fill={color} stroke="#0a0a0a" strokeWidth="2" />}
               <rect x={tagX} y={H - PAD.bottom + 2} width={tagW} height={18} fill="#1a1a1a" rx="3" />
               <text x={tagX + tagW/2} y={H - PAD.bottom + 14} textAnchor="middle"
@@ -1251,7 +1268,7 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
 
       {/* Tooltip */}
       {hover && hover.candle && (
-        <div style={{ position: "absolute", top: 12, left: hover.x / W * 100 > 60 ? 90 : "auto", right: hover.x / W * 100 > 60 ? "auto" : 30, background: "#111", border: "1px solid #222", borderRadius: 8, padding: "8px 14px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: "#e8e8e8", pointerEvents: "none" }}>
+        <div style={{ position: "absolute", top: 12, left: hover.x / W * 100 > 60 ? 90 : "auto", right: hover.x / W * 100 > 60 ? "auto" : 30, background: "rgba(15,17,23,0.78)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.09)", borderRadius: 8, padding: "8px 14px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: "#e8e8e8", pointerEvents: "none" }}>
           <div style={{ color: "#555", fontSize: 10, marginBottom: 2 }}>{fmtLabel(hover.candle.t)}</div>
           <div style={{ color, fontSize: 16, fontWeight: 600 }}>{fmtPrice(hover.candle.c)}</div>
         </div>
@@ -1358,7 +1375,7 @@ function SeasonalChart({ pattern, curPath, showCur, selection, onSelect }) {
         {/* Month grid + labels */}
         {monthMarks.map(({ i, m }, j) => (
           <g key={j}>
-            <line x1={xS(i)} x2={xS(i)} y1={PAD.top} y2={PAD.top + iH} stroke="#161616" strokeWidth="1" />
+            <line x1={xS(i)} x2={xS(i)} y1={PAD.top} y2={PAD.top + iH} stroke="rgba(255,255,255,0.04)" strokeWidth="1" />
             <text x={xS(i) + 4} y={H - 10} fill="#444" fontSize="9.5" fontFamily="'DM Mono', monospace">
               {MONTH_SHORT[m - 1]}
             </text>
@@ -1368,7 +1385,7 @@ function SeasonalChart({ pattern, curPath, showCur, selection, onSelect }) {
         {/* Y grid + labels (indexed to 100 at start of year) */}
         {yLabels.map((v, i) => (
           <g key={i}>
-            <line x1={PAD.left} x2={W - PAD.right} y1={yS(v)} y2={yS(v)} stroke="#181818" strokeWidth="1" />
+            <line x1={PAD.left} x2={W - PAD.right} y1={yS(v)} y2={yS(v)} stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
             <text x={PAD.left - 8} y={yS(v) + 4} textAnchor="end" fill="#444" fontSize="10" fontFamily="'DM Mono', monospace">
               {(v - 100 >= 0 ? "+" : "") + (v - 100).toFixed(1)}%
             </text>
@@ -1397,7 +1414,7 @@ function SeasonalChart({ pattern, curPath, showCur, selection, onSelect }) {
         {/* Hover crosshair */}
         {hoverI != null && pattern[hoverI] && (
           <>
-            <line x1={xS(hoverI)} x2={xS(hoverI)} y1={PAD.top} y2={PAD.top + iH} stroke="#2a2a2a" strokeWidth="1" strokeDasharray="4 3" />
+            <line x1={xS(hoverI)} x2={xS(hoverI)} y1={PAD.top} y2={PAD.top + iH} stroke="rgba(255,255,255,0.14)" strokeWidth="1" strokeDasharray="4 3" />
             <circle cx={xS(hoverI)} cy={yS(pattern[hoverI].v)} r="3.5" fill="#d4af37" stroke="#0a0a0a" strokeWidth="2" />
           </>
         )}
@@ -1405,7 +1422,7 @@ function SeasonalChart({ pattern, curPath, showCur, selection, onSelect }) {
 
       {/* Hover tooltip */}
       {hoverI != null && pattern[hoverI] && (
-        <div style={{ position: "absolute", top: 10, left: hoverI / pattern.length > 0.6 ? 76 : "auto", right: hoverI / pattern.length > 0.6 ? "auto" : 26, background: "#111", border: "1px solid #222", borderRadius: 8, padding: "7px 12px", fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#e8e8e8", pointerEvents: "none" }}>
+        <div style={{ position: "absolute", top: 10, left: hoverI / pattern.length > 0.6 ? 76 : "auto", right: hoverI / pattern.length > 0.6 ? "auto" : 26, background: "rgba(15,17,23,0.78)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.09)", borderRadius: 8, padding: "7px 12px", fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#e8e8e8", pointerEvents: "none" }}>
           <div style={{ color: "#555", fontSize: 9, marginBottom: 2 }}>{fmtKey(pattern[hoverI].key)} · {pattern[hoverI].n} yrs</div>
           <div style={{ color: "#f8e49b", fontSize: 13, fontWeight: 600 }}>
             {(pattern[hoverI].v - 100 >= 0 ? "+" : "") + (pattern[hoverI].v - 100).toFixed(2)}% YTD avg
@@ -1428,16 +1445,14 @@ const VSXLogo = ({ size = 52 }) => (
 
 const ALL_YEARS = Array.from({ length: new Date().getFullYear() - 2009 }, (_, i) => 2010 + i);
 
-// Economy year-cycle presets (US presidential cycle + BTC halving cycle).
-// US elections fall on years divisible by 4 (2016, 2020, 2024) — BTC halvings
-// happen to share the same rhythm (2016, 2020, 2024).
+// Institutional year-cycle presets. US presidential cycle: pre-election years
+// are historically the strongest equity years; midterms the weakest/choppiest.
+// BTC halvings share the election-year rhythm (2016, 2020, 2024).
 const YEAR_PRESETS = [
-  { label: "Election",      test: y => y % 4 === 0 },
-  { label: "Post-Election", test: y => y % 4 === 1 },
-  { label: "Midterm",       test: y => y % 4 === 2 },
-  { label: "Pre-Election",  test: y => y % 4 === 3 },
-  { label: "₿ Halving",     test: y => y % 4 === 0 },
-  { label: "₿ Halving+1",   test: y => y % 4 === 1 },
+  { label: "Election",     test: y => y % 4 === 0 },
+  { label: "Midterm",      test: y => y % 4 === 2 },
+  { label: "Pre-Election", test: y => y % 4 === 3 },
+  { label: "₿ Halving",    test: y => y % 4 === 0 },
 ];
 
 export default function App() {
@@ -1643,55 +1658,55 @@ export default function App() {
   ];
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0a0a0a", color: "#e8e8e8", fontFamily: "'Montserrat', sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: "radial-gradient(1100px 700px at 85% -5%, rgba(212,175,55,0.08), transparent 60%), radial-gradient(900px 650px at -5% 108%, rgba(80,130,255,0.05), transparent 60%), radial-gradient(700px 500px at 50% 45%, rgba(255,255,255,0.015), transparent 70%), #06070b", backgroundAttachment: "fixed", color: "#e8e8e8", fontFamily: "'Montserrat', sans-serif" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Bebas+Neue&family=DM+Mono:wght@300;400;500&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: #0a0a0a; }
 
-        .header { height: 80px; padding: 0 48px; display: flex; align-items: center; justify-content: space-between; background: rgba(10,10,10,0.92); backdrop-filter: blur(24px); border-bottom: 1px solid #1a1a1a; position: sticky; top: 0; z-index: 100; }
+        .header { height: 76px; padding: 0 48px; display: flex; align-items: center; justify-content: space-between; background: rgba(8,9,13,0.5); backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%); border-bottom: 1px solid rgba(255,255,255,0.06); position: sticky; top: 0; z-index: 100; }
         .logo-area { display: flex; align-items: center; gap: 14px; }
         .logo-divider { width: 1px; height: 32px; background: linear-gradient(180deg, transparent, rgba(212,175,55,0.4), transparent); }
         .logo-name { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 0.25em; background: linear-gradient(135deg,#fff,#e8e8e8); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
         .logo-sub { font-size: 7px; letter-spacing: 0.4em; color: #b99c64; font-weight: 500; text-transform: uppercase; margin-top: 2px; }
 
         .toolbar { display: flex; align-items: center; gap: 10px; padding: 32px 48px 24px; flex-wrap: wrap; }
-        .ticker-inp { background: #111; border: 1px solid #222; color: #f8e49b; font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 0.15em; padding: 11px 18px; border-radius: 8px; outline: none; width: 180px; text-transform: uppercase; transition: border-color 0.2s; }
-        .ticker-inp:focus { border-color: #d4af37; }
-        .ticker-inp::placeholder { color: #2a2a2a; }
+        .ticker-inp { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); color: #f8e49b; font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 0.15em; padding: 11px 18px; border-radius: 14px; outline: none; width: 180px; text-transform: uppercase; transition: all 0.25s; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+        .ticker-inp:focus { border-color: rgba(212,175,55,0.55); box-shadow: 0 0 0 3px rgba(212,175,55,0.10), 0 8px 32px rgba(212,175,55,0.08); }
+        .ticker-inp::placeholder { color: #2f333b; }
 
-        .btn { font-family: 'Montserrat', sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 0.15em; border: none; border-radius: 6px; cursor: pointer; transition: all 0.2s; text-transform: uppercase; padding: 11px 22px; }
-        .btn-gold { background: linear-gradient(135deg, #d4af37, #c59958); color: #0a0a0a; }
-        .btn-gold:hover { background: linear-gradient(135deg, #f8e49b, #d4af37); transform: translateY(-1px); }
-        .btn-outline { background: transparent; color: #555; border: 1px solid #222; }
-        .btn-outline:hover { border-color: #333; color: #888; }
-        .btn-outline.active { border-color: #d4af37; color: #f8e49b; background: rgba(212,175,55,0.08); }
+        .btn { font-family: 'Montserrat', sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 0.15em; border: none; border-radius: 999px; cursor: pointer; transition: all 0.25s; text-transform: uppercase; padding: 11px 22px; }
+        .btn-gold { background: linear-gradient(135deg, #e8c968, #c59958); color: #0a0a0a; box-shadow: 0 6px 26px rgba(212,175,55,0.28), inset 0 1px 0 rgba(255,255,255,0.35); }
+        .btn-gold:hover { box-shadow: 0 10px 36px rgba(212,175,55,0.42), inset 0 1px 0 rgba(255,255,255,0.45); transform: translateY(-1px); }
+        .btn-outline { background: rgba(255,255,255,0.02); color: #7a8089; border: 1px solid rgba(255,255,255,0.08); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+        .btn-outline:hover { border-color: rgba(255,255,255,0.18); color: #b9bec7; }
+        .btn-outline.active { border-color: rgba(212,175,55,0.55); color: #f8e49b; background: rgba(212,175,55,0.10); box-shadow: 0 0 20px rgba(212,175,55,0.14), inset 0 1px 0 rgba(255,255,255,0.08); }
 
-        .section { margin: 0 48px 24px; background: #111; border: 1px solid #1a1a1a; border-radius: 14px; overflow: hidden; }
-        .section-header { padding: 16px 24px; border-bottom: 1px solid #1a1a1a; display: flex; align-items: center; justify-content: space-between; }
+        .section { margin: 0 48px 24px; background: rgba(255,255,255,0.025); backdrop-filter: blur(28px) saturate(150%); -webkit-backdrop-filter: blur(28px) saturate(150%); border: 1px solid rgba(255,255,255,0.07); border-radius: 22px; overflow: hidden; box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 20px 60px rgba(0,0,0,0.45); }
+        .section-header { padding: 16px 24px; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: space-between; }
         .section-title { font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 0.15em; color: #fdfdfd; }
         .section-body { padding: 20px 16px 12px; }
 
-        .year-filter { padding: 20px 48px 16px; border-bottom: 1px solid #1a1a1a; }
+        .year-filter { padding: 20px 48px 16px; border-bottom: 1px solid rgba(255,255,255,0.05); }
         .year-filter-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-        .year-filter-label { font-size: 9px; color: #444; letter-spacing: 0.22em; font-weight: 700; text-transform: uppercase; white-space: nowrap; margin-right: 4px; }
+        .year-filter-label { font-size: 9px; color: #4a505a; letter-spacing: 0.22em; font-weight: 700; text-transform: uppercase; white-space: nowrap; margin-right: 4px; }
         .year-chips { display: flex; flex-wrap: wrap; gap: 5px; }
-        .year-chip { font-family: 'DM Mono', monospace; font-size: 10px; padding: 4px 9px; border-radius: 4px; border: 1px solid #1e1e1e; color: #444; cursor: pointer; transition: all 0.15s; background: transparent; }
-        .year-chip:hover { border-color: #2a2a2a; color: #777; }
-        .year-chip.active { border-color: #d4af37; color: #f8e49b; background: rgba(212,175,55,0.08); }
-        .year-chip.all-chip { color: #555; border-color: #222; margin-right: 4px; }
-        .year-chip.all-chip.active { border-color: #d4af37; color: #f8e49b; }
+        .year-chip { font-family: 'DM Mono', monospace; font-size: 10px; padding: 4px 11px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.07); color: #5b616b; cursor: pointer; transition: all 0.2s; background: rgba(255,255,255,0.015); }
+        .year-chip:hover { border-color: rgba(255,255,255,0.16); color: #9aa0aa; }
+        .year-chip.active { border-color: rgba(212,175,55,0.55); color: #f8e49b; background: rgba(212,175,55,0.10); box-shadow: 0 0 14px rgba(212,175,55,0.12); }
+        .year-chip.all-chip { color: #6b7078; margin-right: 4px; }
+        .year-chip.all-chip.active { border-color: rgba(212,175,55,0.55); color: #f8e49b; }
 
         .year-filter-bottom { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-        .filter-group { display: flex; align-items: center; gap: 6px; background: #0d0d0d; border: 1px solid #1a1a1a; border-radius: 8px; padding: 6px 12px; }
-        .filter-group-label { font-size: 8px; color: #333; letter-spacing: 0.2em; font-weight: 700; text-transform: uppercase; white-space: nowrap; }
-        .filter-input { background: transparent; border: none; border-bottom: 1px solid #222; color: #e8e8e8; font-family: 'DM Mono', monospace; font-size: 11px; padding: 2px 4px; outline: none; width: 52px; transition: border-color 0.2s; text-align: center; }
-        .filter-input:focus { border-bottom-color: #d4af37; }
-        .filter-input::placeholder { color: #2a2a2a; }
-        .filter-sep { color: #2a2a2a; font-size: 10px; }
-        .filter-input-wide { background: transparent; border: none; border-bottom: 1px solid #222; color: #e8e8e8; font-family: 'DM Mono', monospace; font-size: 11px; padding: 2px 4px; outline: none; width: 140px; transition: border-color 0.2s; }
-        .filter-input-wide:focus { border-bottom-color: #d4af37; }
-        .filter-input-wide::placeholder { color: #2a2a2a; }
+        .filter-group { display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 14px; padding: 6px 12px; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+        .filter-group-label { font-size: 8px; color: #3d434d; letter-spacing: 0.2em; font-weight: 700; text-transform: uppercase; white-space: nowrap; }
+        .filter-input { background: transparent; border: none; border-bottom: 1px solid rgba(255,255,255,0.12); color: #e8e8e8; font-family: 'DM Mono', monospace; font-size: 11px; padding: 2px 4px; outline: none; width: 52px; transition: border-color 0.2s; text-align: center; }
+        .filter-input:focus { border-bottom-color: rgba(212,175,55,0.7); }
+        .filter-input::placeholder { color: #2f333b; }
+        .filter-sep { color: #3d434d; font-size: 10px; }
+        .filter-input-wide { background: transparent; border: none; border-bottom: 1px solid rgba(255,255,255,0.12); color: #e8e8e8; font-family: 'DM Mono', monospace; font-size: 11px; padding: 2px 4px; outline: none; width: 140px; transition: border-color 0.2s; }
+        .filter-input-wide:focus { border-bottom-color: rgba(212,175,55,0.7); }
+        .filter-input-wide::placeholder { color: #2f333b; }
         .active-years-tag { font-family: "DM Mono", monospace; font-size: 9px; color: #d4af37; letter-spacing: 0.06em; opacity: 0.7; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
         .spinner { width: 28px; height: 28px; border: 2px solid #1a1a1a; border-top-color: #d4af37; border-radius: 50%; animation: spin 0.8s linear infinite; }
@@ -1701,20 +1716,20 @@ export default function App() {
         .empty-label { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 0.25em; color: #1e1e1e; }
         .empty-sub { font-size: 9px; color: #2a2a2a; letter-spacing: 0.15em; font-weight: 600; text-transform: uppercase; }
 
-        .ind-bar { display: flex; align-items: center; gap: 8px; padding: 12px 24px; background: #0d0d0d; border-top: 1px solid #1a1a1a; flex-wrap: wrap; }
-        .ind-btn { display: flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 6px; border: 1px solid #222; background: transparent; color: #555; font-family: 'Montserrat', sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 0.15em; cursor: pointer; transition: all 0.15s; text-transform: uppercase; position: relative; }
-        .ind-btn:hover { border-color: #333; color: #888; }
+        .ind-bar { display: flex; align-items: center; gap: 8px; padding: 12px 24px; background: rgba(255,255,255,0.015); border-top: 1px solid rgba(255,255,255,0.05); flex-wrap: wrap; }
+        .ind-btn { display: flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.02); color: #6b7078; font-family: 'Montserrat', sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 0.15em; cursor: pointer; transition: all 0.2s; text-transform: uppercase; position: relative; }
+        .ind-btn:hover { border-color: rgba(255,255,255,0.18); color: #a6acb6; }
         .ind-btn.active { background: rgba(255,255,255,0.05); }
         .ind-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
         .ind-gear { font-size: 10px; opacity: 0.5; cursor: pointer; padding: 0 2px; transition: opacity 0.15s; }
         .ind-gear:hover { opacity: 1; }
 
-        .ind-popup { position: absolute; bottom: calc(100% + 8px); left: 0; background: #111; border: 1px solid #2a2a2a; border-radius: 10px; padding: 14px 16px; z-index: 200; min-width: 180px; box-shadow: 0 8px 32px rgba(0,0,0,0.6); }
+        .ind-popup { position: absolute; bottom: calc(100% + 8px); left: 0; background: rgba(16,18,24,0.72); backdrop-filter: blur(28px) saturate(150%); -webkit-backdrop-filter: blur(28px) saturate(150%); border: 1px solid rgba(255,255,255,0.10); border-radius: 16px; padding: 14px 16px; z-index: 200; min-width: 180px; box-shadow: 0 16px 48px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.08); }
         .ind-popup-title { font-family: 'Bebas Neue', sans-serif; font-size: 13px; letter-spacing: 0.1em; color: #e8e8e8; margin-bottom: 10px; }
         .ind-field { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
-        .ind-field label { font-family: 'Montserrat', sans-serif; font-size: 9px; font-weight: 600; letter-spacing: 0.1em; color: #666; text-transform: uppercase; }
-        .ind-field input { background: #0a0a0a; border: 1px solid #222; color: #e8e8e8; font-family: 'DM Mono', monospace; font-size: 11px; padding: 4px 8px; border-radius: 4px; outline: none; width: 70px; text-align: right; }
-        .ind-field input:focus { border-color: #d4af37; }
+        .ind-field label { font-family: 'Montserrat', sans-serif; font-size: 9px; font-weight: 600; letter-spacing: 0.1em; color: #6b7078; text-transform: uppercase; }
+        .ind-field input { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.10); color: #e8e8e8; font-family: 'DM Mono', monospace; font-size: 11px; padding: 4px 8px; border-radius: 8px; outline: none; width: 70px; text-align: right; }
+        .ind-field input:focus { border-color: rgba(212,175,55,0.6); }
       `}</style>
 
       {/* HEADER */}
@@ -1740,8 +1755,8 @@ export default function App() {
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === "Enter" && submit()} />
         <button className="btn btn-gold" onClick={submit}>LOAD</button>
-        <label style={{ display:"flex", alignItems:"center", gap:6, padding:"11px 18px", background:"transparent", border:"1px solid #222", borderRadius:6, cursor:"pointer", fontFamily:"'Montserrat',sans-serif", fontSize:10, fontWeight:700, letterSpacing:"0.15em", color:"#555", textTransform:"uppercase", transition:"all 0.2s" }}
-          onMouseEnter={e=>e.currentTarget.style.borderColor="#333"} onMouseLeave={e=>e.currentTarget.style.borderColor="#222"}>
+        <label style={{ display:"flex", alignItems:"center", gap:6, padding:"11px 18px", background:"transparent", border:"1px solid rgba(255,255,255,0.10)", borderRadius:6, cursor:"pointer", fontFamily:"'Montserrat',sans-serif", fontSize:10, fontWeight:700, letterSpacing:"0.15em", color:"#555", textTransform:"uppercase", transition:"all 0.2s" }}
+          onMouseEnter={e=>e.currentTarget.style.borderColor="#333"} onMouseLeave={e=>e.currentTarget.style.borderColor="rgba(255,255,255,0.10)"}>
           ↑ CSV {csvLoaded ? `+ MERGE (${candles.length.toLocaleString()})` : ""}
           <input type="file" accept=".csv" style={{display:"none"}} onChange={handleCSV} />
         </label>
@@ -1853,41 +1868,41 @@ export default function App() {
               {(cycles.length > 0 || candles.length > 80) && (
                 <div style={{ position: "relative" }}>
                   <button onClick={() => setCyclesPanelOpen(o => !o)}
-                    style={{ position: "absolute", top: 12, right: cyclesPanelOpen ? 280 : -1, background: cyclesPanelOpen ? "#1a1a1a" : "#111", border: "1px solid #222", borderRight: "none", color: cyclesPanelOpen ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", padding: "8px 10px", cursor: "pointer", borderRadius: "6px 0 0 6px", writingMode: "vertical-rl", textTransform: "uppercase", transition: "all 0.2s", zIndex: 5 }}>
+                    style={{ position: "absolute", top: 12, right: cyclesPanelOpen ? 280 : -1, background: cyclesPanelOpen ? "rgba(212,175,55,0.10)" : "rgba(255,255,255,0.04)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", border: "1px solid rgba(255,255,255,0.10)", borderRight: "none", color: cyclesPanelOpen ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", padding: "8px 10px", cursor: "pointer", borderRadius: "6px 0 0 6px", writingMode: "vertical-rl", textTransform: "uppercase", transition: "all 0.2s", zIndex: 5 }}>
                     {cyclesPanelOpen ? "◀ Cycles" : "▶ Cycles"}
                   </button>
                   {cyclesPanelOpen && (
-                    <div style={{ width: 280, background: "#0d0d0d", borderLeft: "1px solid #1a1a1a", display: "flex", flexDirection: "column" }}>
+                    <div style={{ width: 280, background: "rgba(12,14,19,0.55)", backdropFilter: "blur(26px) saturate(150%)", WebkitBackdropFilter: "blur(26px) saturate(150%)", borderLeft: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column" }}>
                       {/* Panel header */}
-                      <div style={{ padding: "12px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div style={{ padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 14, letterSpacing: "0.1em", color: "#e8e8e8" }}>Cycle Analysis</span>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#444" }}>{cycleMode === "trough" ? selectedCycles.size : selectedSpectral.size} selected</span>
                           {cycleMode === "trough" && (
                           <button onClick={() => setPickingAnchor(p => !p)}
                             title="Click a low on the chart to anchor the wave"
-                            style={{ background: pickingAnchor ? "rgba(239,68,68,0.15)" : cycleAnchorIdx != null ? "rgba(212,175,55,0.1)" : "transparent", border: `1px solid ${pickingAnchor ? "#ef4444" : cycleAnchorIdx != null ? "#d4af37" : "#222"}`, color: pickingAnchor ? "#ef4444" : cycleAnchorIdx != null ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", padding: "4px 10px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase", transition: "all 0.2s" }}>
+                            style={{ background: pickingAnchor ? "rgba(239,68,68,0.15)" : cycleAnchorIdx != null ? "rgba(212,175,55,0.1)" : "transparent", border: `1px solid ${pickingAnchor ? "#ef4444" : cycleAnchorIdx != null ? "#d4af37" : "rgba(255,255,255,0.10)"}`, color: pickingAnchor ? "#ef4444" : cycleAnchorIdx != null ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", padding: "4px 10px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase", transition: "all 0.2s" }}>
                             {pickingAnchor ? "↗ CLICK LOW" : cycleAnchorIdx != null ? "⊕ LOW SET" : "📍 SET LOW"}
                           </button>
                           )}
                           <button onClick={() => setShowCycles(s => !s)}
-                            style={{ background: showCycles ? "rgba(212,175,55,0.15)" : "transparent", border: `1px solid ${showCycles ? "#d4af37" : "#222"}`, color: showCycles ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", padding: "4px 10px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase" }}>
+                            style={{ background: showCycles ? "rgba(212,175,55,0.15)" : "transparent", border: `1px solid ${showCycles ? "#d4af37" : "rgba(255,255,255,0.10)"}`, color: showCycles ? "#f8e49b" : "#555", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", padding: "4px 10px", borderRadius: 4, cursor: "pointer", textTransform: "uppercase" }}>
                             {showCycles ? "ON" : "OFF"}
                           </button>
                         </div>
                       </div>
                       {/* Mode tabs: manual trough scan vs auto spectral detection */}
-                      <div style={{ display: "flex", gap: 4, padding: "8px 16px", borderBottom: "1px solid #1a1a1a" }}>
+                      <div style={{ display: "flex", gap: 4, padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                         {[["trough", "TROUGH SCAN"], ["spectral", "AUTO SPECTRAL"]].map(([m, lbl]) => (
                           <button key={m} onClick={() => setCycleMode(m)}
-                            style={{ flex: 1, background: cycleMode === m ? "rgba(212,175,55,0.1)" : "transparent", border: `1px solid ${cycleMode === m ? "#d4af37" : "#1e1e1e"}`, color: cycleMode === m ? "#f8e49b" : "#444", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", padding: "6px 0", borderRadius: 4, cursor: "pointer", textTransform: "uppercase", transition: "all 0.15s" }}>
+                            style={{ flex: 1, background: cycleMode === m ? "rgba(212,175,55,0.1)" : "transparent", border: `1px solid ${cycleMode === m ? "#d4af37" : "rgba(255,255,255,0.08)"}`, color: cycleMode === m ? "#f8e49b" : "#444", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", padding: "6px 0", borderRadius: 999, cursor: "pointer", textTransform: "uppercase", transition: "all 0.2s" }}>
                             {lbl}
                           </button>
                         ))}
                       </div>
                       {cycleMode === "trough" && (<>
                       {/* Peak Shift slider */}
-                      <div style={{ padding: "10px 16px", borderBottom: "1px solid #1a1a1a", display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ padding: "10px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 10 }}>
                         <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Peak Shift</span>
                         <input type="range" min="0.5" max="1.5" step="0.01" value={cycleSlopeMult}
                           onChange={e => {
@@ -1902,10 +1917,10 @@ export default function App() {
                           }}
                           style={{ flex: 1, accentColor: "#d4af37", height: 2, cursor: "pointer" }} />
                         <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 36, textAlign: "right" }}>{cycleSlopeMult.toFixed(2)}x</span>
-                        <button onClick={() => setCycleSlopeMult(1.0)} style={{ background: "transparent", border: "1px solid #222", color: "#333", fontFamily: "'DM Mono', monospace", fontSize: 8, padding: "2px 6px", borderRadius: 3, cursor: "pointer" }}>↺</button>
+                        <button onClick={() => setCycleSlopeMult(1.0)} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.10)", color: "#333", fontFamily: "'DM Mono', monospace", fontSize: 8, padding: "2px 6px", borderRadius: 3, cursor: "pointer" }}>↺</button>
                       </div>
                       {/* Table header */}
-                      <div style={{ display: "grid", gridTemplateColumns: "28px 56px 1fr 40px", gap: 0, padding: "6px 16px", borderBottom: "1px solid #1a1a1a" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "28px 56px 1fr 40px", gap: 0, padding: "6px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                         {["#","Period","Accuracy",""].map((h, i) => (
                           <span key={i} style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.18em", color: "#2a2a2a", textTransform: "uppercase" }}>{h}</span>
                         ))}
@@ -1916,7 +1931,7 @@ export default function App() {
                           const isOn = selectedCycles.has(cyc.period);
                           return (
                             <div key={cyc.period} onClick={() => toggleCycle(cyc.period)}
-                              style={{ display: "grid", gridTemplateColumns: "28px 56px 1fr 40px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid #0f0f0f", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.05)" : "transparent", transition: "background 0.15s" }}>
+                              style={{ display: "grid", gridTemplateColumns: "28px 56px 1fr 40px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.04)", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.05)" : "transparent", transition: "background 0.15s" }}>
                               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#2a2a2a" }}>{i + 1}</span>
                               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: isOn ? "#f8e49b" : "#555", fontWeight: isOn ? 600 : 400 }}>{cyc.period}d</span>
                               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -1936,7 +1951,7 @@ export default function App() {
 
                       {cycleMode === "spectral" && (<>
                       {/* Detect button */}
-                      <div style={{ padding: "10px 16px", borderBottom: "1px solid #1a1a1a" }}>
+                      <div style={{ padding: "10px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                         <button onClick={runSpectralDetect} disabled={detecting}
                           style={{ width: "100%", background: "linear-gradient(135deg, #d4af37, #c59958)", border: "none", color: "#0a0a0a", fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.15em", padding: "9px 0", borderRadius: 5, cursor: detecting ? "wait" : "pointer", textTransform: "uppercase", opacity: detecting ? 0.6 : 1 }}>
                           {detecting ? "ANALYZING…" : spectral ? "↻ RE-DETECT CYCLES" : "⚡ DETECT DOMINANT CYCLES"}
@@ -1952,7 +1967,7 @@ export default function App() {
                         const sw = 248, sh = 44;
                         const bw = sw / sp.length;
                         return (
-                          <div style={{ padding: "8px 16px 4px", borderBottom: "1px solid #1a1a1a" }}>
+                          <div style={{ padding: "8px 16px 4px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                             <svg viewBox={`0 0 ${sw} ${sh}`} style={{ width: "100%", height: "auto", display: "block" }}>
                               {sp.map((s, i) => {
                                 const isSel = spectral.cycles.some(c => Math.abs(c.period - s.period) / c.period < 0.05 && selectedSpectral.has(c.period));
@@ -1970,7 +1985,7 @@ export default function App() {
                         );
                       })()}
                       {/* Spectral table header */}
-                      <div style={{ display: "grid", gridTemplateColumns: "24px 52px 1fr 44px 24px", gap: 0, padding: "6px 16px", borderBottom: "1px solid #1a1a1a" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "24px 52px 1fr 44px 24px", gap: 0, padding: "6px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                         {["#", "Period", "Strength", "Bartels", ""].map((h, i) => (
                           <span key={i} style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#2a2a2a", textTransform: "uppercase" }}>{h}</span>
                         ))}
@@ -1986,7 +2001,7 @@ export default function App() {
                           const isOn = selectedSpectral.has(cyc.period);
                           return (
                             <div key={cyc.period} onClick={() => toggleSpectral(cyc.period)}
-                              style={{ display: "grid", gridTemplateColumns: "24px 52px 1fr 44px 24px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid #0f0f0f", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.05)" : "transparent", transition: "background 0.15s" }}>
+                              style={{ display: "grid", gridTemplateColumns: "24px 52px 1fr 44px 24px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.04)", cursor: "pointer", background: isOn ? "rgba(212,175,55,0.05)" : "transparent", transition: "background 0.15s" }}>
                               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#2a2a2a" }}>{i + 1}</span>
                               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: isOn ? "#f8e49b" : "#555", fontWeight: isOn ? 600 : 400 }}>{cyc.period}{interval === "1d" ? "d" : "w"}</span>
                               <div style={{ display: "flex", alignItems: "center", gap: 6, paddingRight: 6 }}>
@@ -2091,7 +2106,7 @@ export default function App() {
 
               {/* Window statistics */}
               {windowStats && seasonSel && (
-                <div style={{ borderTop: "1px solid #1a1a1a", padding: "16px 24px 20px" }}>
+                <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", padding: "16px 24px 20px" }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
                     <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.12em", color: "#f8e49b" }}>
                       {fmtKey(seasonSel.startKey)} → {fmtKey(seasonSel.endKey)}
@@ -2109,7 +2124,7 @@ export default function App() {
                       ["Worst", `${windowStats.worst.toFixed(2)}%`, "#ef4444"],
                       ["Annualized", `${windowStats.annualized >= 0 ? "+" : ""}${windowStats.annualized.toFixed(1)}%`, "#d4af37"],
                     ].map(([lbl, val, clr], i) => (
-                      <div key={i} style={{ background: "#0d0d0d", border: "1px solid #1a1a1a", borderRadius: 8, padding: "10px 16px", minWidth: 104 }}>
+                      <div key={i} style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8, padding: "10px 16px", minWidth: 104 }}>
                         <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.2em", color: "#333", textTransform: "uppercase", marginBottom: 4 }}>{lbl}</div>
                         <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 16, fontWeight: 600, color: clr }}>{val}</div>
                       </div>
@@ -2131,7 +2146,7 @@ export default function App() {
 
               {/* Pattern scanner results */}
               {scanResults && (
-                <div style={{ borderTop: "1px solid #1a1a1a", padding: "16px 24px 20px" }}>
+                <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", padding: "16px 24px 20px" }}>
                   <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
                     {[["STRONGEST BULLISH WINDOWS", scanResults.longs, "#22c55e"], ["STRONGEST BEARISH WINDOWS", scanResults.shorts, "#ef4444"]].map(([title, list, clr]) => (
                       <div key={title} style={{ flex: 1, minWidth: 340 }}>
