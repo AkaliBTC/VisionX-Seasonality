@@ -832,22 +832,28 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
 // trough-pinned skewed wave over the FULL history + projection. Anchor comes
 // from the detected phase (bottom-to-bottom), skew from where the real tops sit
 // between two bottoms. Unit amplitude per cycle for a clean, readable wave.
-const buildSpectralComposite = (candles, cycles) => {
+const buildSpectralComposite = (candles, cycles, shift = 0, ampMode = "equal") => {
   if (!candles.length || !cycles.length) return [];
   const n = candles.length;
   const fwd = Math.min(Math.ceil(n * 0.5), 500);
+  // TRUE amplitude mode (vT-style): weight each cycle by its detected
+  // amplitude relative to the strongest — this creates the characteristic
+  // big-peak / small-peak / double-top structure that matches price precisely.
+  const maxAmp = Math.max(...cycles.map(c => c.amp || 1), 1e-12);
+  const wgt = cycles.map(c => ampMode === "true" ? Math.max((c.amp || maxAmp) / maxAmp, 0.2) : 1);
   const pts = [];
   for (let t = 0; t < n + fwd; t++) {
     let v = 0;
-    for (const c of cycles) {
+    for (let j = 0; j < cycles.length; j++) {
+      const c = cycles[j];
       const P = c.pf || c.period;
-      const anchor = c.anchor ?? 0;
+      const anchor = (c.anchor ?? 0) + shift;
       const split = c.skew ?? 0.5;
       const phase = (((t - anchor) % P) + P) % P / P;
       const distorted = phase < split
         ? (phase / split) * Math.PI
         : Math.PI + ((phase - split) / (1 - split)) * Math.PI;
-      v += -Math.cos(distorted);
+      v += wgt[j] * -Math.cos(distorted);
     }
     pts.push({ t, v, isFuture: t >= n });
   }
@@ -1761,6 +1767,9 @@ export default function App() {
   const [spectral, setSpectral] = useState(null);
   const [selectedSpectral, setSelectedSpectral] = useState(new Set());
   const [detecting, setDetecting] = useState(false);
+  const [spectralShift, setSpectralShift] = useState(0); // phase nudge in bars (vT's "p" param)
+  const [ampMode, setAmpMode] = useState("equal");       // 'equal' | 'true' amplitude weighting
+  const [analysisWin, setAnalysisWin] = useState(0);     // 0 = full history, else last N bars
   // Seasonal pattern (Seasonax-style)
   const [seasonSel, setSeasonSel] = useState(null); // {startKey, endKey}
   const [showCurYear, setShowCurYear] = useState(true);
@@ -1905,8 +1914,14 @@ export default function App() {
     if (candles.length < 80 || detecting) return;
     setDetecting(true);
     setTimeout(() => {
-      const res = detectCyclesSpectral(candles, 20);
+      // In-sample window (vT-style maxbars): detect on the last N bars only,
+      // then remap anchors back to absolute indices in the full history
+      const src = analysisWin && candles.length > analysisWin ? candles.slice(candles.length - analysisWin) : candles;
+      const offset = candles.length - src.length;
+      const res = detectCyclesSpectral(src, 20);
+      if (offset) res.cycles = res.cycles.map(c => ({ ...c, anchor: (c.anchor ?? 0) + offset }));
       setSpectral(res);
+      setSpectralShift(0);
       // Select only the single most accurate cycle — the user composes the
       // rest manually, guided by the ♪ harmonic hints
       setSelectedSpectral(new Set(res.cycles.length ? [res.cycles[0].period] : []));
@@ -1928,7 +1943,7 @@ export default function App() {
   const selectedSpectralObjs = spectral ? spectral.cycles.filter(c => selectedSpectral.has(c.period)) : [];
   const compositeWave = !showCycles ? []
     : cycleMode === "spectral"
-      ? (selectedSpectralObjs.length > 0 ? buildSpectralComposite(candles, selectedSpectralObjs) : [])
+      ? (selectedSpectralObjs.length > 0 ? buildSpectralComposite(candles, selectedSpectralObjs, spectralShift, ampMode) : [])
       : (selectedCycleObjs.length > 0 ? buildComposite(candles, selectedCycleObjs, cycleTweaks, cycleAnchorIdx, cycleSlopeMult) : []);
 
   // Reference wave of ONLY the largest selected cycle — the glow zones mark
@@ -1938,7 +1953,7 @@ export default function App() {
     if (cycleMode === "spectral") {
       if (selectedSpectralObjs.length <= 1) return compositeWave;
       const major = selectedSpectralObjs.reduce((a, b) => ((b.pf || b.period) > (a.pf || a.period) ? b : a));
-      return buildSpectralComposite(candles, [major]);
+      return buildSpectralComposite(candles, [major], spectralShift, ampMode);
     }
     if (selectedCycleObjs.length <= 1) return compositeWave;
     const major = selectedCycleObjs.reduce((a, b) => (b.period > a.period ? b : a));
@@ -2273,6 +2288,76 @@ export default function App() {
                           Only cycles with ≥3 confirmed swing lows · sorted by accuracy · bottom-to-bottom anchored · ♪ = harmonic (whole-number ratio)
                         </div>
                       </div>
+                      {/* In-sample window (vT maxbars) */}
+                      <div style={{ padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Window</span>
+                        {[[0, "ALL"], [2000, "2000"], [1200, "1200"]].map(([v, lbl]) => (
+                          <button key={lbl} onClick={() => { setAnalysisWin(v); }}
+                            style={{ flex: 1, background: analysisWin === v ? "rgba(212,175,55,0.10)" : "transparent", border: `1px solid ${analysisWin === v ? "rgba(212,175,55,0.55)" : "rgba(255,255,255,0.08)"}`, color: analysisWin === v ? "#f8e49b" : "#555", fontFamily: "'DM Mono', monospace", fontSize: 8, padding: "4px 0", borderRadius: 999, cursor: "pointer" }}>
+                            {lbl}
+                          </button>
+                        ))}
+                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 7, color: "#333" }}>bars</span>
+                      </div>
+                      {/* Amplitude weighting: equal (clean wave) vs true (vT precision) */}
+                      {spectral && spectral.cycles.length > 0 && (
+                        <div style={{ padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Amplitude</span>
+                          {[["equal", "EQUAL"], ["true", "TRUE"]].map(([m, lbl]) => (
+                            <button key={m} onClick={() => setAmpMode(m)}
+                              style={{ flex: 1, background: ampMode === m ? "rgba(212,175,55,0.10)" : "transparent", border: `1px solid ${ampMode === m ? "rgba(212,175,55,0.55)" : "rgba(255,255,255,0.08)"}`, color: ampMode === m ? "#f8e49b" : "#555", fontFamily: "'DM Mono', monospace", fontSize: 8, padding: "4px 0", borderRadius: 999, cursor: "pointer" }}>
+                              {lbl}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {/* Phase shift (vT's p parameter) */}
+                      {spectral && spectral.cycles.length > 0 && (() => {
+                        const maxSelP = Math.max(60, ...spectral.cycles.filter(c => selectedSpectral.has(c.period)).map(c => Math.round((c.pf || c.period) / 2)));
+                        return (
+                        <div style={{ padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 10 }}>
+                          <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Phase</span>
+                          <input type="range" min={-maxSelP} max={maxSelP} step="1" value={spectralShift}
+                            onChange={e => setSpectralShift(parseInt(e.target.value))}
+                            style={{ flex: 1, accentColor: "#d4af37", height: 2, cursor: "pointer" }} />
+                          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#d4af37", width: 34, textAlign: "right" }}>{spectralShift >= 0 ? "+" : ""}{spectralShift}b</span>
+                          <button onClick={() => setSpectralShift(0)} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.10)", color: "#333", fontFamily: "'DM Mono', monospace", fontSize: 8, padding: "2px 6px", borderRadius: 3, cursor: "pointer" }}>↺</button>
+                        </div>
+                        );
+                      })()}
+                      {/* Cycle Consensus Index */}
+                      {spectral && spectral.cycles.length > 0 && (() => {
+                        const nAll = candles.length;
+                        let bull = 0, bear = 0;
+                        for (const c of spectral.cycles) {
+                          const P = c.pf || c.period, split = c.skew ?? 0.5, anchor = c.anchor ?? 0;
+                          const val = (t) => {
+                            const ph = (((t - anchor) % P) + P) % P / P;
+                            const d = ph < split ? (ph / split) * Math.PI : Math.PI + ((ph - split) / (1 - split)) * Math.PI;
+                            return -Math.cos(d);
+                          };
+                          const step = Math.max(2, Math.round(P * 0.02));
+                          const dir = val(nAll) - val(nAll - step);
+                          const wgt = c.acc ?? c.bartels ?? 0.5;
+                          if (dir >= 0) bull += wgt; else bear += wgt;
+                        }
+                        const tot = bull + bear || 1;
+                        const bPct = (bull / tot) * 100, sPct = (bear / tot) * 100;
+                        return (
+                          <div style={{ padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                            <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", marginBottom: 6 }}>Cycle Consensus</div>
+                            {[["Bullish", bPct, "#22c55e"], ["Bearish", sPct, "#ef4444"]].map(([lbl, pct, clr]) => (
+                              <div key={lbl} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#555", width: 42 }}>{lbl}</span>
+                                <div style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.05)", borderRadius: 2 }}>
+                                  <div style={{ width: `${pct}%`, height: "100%", background: clr, borderRadius: 2, opacity: 0.8 }} />
+                                </div>
+                                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: clr, width: 28, textAlign: "right" }}>{pct.toFixed(0)}%</span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
                       {/* Spectrum strip */}
                       {spectral && spectral.spectrum.length > 2 && (() => {
                         const sp = spectral.spectrum;
