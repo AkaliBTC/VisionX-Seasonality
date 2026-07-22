@@ -241,7 +241,13 @@ function VixChart({ candles }) {
             const bodyTop = Y(Math.max(o, cl)), bodyBot = Y(Math.min(o, cl));
             return (
               <g key={i} opacity={hover != null && hover !== i ? 0.8 : 1}>
-                <line x1={x} y1={Y(h)} x2={x} y2={Y(l)} stroke={up ? "rgba(212,175,55,0.85)" : "rgba(178,181,190,0.7)"} strokeWidth="1" />
+                {/* Docht in zwei Segmenten — läuft nicht durch den (hollow) Body */}
+                {Y(h) < bodyTop - 0.5 && (
+                  <line x1={x} y1={Y(h)} x2={x} y2={bodyTop} stroke={up ? "rgba(212,175,55,0.85)" : "rgba(178,181,190,0.7)"} strokeWidth="1" />
+                )}
+                {Y(l) > bodyBot + 0.5 && (
+                  <line x1={x} y1={bodyBot} x2={x} y2={Y(l)} stroke={up ? "rgba(212,175,55,0.85)" : "rgba(178,181,190,0.7)"} strokeWidth="1" />
+                )}
                 <rect x={x - cw / 2} y={bodyTop} width={cw} height={Math.max(1, bodyBot - bodyTop)}
                   fill={up ? "transparent" : "#9598a1"}
                   stroke={up ? "#d4af37" : "#b2b5be"} strokeWidth="1" />
