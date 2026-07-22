@@ -1736,7 +1736,7 @@ const YEAR_PRESETS = [
   { label: "₿ Halving",    test: y => y % 4 === 0 },
 ];
 
-export default function App() {
+export default function App({ nav }) {
   const [input, setInput] = useState("");
   const [ticker, setTicker] = useState("");
   const [interval, setInterval_] = useState("1d");
@@ -2057,7 +2057,7 @@ export default function App() {
           <div className="logo-divider" />
           <div>
             <div className="logo-name">VISIONX</div>
-            <div className="logo-sub">Seasonality</div>
+            {nav || <div className="logo-sub">Seasonality</div>}
           </div>
         </div>
         {candles.length > 0 && (
