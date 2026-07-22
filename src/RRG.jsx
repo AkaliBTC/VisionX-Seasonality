@@ -151,6 +151,16 @@ const tailOf = (full, offset, tailLen) => {
   return tail.length >= 2 ? tail : null;
 };
 
+// Interpolierter Tail für fließende Animation (offset darf float sein)
+const tailAtFloat = (full, offsetF, tailLen) => {
+  const k = Math.floor(offsetF), f = offsetF - k;
+  const a = tailOf(full, k, tailLen);
+  if (f < 1e-4) return a;
+  const b = tailOf(full, k + 1, tailLen);
+  if (!a || !b || a.length !== b.length) return a || b;
+  return a.map((p, i) => ({ x: p.x * (1 - f) + b[i].x * f, y: p.y * (1 - f) + b[i].y * f, t: p.t }));
+};
+
 const quadrantOf = (x, y) =>
   x >= 100 && y >= 100 ? "LEADING" : x >= 100 ? "WEAKENING" : y >= 100 ? "IMPROVING" : "LAGGING";
 const QUAD_COLOR = { LEADING: "#22c55e", WEAKENING: "#facc15", LAGGING: "#ef4444", IMPROVING: "#63b6ff" };
@@ -182,10 +192,12 @@ const smoothSegs = (pts) => {
 
 const fmtDate = t => new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
-// ── BENCHMARK-PREISCHART (StockCharts-Style, Fenster markiert) ───────────────
-function BenchChart({ series, label, offset, tailLen }) {
+// ── BENCHMARK-PREISCHART (nur scrubbare Range · Fenster direkt verschiebbar) ─
+function BenchChart({ series, label, offset, tailLen, onScrub, maxOffset }) {
   const W = 1480, H = 110, PADL = 52, PADR = 18, PADT = 8, PADB = 4;
   const plotW = W - PADL - PADR, plotH = H - PADT - PADB;
+  const svgRef = useRef(null);
+  const draggingRef = useRef(false);
   const n = series.length;
   if (n < 10) return null;
   let min = Infinity, max = -Infinity;
@@ -194,11 +206,29 @@ function BenchChart({ series, label, offset, tailLen }) {
   const Y = c => PADT + (1 - (c - min) / (max - min || 1)) * plotH;
   const path = series.map(([, c], i) => `${i ? "L" : "M"} ${X(i).toFixed(1)} ${Y(c).toFixed(1)}`).join(" ");
   const area = `${path} L ${X(n - 1)} ${H - PADB} L ${X(0)} ${H - PADB} Z`;
-  const end = n - 1 - offset, start = Math.max(0, end - tailLen + 1);
+  const off = Math.round(offset);
+  const end = n - 1 - off, start = Math.max(0, end - tailLen + 1);
   const last = series[end] || series[n - 1];
 
+  const scrubTo = (clientX) => {
+    const r = svgRef.current.getBoundingClientRect();
+    const px = ((clientX - r.left) / r.width) * W;
+    const idx = Math.round(((px - PADL) / plotW) * (n - 1));
+    const endIdx = Math.min(n - 1, Math.max(tailLen - 1, idx));
+    onScrub(Math.min(maxOffset, Math.max(0, (n - 1) - endIdx)));
+  };
+  const onPointerDown = (e) => {
+    draggingRef.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    scrubTo(e.clientX);
+  };
+  const onPointerMove = (e) => { if (draggingRef.current) scrubTo(e.clientX); };
+  const onPointerUp = () => { draggingRef.current = false; };
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
+      onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+      style={{ width: "100%", display: "block", cursor: "ew-resize", touchAction: "none" }}>
       <defs>
         <linearGradient id="bench-fill" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="rgba(212,175,55,0.16)" /><stop offset="100%" stopColor="rgba(212,175,55,0)" />
@@ -206,14 +236,15 @@ function BenchChart({ series, label, offset, tailLen }) {
       </defs>
       <path d={area} fill="url(#bench-fill)" />
       <path d={path} fill="none" stroke="rgba(212,175,55,0.55)" strokeWidth="1.4" />
-      {/* Aktives Tail-Fenster */}
+      {/* Aktives Tail-Fenster — direkt verschiebbar */}
       <rect x={X(start)} y={PADT} width={Math.max(2, X(end) - X(start))} height={plotH}
-        fill="rgba(212,175,55,0.1)" stroke="rgba(212,175,55,0.45)" strokeWidth="0.75" />
-      <text x={PADL} y={PADT + 11} fill="#f8e49b" style={{ font: "700 11px 'Bebas Neue', sans-serif", letterSpacing: "0.15em" }}>
+        fill="rgba(212,175,55,0.13)" stroke="rgba(212,175,55,0.6)" strokeWidth="1" rx="2" />
+      <line x1={X(end)} y1={PADT} x2={X(end)} y2={PADT + plotH} stroke="#f8e49b" strokeWidth="1.5" />
+      <text x={PADL} y={PADT + 11} fill="#f8e49b" style={{ font: "700 11px 'Bebas Neue', sans-serif", letterSpacing: "0.15em", pointerEvents: "none" }}>
         {label}
       </text>
-      <text x={PADL + 52} y={PADT + 11} fill="#555" style={{ font: "500 8.5px 'DM Mono', monospace", letterSpacing: "0.08em" }}>
-        {last ? `${last[1].toFixed(2)} · ${tailLen} PERIODS ENDING ${fmtDate(series[end]?.[0] || series[n - 1][0]).toUpperCase()}` : ""}
+      <text x={PADL + 52} y={PADT + 11} fill="#555" style={{ font: "500 8.5px 'DM Mono', monospace", letterSpacing: "0.08em", pointerEvents: "none" }}>
+        {last ? `${last[1].toFixed(2)} · ${tailLen} PERIODS ENDING ${fmtDate(series[end]?.[0] || series[n - 1][0]).toUpperCase()} · DRAG WINDOW` : ""}
       </text>
     </svg>
   );
@@ -524,13 +555,20 @@ export default function RRG() {
     try { localStorage.setItem(PACK_STORAGE_KEY, JSON.stringify(pack)); } catch { /* private mode */ }
   }, [pack]);
 
-  // Animate: Fenster läuft aus der Vergangenheit in die Gegenwart
+  // Animate: fließend via requestAnimationFrame (interpolierte Frames)
   useEffect(() => {
     if (!playing) return;
-    if (offset <= 0) { setPlaying(false); return; }
-    const id = setTimeout(() => setOffset(o => Math.max(0, o - 1)), 240);
-    return () => clearTimeout(id);
-  }, [playing, offset]);
+    let raf; let lastT = performance.now();
+    const SPEED = 5; // Perioden pro Sekunde
+    const step = (now) => {
+      const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
+      setOffset(o => Math.max(0, o - dt * SPEED));
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [playing]);
+  useEffect(() => { if (playing && offset <= 0) setPlaying(false); }, [playing, offset]);
 
   const preset = PRESETS.find(p => p.id === presetId);
   const drillSector = drill ? SECTORS.find(s => s.etf === drill) : null;
@@ -608,10 +646,10 @@ export default function RRG() {
     }).filter(Boolean);
   }, [raw, universe, interval_, benchSeries, params.window, params.momP]);
 
-  // Anzeige-Tails am aktuellen Offset
+  // Anzeige-Tails am aktuellen (float-)Offset — interpoliert für smooth Animation
   const items = useMemo(() =>
     fullItems.map(it => {
-      const tail = tailOf(it.full, offset, tailLen);
+      const tail = tailAtFloat(it.full, offset, tailLen);
       return tail ? { ...it, tail } : null;
     }).filter(Boolean),
   [fullItems, offset, tailLen]);
@@ -740,11 +778,11 @@ export default function RRG() {
             {playing ? "⏸ PAUSE" : "▶ ANIMATE"}
           </button>
           <span style={{ fontSize: 9, letterSpacing: "0.18em", color: "#888", fontFamily: "'Montserrat', sans-serif", fontWeight: 700 }}>HISTORY</span>
-          <input type="range" min={0} max={MAX_OFFSET} value={MAX_OFFSET - offset}
+          <input type="range" min={0} max={MAX_OFFSET} value={MAX_OFFSET - Math.round(offset)}
             onChange={e => { setPlaying(false); setOffset(MAX_OFFSET - +e.target.value); }}
             style={{ width: 150, accentColor: GOLD }} />
           {offset > 0 && (
-            <span style={{ fontSize: 9.5, color: "#f8e49b", fontFamily: "'DM Mono', monospace", letterSpacing: "0.08em" }}>−{offset}{interval_ === "1wk" ? "W" : "D"}</span>
+            <span style={{ fontSize: 9.5, color: "#f8e49b", fontFamily: "'DM Mono', monospace", letterSpacing: "0.08em" }}>−{Math.round(offset)}{interval_ === "1wk" ? "W" : "D"}</span>
           )}
           <div style={divider} />
           <button style={pill(interval_ === "1d")} onClick={() => { setInterval_("1d"); setOffset(0); setPlaying(false); }}>Daily</button>
@@ -806,8 +844,9 @@ export default function RRG() {
           <div style={{ ...glass, padding: "12px 14px 4px", flex: "1 1 760px", minWidth: 360 }}>
             {benchSeries && benchSeries.length > 10 && (
               <div style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", marginBottom: 6 }}>
-                <BenchChart series={benchSeries.slice(-Math.min(benchSeries.length, interval_ === "1wk" ? 104 : 260))}
-                  label={benchLabel} offset={offset} tailLen={tailLen} />
+                <BenchChart series={benchSeries.slice(-Math.min(benchSeries.length, MAX_OFFSET + tailLen))}
+                  label={benchLabel} offset={offset} tailLen={tailLen} maxOffset={MAX_OFFSET}
+                  onScrub={(o) => { setPlaying(false); setOffset(o); }} />
               </div>
             )}
             {items.length > 0 ? (
@@ -901,7 +940,7 @@ export default function RRG() {
                   const h = it.tail[it.tail.length - 1];
                   const q = quadrantOf(h.x, h.y);
                   const dist = Math.hypot(h.x - 100, h.y - 100);
-                  const end = it.full.xs.length - 1 - offset;
+                  const end = it.full.xs.length - 1 - Math.round(offset);
                   const start = Math.max(0, end - tailLen + 1);
                   const price = it.full.px[end];
                   const chg = it.full.px[start] ? (price / it.full.px[start] - 1) * 100 : null;
