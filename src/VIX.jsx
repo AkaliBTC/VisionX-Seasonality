@@ -62,7 +62,9 @@ function VixChart({ candles }) {
   const dragRef = useRef(null);
   const [hover, setHover] = useState(null);
   const n = candles.length;
-  const [view, setView] = useState({ a: 0, b: n });   // sichtbarer Index-Bereich (float)
+  const PADN = Math.max(4, Math.round(n * 0.04));      // Freiraum rechts (in Candles)
+  const NMAX = n + PADN;
+  const [view, setView] = useState({ a: 0, b: n + Math.max(4, Math.round(n * 0.04)) });
 
   // Temporäres Drawing-Tool (nur im Chart, nicht persistiert)
   const [tool, setTool] = useState("pan");             // "pan" | "free" | "line"
@@ -70,12 +72,12 @@ function VixChart({ candles }) {
   const [draft, setDraft] = useState(null);
 
   // Bei neuen Daten / Aggregation: Range + Zeichnungen zurücksetzen
-  useEffect(() => { setView({ a: 0, b: n }); setDrawings([]); setDraft(null); }, [n]);
+  useEffect(() => { setView({ a: 0, b: NMAX }); setDrawings([]); setDraft(null); }, [n, NMAX]);
 
   const a = Math.max(0, Math.min(view.a, n - 2));
-  const b = Math.max(a + 2, Math.min(view.b, n));
+  const b = Math.max(a + 2, Math.min(view.b, NMAX));
   const span = b - a;
-  const zoomed = span < n - 0.5;
+  const zoomed = span < NMAX - 0.5;
 
   // Sichtbare Candles → Auto-Y-Skalierung
   const [yMin, yMax] = useMemo(() => {
@@ -97,15 +99,15 @@ function VixChart({ candles }) {
   const zoomAt = useCallback((factor, px) => {
     setView(v => {
       const s0 = v.b - v.a;
-      const s1 = Math.max(15, Math.min(n, s0 / factor));
+      const s1 = Math.max(15, Math.min(NMAX, s0 / factor));
       const focus = v.a + ((px - PADL) / plotW) * s0;
       let na = focus - (focus - v.a) * (s1 / s0);
       let nb = na + s1;
       if (na < 0) { nb -= na; na = 0; }
-      if (nb > n) { na -= nb - n; nb = n; }
-      return { a: Math.max(0, na), b: Math.min(n, nb) };
+      if (nb > NMAX) { na -= nb - NMAX; nb = NMAX; }
+      return { a: Math.max(0, na), b: Math.min(NMAX, nb) };
     });
-  }, [n, plotW]);
+  }, [NMAX, plotW]);
 
   useEffect(() => {
     const el = svgRef.current;
@@ -158,7 +160,7 @@ function VixChart({ candles }) {
       if (Math.abs(e.clientX - d.x) > 3) d.moved = true;
       let na = d.a - dxIdx, nb = d.b - dxIdx;
       if (na < 0) { nb -= na; na = 0; }
-      if (nb > n) { na -= nb - n; nb = n; }
+      if (nb > NMAX) { na -= nb - NMAX; nb = NMAX; }
       setView({ a: na, b: nb });
       setHover(null);
       return;
@@ -239,10 +241,10 @@ function VixChart({ candles }) {
             const bodyTop = Y(Math.max(o, cl)), bodyBot = Y(Math.min(o, cl));
             return (
               <g key={i} opacity={hover != null && hover !== i ? 0.8 : 1}>
-                <line x1={x} y1={Y(h)} x2={x} y2={Y(l)} stroke={up ? "rgba(232,217,160,0.8)" : "rgba(130,130,130,0.65)"} strokeWidth="1" />
+                <line x1={x} y1={Y(h)} x2={x} y2={Y(l)} stroke={up ? "rgba(212,175,55,0.85)" : "rgba(178,181,190,0.7)"} strokeWidth="1" />
                 <rect x={x - cw / 2} y={bodyTop} width={cw} height={Math.max(1, bodyBot - bodyTop)}
-                  fill={up ? "rgba(18,18,18,0.92)" : "#3a3a3a"}
-                  stroke={up ? "#e8d9a0" : "#6f6f6f"} strokeWidth="1" />
+                  fill={up ? "transparent" : "#9598a1"}
+                  stroke={up ? "#d4af37" : "#b2b5be"} strokeWidth="1" />
               </g>
             );
           })}
@@ -325,7 +327,7 @@ function VixChart({ candles }) {
           onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "#c9c9c9"; }}>−</button>
         {zoomed && (
           <button style={{ ...zoomBtn, color: GOLD, borderColor: "rgba(212,175,55,0.4)" }}
-            onClick={() => setView({ a: 0, b: n })} title="Range zurücksetzen">⟲</button>
+            onClick={() => setView({ a: 0, b: NMAX })} title="Range zurücksetzen">⟲</button>
         )}
       </div>
       {zoomed && (
