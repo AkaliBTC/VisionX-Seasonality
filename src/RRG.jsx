@@ -1,13 +1,14 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  VISIONX ANALYTICS · RELATIVE ROTATION GRAPH v2
-//  Preset-System: SPDR Sectors (SPY-Basis, Drilldown mit Sektor-ETF-Basis),
-//  Crypto (BTC-Basis, Alts rotieren gegen BTC) — weitere Presets unten anlegen.
-//  Manuelles Add/Remove je View · sortierbare Tabelle · Tail 5 (max 10).
+//  VISIONX ANALYTICS · RELATIVE ROTATION GRAPH v3
+//  Presets (SPDR / Countries / Crypto) · Pack Manager (localStorage-persistiert)
+//  Großer zoombarer Chart (Wheel + Drag + Buttons) · Smooth Tails · Liquid Glass
 // ═════════════════════════════════════════════════════════════════════════════
 
 const GOLD = "#d4af37";
+const PACK_STORAGE_KEY = "vsx_rrg_pack_v1";
 
 // ── SEKTOR-KONFIG ────────────────────────────────────────────────────────────
 const SECTORS = [
@@ -24,7 +25,7 @@ const SECTORS = [
   { etf: "XLC",  name: "Comm. Serv.",   holdings: ["META","GOOGL","NFLX","DIS","CMCSA","T","VZ","TMUS","EA","WBD"] },
 ];
 
-// ── PRESETS — hier neue Universen registrieren ───────────────────────────────
+// ── PRESETS ──────────────────────────────────────────────────────────────────
 const PRESETS = [
   {
     id: "sectors", label: "SPDR SECTORS", bench: "SPY", drillable: true,
@@ -32,7 +33,6 @@ const PRESETS = [
   },
   {
     id: "countries", label: "COUNTRIES", bench: "SPY", drillable: false,
-    // USD-notierte Länder-ETFs — währungsbereinigt, sauber gegen SPY vergleichbar
     members: [
       ["EWG","GER"],["EWQ","FRA"],["EWU","UK"],["EWL","SUI"],["EWI","ITA"],["EWP","ESP"],
       ["EWJ","JPN"],["EWY","KOR"],["EWT","TWN"],["MCHI","CHN"],["EWH","HK"],["INDA","IND"],
@@ -41,14 +41,13 @@ const PRESETS = [
   },
   {
     id: "crypto", label: "CRYPTO", bench: "BTC-USD", drillable: false, cryptoSuffix: true,
-    // Eure Crypto-Watchlist — Alts rotieren gegen BTC (Binance-first via API)
     members: ["ETH","SOL","LINK","TRX","SUI","TAO","XRP","XLM","HYPE","FET","DOGE","PEPE","AKT","ZEC"]
       .map(c => ({ symbol: `${c}-USD`, label: c })),
   },
 ];
 
-// ── VSX PACK · eure Watchlist-Titel je Sektor (Toggle im Drilldown) ──────────
-const VSX_PACK = {
+// ── VSX PACK DEFAULTS · eure Watchlist je Sektor (im Pack Manager editierbar) ─
+const VSX_PACK_DEFAULTS = {
   XLK:  ["ADBE","AMD","AAPL","INTC","MSFT","NVDA","PLTR","QBTS","RGTI","SNDK","WDAY","1810.HK"],
   XLF:  ["AXP","BRK-B","CRCL","COIN","FIS","FI","GS","JPM"],
   XLV:  ["BAYN.DE","HIMS","ILMN","JNJ","MRNA","MOH","NOVO-B.CO","PFE","REGN","UNH"],
@@ -60,6 +59,14 @@ const VSX_PACK = {
   XLRE: ["IRM"],
   XLU:  [],
   XLC:  ["ASTS","GOOGL","META","NFLX","RDDT","TMUS","0700.HK","TME"],
+};
+
+const loadPack = () => {
+  try {
+    const raw = localStorage.getItem(PACK_STORAGE_KEY);
+    if (raw) return { ...VSX_PACK_DEFAULTS, ...JSON.parse(raw) };
+  } catch { /* defaults */ }
+  return { ...VSX_PACK_DEFAULTS };
 };
 
 const SECTOR_COLORS = {
@@ -144,12 +151,25 @@ const fetchHistories = async (symbols) => {
   return { data: out, failed };
 };
 
-// ── CHART ────────────────────────────────────────────────────────────────────
-function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen }) {
-  const SIZE = 680, PAD = 48;
-  const plot = SIZE - PAD * 2;
+// ── SMOOTH TAIL · Catmull-Rom → Cubic-Bezier-Segmente (runde Moves) ──────────
+const smoothSegs = (pts) => {
+  const segs = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+    segs.push(`M ${p1.x} ${p1.y} C ${p1.x + (p2.x - p0.x) / 6} ${p1.y + (p2.y - p0.y) / 6}, ${p2.x - (p3.x - p1.x) / 6} ${p2.y - (p3.y - p1.y) / 6}, ${p2.x} ${p2.y}`);
+  }
+  return segs;
+};
 
-  const ext = useMemo(() => {
+// ── CHART (zoombar: Wheel · Drag · Buttons) ──────────────────────────────────
+function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen }) {
+  const SIZE = 680, PAD = 46;
+  const plot = SIZE - PAD * 2;
+  const svgRef = useRef(null);
+  const dragRef = useRef(null);
+  const [view, setView] = useState({ cx: 100, cy: 100, z: 1 });
+
+  const baseExt = useMemo(() => {
     let m = 2;
     items.forEach(it => it.tail.forEach(p => {
       m = Math.max(m, Math.abs(p.x - 100), Math.abs(p.y - 100));
@@ -157,79 +177,287 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen }) {
     return m * 1.15;
   }, [items]);
 
-  const X = v => PAD + ((v - (100 - ext)) / (2 * ext)) * plot;
-  const Y = v => PAD + (1 - (v - (100 - ext)) / (2 * ext)) * plot;
+  const half = baseExt / view.z;
+  const X = v => PAD + ((v - (view.cx - half)) / (2 * half)) * plot;
+  const Y = v => PAD + (1 - (v - (view.cy - half)) / (2 * half)) * plot;
+  const invX = px => (view.cx - half) + ((px - PAD) / plot) * 2 * half;
+  const invY = py => (view.cy - half) + (1 - (py - PAD) / plot) * 2 * half;
+
+  const zoomAt = useCallback((factor, px, py) => {
+    setView(v => {
+      const z = Math.min(8, Math.max(1, v.z * factor));
+      if (z === 1) return { cx: 100, cy: 100, z: 1 };
+      const h0 = baseExt / v.z, h1 = baseExt / z;
+      const dx = px != null ? (v.cx - h0 + ((px - PAD) / plot) * 2 * h0) : v.cx;
+      const dy = py != null ? (v.cy - h0 + (1 - (py - PAD) / plot) * 2 * h0) : v.cy;
+      return { z, cx: dx - (dx - v.cx) * (h1 / h0), cy: dy - (dy - v.cy) * (h1 / h0) };
+    });
+  }, [baseExt, plot]);
+
+  // Wheel-Zoom (non-passive, damit die Seite nicht mitscrollt)
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const onWheel = (e) => {
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      const px = ((e.clientX - r.left) / r.width) * SIZE;
+      const py = ((e.clientY - r.top) / r.height) * SIZE;
+      zoomAt(e.deltaY < 0 ? 1.18 : 1 / 1.18, px, py);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [zoomAt]);
+
+  const onPointerDown = (e) => {
+    if (view.z === 1) return;
+    dragRef.current = { x: e.clientX, y: e.clientY, cx: view.cx, cy: view.cy };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const r = svgRef.current.getBoundingClientRect();
+    const scale = (2 * half) / (plot * (r.width / SIZE));
+    setView(v => ({ ...v, cx: d.cx - (e.clientX - d.x) * scale, cy: d.cy + (e.clientY - d.y) * scale }));
+  };
+  const onPointerUp = () => { dragRef.current = null; };
+
+  const zoomBtn = {
+    width: 32, height: 32, borderRadius: 9, cursor: "pointer",
+    background: "rgba(18,18,18,0.75)", border: "1px solid rgba(255,255,255,0.1)",
+    color: "#c9c9c9", fontSize: 14, fontFamily: "'DM Mono', monospace",
+    backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+    display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.2s",
+  };
+
+  // Gridlines
+  const gridStep = half >= 4 ? 2 : half >= 2 ? 1 : 0.5;
+  const gridLines = [];
+  for (let g = Math.ceil((view.cx - half) / gridStep) * gridStep; g <= view.cx + half; g += gridStep) {
+    if (Math.abs(g - 100) > 1e-9) gridLines.push({ o: "v", v: g });
+  }
+  for (let g = Math.ceil((view.cy - half) / gridStep) * gridStep; g <= view.cy + half; g += gridStep) {
+    if (Math.abs(g - 100) > 1e-9) gridLines.push({ o: "h", v: g });
+  }
 
   return (
-    <svg viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ width: "100%", maxWidth: 720, display: "block" }}>
-      <defs>
-        <radialGradient id="rrg-vig" cx="50%" cy="50%" r="72%">
-          <stop offset="70%" stopColor="transparent" />
-          <stop offset="100%" stopColor="rgba(0,0,0,0.5)" />
-        </radialGradient>
-      </defs>
+    <div style={{ position: "relative" }}>
+      <svg ref={svgRef} viewBox={`0 0 ${SIZE} ${SIZE}`}
+        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+        style={{ width: "100%", maxWidth: 960, display: "block", margin: "0 auto", touchAction: "none", cursor: view.z > 1 ? "grab" : "default" }}>
+        <defs>
+          <clipPath id="rrg-clip"><rect x={PAD} y={PAD} width={plot} height={plot} rx="3" /></clipPath>
+          <radialGradient id="rrg-glow-lead" cx="100%" cy="0%" r="90%">
+            <stop offset="0%" stopColor="rgba(34,197,94,0.09)" /><stop offset="60%" stopColor="transparent" />
+          </radialGradient>
+          <radialGradient id="rrg-glow-lag" cx="0%" cy="100%" r="90%">
+            <stop offset="0%" stopColor="rgba(239,68,68,0.08)" /><stop offset="60%" stopColor="transparent" />
+          </radialGradient>
+          <radialGradient id="rrg-glow-imp" cx="0%" cy="0%" r="90%">
+            <stop offset="0%" stopColor="rgba(99,182,255,0.07)" /><stop offset="60%" stopColor="transparent" />
+          </radialGradient>
+          <radialGradient id="rrg-glow-weak" cx="100%" cy="100%" r="90%">
+            <stop offset="0%" stopColor="rgba(250,204,21,0.06)" /><stop offset="60%" stopColor="transparent" />
+          </radialGradient>
+        </defs>
 
-      {/* Quadranten */}
-      <rect x={X(100)} y={PAD} width={plot / 2} height={plot / 2} fill="rgba(34,197,94,0.05)" />
-      <rect x={X(100)} y={Y(100)} width={plot / 2} height={plot / 2} fill="rgba(250,204,21,0.045)" />
-      <rect x={PAD} y={Y(100)} width={plot / 2} height={plot / 2} fill="rgba(239,68,68,0.05)" />
-      <rect x={PAD} y={PAD} width={plot / 2} height={plot / 2} fill="rgba(99,182,255,0.05)" />
-      <rect x={PAD} y={PAD} width={plot} height={plot} fill="url(#rrg-vig)" pointerEvents="none" />
-      <rect x={PAD} y={PAD} width={plot} height={plot} fill="none" stroke="rgba(255,255,255,0.09)" rx="2" />
-      <line x1={X(100)} y1={PAD} x2={X(100)} y2={SIZE - PAD} stroke="rgba(255,255,255,0.15)" strokeDasharray="2 5" />
-      <line x1={PAD} y1={Y(100)} x2={SIZE - PAD} y2={Y(100)} stroke="rgba(255,255,255,0.15)" strokeDasharray="2 5" />
+        {/* Plot-Fläche: Glass-Gradient statt toter Fläche */}
+        <rect x={PAD} y={PAD} width={plot} height={plot} rx="3" fill="rgba(255,255,255,0.015)" />
+        <g clipPath="url(#rrg-clip)">
+          {/* Quadranten-Glows von den Ecken */}
+          <rect x={X(100)} y={PAD} width={Math.max(0, SIZE - PAD - X(100))} height={Math.max(0, Y(100) - PAD)} fill="url(#rrg-glow-lead)" />
+          <rect x={X(100)} y={Y(100)} width={Math.max(0, SIZE - PAD - X(100))} height={Math.max(0, SIZE - PAD - Y(100))} fill="url(#rrg-glow-weak)" />
+          <rect x={PAD} y={Y(100)} width={Math.max(0, X(100) - PAD)} height={Math.max(0, SIZE - PAD - Y(100))} fill="url(#rrg-glow-lag)" />
+          <rect x={PAD} y={PAD} width={Math.max(0, X(100) - PAD)} height={Math.max(0, Y(100) - PAD)} fill="url(#rrg-glow-imp)" />
 
-      {[["LEADING", SIZE - PAD - 10, PAD + 20, "end", "#22c55e"], ["WEAKENING", SIZE - PAD - 10, SIZE - PAD - 12, "end", "#facc15"],
-        ["LAGGING", PAD + 10, SIZE - PAD - 12, "start", "#ef4444"], ["IMPROVING", PAD + 10, PAD + 20, "start", "#63b6ff"]]
-        .map(([label, x, y, anchor, col]) => (
-          <text key={label} x={x} y={y} textAnchor={anchor} fill={col} opacity={0.5}
-            style={{ font: "700 10.5px Montserrat, sans-serif", letterSpacing: "0.26em" }}>{label}</text>
-        ))}
-      <text x={SIZE / 2} y={SIZE - 13} textAnchor="middle" fill="#4a4a4a" style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>JDK RS-RATIO →</text>
-      <text x={15} y={SIZE / 2} textAnchor="middle" fill="#4a4a4a" transform={`rotate(-90 15 ${SIZE / 2})`} style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>JDK RS-MOMENTUM →</text>
+          {/* Feines Grid */}
+          {gridLines.map((g, i) => g.o === "v"
+            ? <line key={i} x1={X(g.v)} y1={PAD} x2={X(g.v)} y2={SIZE - PAD} stroke="rgba(255,255,255,0.028)" />
+            : <line key={i} x1={PAD} y1={Y(g.v)} x2={SIZE - PAD} y2={Y(g.v)} stroke="rgba(255,255,255,0.028)" />)}
 
-      {items.map(it => {
-        const dim = hovered && hovered !== it.symbol;
-        const head = it.tail[it.tail.length - 1];
-        return (
-          <g key={it.symbol} opacity={dim ? 0.12 : 1} style={{ transition: "opacity 0.25s", cursor: onNodeClick ? "pointer" : "default" }}
-            onMouseEnter={() => setHovered(it.symbol)} onMouseLeave={() => setHovered(null)}
-            onClick={() => onNodeClick && onNodeClick(it)}>
-            {it.tail.slice(0, -1).map((p, i) => {
-              const n = it.tail[i + 1];
-              return <line key={i} x1={X(p.x)} y1={Y(p.y)} x2={X(n.x)} y2={Y(n.y)}
-                stroke={it.color} strokeWidth={it.vsx ? 2.6 : 1.9}
-                opacity={0.14 + 0.78 * (i / Math.max(1, tailLen - 1))} strokeLinecap="round" />;
-            })}
-            {it.tail.slice(0, -1).map((p, i) => (
-              <circle key={"d" + i} cx={X(p.x)} cy={Y(p.y)} r={it.vsx ? 2.3 : 1.9} fill={it.color} opacity={0.2 + 0.6 * (i / Math.max(1, tailLen - 1))} />
-            ))}
-            {it.vsx && <circle cx={X(head.x)} cy={Y(head.y)} r={12} fill="none" stroke={GOLD} strokeWidth={1} opacity={0.55} />}
-            <circle cx={X(head.x)} cy={Y(head.y)} r={it.vsx ? 6.8 : 5.6} fill={it.color}
-              stroke={it.vsx ? GOLD : "#0a0a0a"} strokeWidth={it.vsx ? 2 : 1.5}
-              style={it.vsx ? { filter: "drop-shadow(0 0 7px rgba(212,175,55,0.7))" } : {}} />
-            <text x={X(head.x)} y={Y(head.y) - 12} textAnchor="middle"
-              fill={it.vsx ? "#f8e49b" : "#eaeaea"}
-              style={{ font: `700 ${it.vsx ? 11.5 : 10.5}px Montserrat, sans-serif`, letterSpacing: "0.06em", paintOrder: "stroke", stroke: "#0a0a0add", strokeWidth: 3.5 }}>
-              {it.label}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
+          {/* Achsen bei 100 */}
+          <line x1={X(100)} y1={PAD} x2={X(100)} y2={SIZE - PAD} stroke="rgba(255,255,255,0.16)" strokeDasharray="2 6" />
+          <line x1={PAD} y1={Y(100)} x2={SIZE - PAD} y2={Y(100)} stroke="rgba(255,255,255,0.16)" strokeDasharray="2 6" />
+
+          {/* Tails + Nodes */}
+          {items.map(it => {
+            const dim = hovered && hovered !== it.symbol;
+            const head = it.tail[it.tail.length - 1];
+            const pts = it.tail.map(p => ({ x: X(p.x), y: Y(p.y) }));
+            const segs = smoothSegs(pts);
+            return (
+              <g key={it.symbol} opacity={dim ? 0.1 : 1} style={{ transition: "opacity 0.25s", cursor: onNodeClick ? "pointer" : undefined }}
+                onMouseEnter={() => setHovered(it.symbol)} onMouseLeave={() => setHovered(null)}
+                onClick={() => onNodeClick && onNodeClick(it)}>
+                {segs.map((d, i) => (
+                  <path key={i} d={d} fill="none" stroke={it.color}
+                    strokeWidth={it.vsx ? 2.2 : 1.9}
+                    opacity={0.13 + 0.75 * (i / Math.max(1, segs.length - 1))}
+                    strokeLinecap="round" />
+                ))}
+                {pts.slice(0, -1).map((p, i) => (
+                  <circle key={"d" + i} cx={p.x} cy={p.y} r={1.8} fill={it.color} opacity={0.18 + 0.55 * (i / Math.max(1, tailLen - 1))} />
+                ))}
+                {it.vsx && <circle cx={X(head.x)} cy={Y(head.y)} r={9.5} fill="none" stroke={GOLD} strokeWidth={0.75} opacity={0.45} />}
+                <circle cx={X(head.x)} cy={Y(head.y)} r={it.vsx ? 5.4 : 5.4} fill={it.color}
+                  stroke={it.vsx ? GOLD : "#0a0a0a"} strokeWidth={it.vsx ? 1.2 : 1.4}
+                  style={it.vsx ? { filter: "drop-shadow(0 0 5px rgba(212,175,55,0.55))" } : {}} />
+                <text x={X(head.x)} y={Y(head.y) - 11} textAnchor="middle"
+                  fill={it.vsx ? "#f8e49b" : "#eaeaea"}
+                  style={{ font: `700 ${it.vsx ? 11 : 10.5}px Montserrat, sans-serif`, letterSpacing: "0.06em", paintOrder: "stroke", stroke: "#0a0a0add", strokeWidth: 3.5 }}>
+                  {it.label}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+
+        {/* Rahmen + Labels */}
+        <rect x={PAD} y={PAD} width={plot} height={plot} rx="3" fill="none" stroke="rgba(255,255,255,0.09)" />
+        {[["LEADING", SIZE - PAD - 10, PAD + 20, "end", "#22c55e"], ["WEAKENING", SIZE - PAD - 10, SIZE - PAD - 12, "end", "#facc15"],
+          ["LAGGING", PAD + 10, SIZE - PAD - 12, "start", "#ef4444"], ["IMPROVING", PAD + 10, PAD + 20, "start", "#63b6ff"]]
+          .map(([label, x, y, anchor, col]) => (
+            <text key={label} x={x} y={y} textAnchor={anchor} fill={col} opacity={0.5}
+              style={{ font: "700 10.5px Montserrat, sans-serif", letterSpacing: "0.26em" }}>{label}</text>
+          ))}
+        <text x={SIZE / 2} y={SIZE - 12} textAnchor="middle" fill="#4a4a4a" style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>JDK RS-RATIO →</text>
+        <text x={14} y={SIZE / 2} textAnchor="middle" fill="#4a4a4a" transform={`rotate(-90 14 ${SIZE / 2})`} style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>JDK RS-MOMENTUM →</text>
+      </svg>
+
+      {/* Zoom-Controls */}
+      <div style={{ position: "absolute", top: 14, right: 14, display: "flex", flexDirection: "column", gap: 7 }}>
+        <button style={zoomBtn} onClick={() => zoomAt(1.35)} title="Zoom in"
+          onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"; e.currentTarget.style.color = "#f8e49b"; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "#c9c9c9"; }}>＋</button>
+        <button style={zoomBtn} onClick={() => zoomAt(1 / 1.35)} title="Zoom out"
+          onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"; e.currentTarget.style.color = "#f8e49b"; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "#c9c9c9"; }}>−</button>
+        {view.z > 1 && (
+          <button style={{ ...zoomBtn, color: GOLD, borderColor: "rgba(212,175,55,0.4)" }}
+            onClick={() => setView({ cx: 100, cy: 100, z: 1 })} title="Zoom zurücksetzen">⟲</button>
+        )}
+      </div>
+      {view.z > 1 && (
+        <div style={{ position: "absolute", bottom: 16, right: 16, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#666", letterSpacing: "0.14em", background: "rgba(18,18,18,0.7)", padding: "4px 9px", borderRadius: 7, backdropFilter: "blur(10px)" }}>
+          {view.z.toFixed(1)}× · DRAG TO PAN
+        </div>
+      )}
+    </div>
   );
+}
+
+// ── PACK MANAGER MODAL ───────────────────────────────────────────────────────
+function PackManager({ pack, setPack, onClose }) {
+  const [sel, setSel] = useState("XLK");
+  const [inp, setInp] = useState("");
+  const titles = pack[sel] || [];
+
+  const add = () => {
+    const sym = inp.trim().toUpperCase();
+    if (!sym) return;
+    setPack(p => ({ ...p, [sel]: [...new Set([...(p[sel] || []), sym])] }));
+    setInp("");
+  };
+  const remove = (sym) => setPack(p => ({ ...p, [sel]: (p[sel] || []).filter(s => s !== sym) }));
+  const clearSector = () => setPack(p => ({ ...p, [sel]: [] }));
+  const resetAll = () => setPack({ ...VSX_PACK_DEFAULTS });
+
+  const glass = { background: "rgba(17,17,17,0.97)", border: "1px solid rgba(255,255,255,0.09)", borderRadius: 20 };
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }}
+      onClick={onClose}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ ...glass, width: 640, maxWidth: "94vw", maxHeight: "90vh", overflowY: "auto", padding: "26px 28px 24px", fontFamily: "'Montserrat', sans-serif", color: "#e8e8e8", boxShadow: "0 24px 80px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05)" }}>
+
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 6 }}>
+          <div>
+            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 24, letterSpacing: "0.2em", color: "#fdfdfd" }}>
+              <span style={{ color: GOLD }}>◆</span> VSX PACK MANAGER
+            </div>
+            <div style={{ fontSize: 8, letterSpacing: "0.3em", color: "#b99c64", textTransform: "uppercase", marginTop: 4 }}>Watchlist-Titel je Sektor · lokal gespeichert</div>
+          </div>
+          <button onClick={onClose}
+            onMouseEnter={e => { e.currentTarget.style.color = GOLD; e.currentTarget.style.transform = "rotate(90deg)"; }}
+            onMouseLeave={e => { e.currentTarget.style.color = "#444"; e.currentTarget.style.transform = "none"; }}
+            style={{ background: "none", border: "none", color: "#444", cursor: "pointer", fontSize: 18, padding: "4px 8px", transition: "all 0.35s cubic-bezier(0.22,1,0.36,1)" }}>✕</button>
+        </div>
+
+        {/* Sektor-Auswahl */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "18px 0 20px" }}>
+          {SECTORS.map(s => (
+            <button key={s.etf} onClick={() => setSel(s.etf)} title={s.name}
+              style={{
+                padding: "7px 13px", borderRadius: 9, cursor: "pointer",
+                fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, fontWeight: 700, letterSpacing: "0.12em",
+                background: sel === s.etf ? "rgba(212,175,55,0.13)" : "rgba(255,255,255,0.03)",
+                border: `1px solid ${sel === s.etf ? "rgba(212,175,55,0.5)" : "rgba(255,255,255,0.07)"}`,
+                color: sel === s.etf ? "#f8e49b" : `${SECTOR_COLORS[s.etf]}99`, transition: "all 0.2s",
+              }}>
+              {s.etf}<span style={{ marginLeft: 6, fontSize: 8, color: "#666" }}>{(pack[s.etf] || []).length}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Titel-Chips */}
+        <div style={{ fontSize: 9, letterSpacing: "0.22em", color: "#888", textTransform: "uppercase", marginBottom: 10 }}>
+          {SECTORS.find(s => s.etf === sel)?.name} · {titles.length} Titel
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 20, minHeight: 36 }}>
+          {titles.length === 0 && (
+            <span style={{ fontSize: 10, color: "#3a3a3a", fontFamily: "'DM Mono', monospace", letterSpacing: "0.1em", padding: "8px 0" }}>— leer —</span>
+          )}
+          {titles.map(t => (
+            <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 8px 6px 12px", borderRadius: 9, background: "rgba(212,175,55,0.07)", border: "1px solid rgba(212,175,55,0.25)", fontFamily: "'DM Mono', monospace", fontSize: 10.5, color: "#f8e49b", letterSpacing: "0.06em" }}>
+              {t}
+              <button onClick={() => remove(t)}
+                style={{ background: "none", border: "none", color: "#7a6a3d", cursor: "pointer", fontSize: 10, padding: 0, transition: "color 0.15s" }}
+                onMouseEnter={e => e.currentTarget.style.color = "#ef4444"}
+                onMouseLeave={e => e.currentTarget.style.color = "#7a6a3d"}>✕</button>
+            </span>
+          ))}
+        </div>
+
+        {/* Add-Zeile */}
+        <div style={{ display: "flex", gap: 9, marginBottom: 22 }}>
+          <input value={inp} onChange={e => setInp(e.target.value.toUpperCase())}
+            onKeyDown={e => e.key === "Enter" && add()}
+            placeholder="Yahoo-Ticker · z.B. NVDA, BAS.DE, 0700.HK"
+            style={{ flex: 1, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)", color: "#f8e49b", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.1em", padding: "10px 15px", borderRadius: 11, outline: "none", textTransform: "uppercase" }}
+            onFocus={e => e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"}
+            onBlur={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.09)"} />
+          <button onClick={add}
+            style={{ padding: "10px 20px", borderRadius: 11, cursor: "pointer", background: "linear-gradient(135deg, rgba(212,175,55,0.18), rgba(212,175,55,0.08))", border: "1px solid rgba(212,175,55,0.5)", color: "#f8e49b", fontFamily: "'Montserrat', sans-serif", fontSize: 10, fontWeight: 700, letterSpacing: "0.16em" }}>+ ADD</button>
+        </div>
+
+        <div style={{ display: "flex", gap: 9, justifyContent: "space-between", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 18 }}>
+          <div style={{ display: "flex", gap: 9 }}>
+            <button onClick={clearSector}
+              style={{ padding: "9px 16px", borderRadius: 9, cursor: "pointer", background: "transparent", border: "1px solid rgba(239,68,68,0.25)", color: "#b06060", fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em" }}>SEKTOR LEEREN</button>
+            <button onClick={resetAll}
+              style={{ padding: "9px 16px", borderRadius: 9, cursor: "pointer", background: "transparent", border: "1px solid rgba(255,255,255,0.1)", color: "#777", fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em" }}>↺ DEFAULTS</button>
+          </div>
+          <button onClick={onClose}
+            style={{ padding: "9px 24px", borderRadius: 9, cursor: "pointer", background: "linear-gradient(135deg, #d4af37, #b8963c)", border: "none", color: "#0a0a0a", fontFamily: "'Montserrat', sans-serif", fontSize: 10, fontWeight: 700, letterSpacing: "0.16em" }}>FERTIG</button>
+        </div>
+      </div>
+    </div>
+  , document.body);
 }
 
 // ── HAUPT-MODUL ──────────────────────────────────────────────────────────────
 export default function RRG() {
   const [presetId, setPresetId] = useState("sectors");
-  const [drill, setDrill] = useState(null);                 // Sektor-ETF oder null
+  const [drill, setDrill] = useState(null);
   const [interval_, setInterval_] = useState("1d");
   const [tailLen, setTailLen] = useState(5);
-  const [benchMode, setBenchMode] = useState("SECTOR");     // Drilldown-Basis: "SECTOR" | "TOP"
-  const [vsxPack, setVsxPack] = useState(true);             // VSX Pack im Drilldown mergen
-  const [customAdd, setCustomAdd] = useState({});           // viewKey → [symbols]
-  const [removed, setRemoved] = useState({});               // viewKey → Set-Array
+  const [benchMode, setBenchMode] = useState("SECTOR");
+  const [vsxPack, setVsxPack] = useState(true);
+  const [pack, setPack] = useState(loadPack);
+  const [showManager, setShowManager] = useState(false);
+  const [customAdd, setCustomAdd] = useState({});
+  const [removed, setRemoved] = useState({});
   const [addInput, setAddInput] = useState("");
   const [sort, setSort] = useState({ key: "rsr", dir: "desc" });
   const [raw, setRaw] = useState({});
@@ -239,25 +467,27 @@ export default function RRG() {
   const [hovered, setHovered] = useState(null);
   const cacheRef = useRef({});
 
+  // Pack persistieren
+  useEffect(() => {
+    try { localStorage.setItem(PACK_STORAGE_KEY, JSON.stringify(pack)); } catch { /* private mode */ }
+  }, [pack]);
+
   const preset = PRESETS.find(p => p.id === presetId);
   const drillSector = drill ? SECTORS.find(s => s.etf === drill) : null;
   const viewKey = drill ? `${presetId}:${drill}` : presetId;
 
-  const benchSym = drill
-    ? (benchMode === "SECTOR" ? drill : preset.bench)
-    : preset.bench;
+  const benchSym = drill ? (benchMode === "SECTOR" ? drill : preset.bench) : preset.bench;
   const benchLabel = benchSym.replace("-USD", "");
 
-  // Universum der aktuellen View: Members/Holdings + VSX Pack (Toggle) + Custom − Removed
   const universe = useMemo(() => {
     const rm = new Set(removed[viewKey] || []);
     const custom = customAdd[viewKey] || [];
     let base;
     if (drill) {
-      const pack = vsxPack ? (VSX_PACK[drill] || []) : [];
+      const packTitles = vsxPack ? (pack[drill] || []) : [];
       base = [
-        ...drillSector.holdings.filter(h => !pack.includes(h)).map(h => ({ symbol: h, label: h, vsx: false })),
-        ...pack.map(w => ({ symbol: w, label: w.replace(/\.[A-Z]+$|-USD$/, ""), vsx: true })),
+        ...drillSector.holdings.filter(h => !packTitles.includes(h)).map(h => ({ symbol: h, label: h, vsx: false })),
+        ...packTitles.map(w => ({ symbol: w, label: w.replace(/\.[A-Z]+$|-USD$/, ""), vsx: true })),
       ];
     } else {
       base = preset.members.map(m => ({ ...m, vsx: false }));
@@ -265,7 +495,7 @@ export default function RRG() {
     const known = new Set(base.map(b => b.symbol));
     custom.forEach(c => { if (!known.has(c)) base.push({ symbol: c, label: c.replace("-USD", ""), vsx: false, custom: true }); });
     return base.filter(b => !rm.has(b.symbol) && b.symbol !== benchSym);
-  }, [preset, drill, drillSector, viewKey, customAdd, removed, benchSym, vsxPack]);
+  }, [preset, drill, drillSector, viewKey, customAdd, removed, benchSym, vsxPack, pack]);
 
   const neededSymbols = useMemo(
     () => [...new Set([benchSym, ...universe.map(u => u.symbol)])],
@@ -306,7 +536,6 @@ export default function RRG() {
     }).filter(Boolean);
   }, [raw, universe, interval_, tailLen, benchSym, params.window, params.momP]);
 
-  // ── SORTIERUNG ─────────────────────────────────────────────────────────────
   const sorted = useMemo(() => {
     const arr = [...items];
     const head = it => it.tail[it.tail.length - 1];
@@ -325,7 +554,6 @@ export default function RRG() {
     ? { key, dir: s.dir === "desc" ? "asc" : "desc" }
     : { key, dir: key === "alpha" || key === "quad" ? "asc" : "desc" });
 
-  // ── ADD / REMOVE ───────────────────────────────────────────────────────────
   const addSymbol = () => {
     let sym = addInput.trim().toUpperCase();
     if (!sym) return;
@@ -344,10 +572,10 @@ export default function RRG() {
 
   // ── STYLES ─────────────────────────────────────────────────────────────────
   const glass = {
-    background: "linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.02))",
-    border: "1px solid rgba(255,255,255,0.07)", borderRadius: 18,
-    backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)",
-    boxShadow: "0 10px 36px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)",
+    background: "linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015) 55%, rgba(212,175,55,0.02))",
+    border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20,
+    backdropFilter: "blur(22px) saturate(150%)", WebkitBackdropFilter: "blur(22px) saturate(150%)",
+    boxShadow: "0 14px 44px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)",
   };
   const pill = (active) => ({
     padding: "9px 18px", borderRadius: 11, cursor: "pointer", fontFamily: "'Montserrat', sans-serif",
@@ -360,124 +588,138 @@ export default function RRG() {
   const divider = { width: 1, height: 24, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)" };
   const th = (key, label, align = "left") => (
     <th onClick={() => setSortKey(key)}
-      style={{ padding: "6px 8px", textAlign: align, cursor: "pointer", userSelect: "none", color: sort.key === key ? "#f8e49b" : "#555", transition: "color 0.2s" }}>
+      style={{ padding: "6px 10px", textAlign: align, cursor: "pointer", userSelect: "none", color: sort.key === key ? "#f8e49b" : "#555", transition: "color 0.2s" }}>
       {label}{sort.key === key ? (sort.dir === "desc" ? " ▾" : " ▴") : ""}
     </th>
   );
 
   return (
-    <div style={{ maxWidth: 1220, margin: "0 auto", padding: "28px 22px 70px" }}>
-      {/* TITELZEILE */}
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 14, marginBottom: 20 }}>
-        <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 26, letterSpacing: "0.2em", color: "#fdfdfd" }}>
-          RELATIVE ROTATION
-        </div>
-        <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.28em", color: "#b99c64", textTransform: "uppercase" }}>
-          {drill ? `${drill} · ${drillSector.name}` : preset.label}
-        </div>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#555", letterSpacing: "0.1em" }}>
-          <span style={{ width: 7, height: 7, borderRadius: "50%", background: GOLD, boxShadow: `0 0 8px ${GOLD}` }} />
-          BASIS <span style={{ color: "#f8e49b" }}>{benchLabel}</span>
-        </div>
+    <div style={{ position: "relative", overflow: "hidden" }}>
+      {/* AMBIENT · Liquid-Glass-Hintergrund */}
+      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}>
+        <div style={{ position: "absolute", top: -220, right: "-8%", width: 760, height: 760, borderRadius: "50%", background: "radial-gradient(circle, rgba(212,175,55,0.065), transparent 62%)", filter: "blur(50px)" }} />
+        <div style={{ position: "absolute", bottom: -300, left: "-12%", width: 820, height: 820, borderRadius: "50%", background: "radial-gradient(circle, rgba(99,182,255,0.045), transparent 62%)", filter: "blur(60px)" }} />
+        <div style={{ position: "absolute", top: "34%", left: "42%", width: 500, height: 500, borderRadius: "50%", background: "radial-gradient(circle, rgba(255,255,255,0.02), transparent 60%)", filter: "blur(40px)" }} />
       </div>
 
-      {/* PRESETS + DRILL-BREADCRUMB */}
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 9, marginBottom: 10 }}>
-        {PRESETS.map(p => (
-          <button key={p.id} style={pill(presetId === p.id && !drill)}
-            onClick={() => { setPresetId(p.id); setDrill(null); setHovered(null); }}>
-            {p.label}
-          </button>
-        ))}
-      </div>
-      {presetId === "sectors" && (
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 14 }}>
-          {SECTORS.map(s => (
-            <button key={s.etf} title={s.name}
-              style={{ ...pill(drill === s.etf), padding: "6.5px 12px", fontSize: 9, letterSpacing: "0.12em",
-                color: drill === s.etf ? "#f8e49b" : (SECTOR_COLORS[s.etf] ? `${SECTOR_COLORS[s.etf]}aa` : "#777") }}
-              onClick={() => { setDrill(d => d === s.etf ? null : s.etf); setBenchMode("SECTOR"); setHovered(null); }}>
-              {s.etf}
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 1280, margin: "0 auto", padding: "30px 24px 80px" }}>
+        {/* TITELZEILE */}
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 14, marginBottom: 20 }}>
+          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 27, letterSpacing: "0.2em", color: "#fdfdfd" }}>
+            RELATIVE ROTATION
+          </div>
+          <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.28em", color: "#b99c64", textTransform: "uppercase" }}>
+            {drill ? `${drill} · ${drillSector.name}` : preset.label}
+          </div>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#555", letterSpacing: "0.1em" }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: GOLD, boxShadow: `0 0 8px ${GOLD}` }} />
+            BASIS <span style={{ color: "#f8e49b" }}>{benchLabel}</span>
+          </div>
+        </div>
+
+        {/* PRESETS */}
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 9, marginBottom: 10 }}>
+          {PRESETS.map(p => (
+            <button key={p.id} style={pill(presetId === p.id && !drill)}
+              onClick={() => { setPresetId(p.id); setDrill(null); setHovered(null); }}>
+              {p.label}
             </button>
           ))}
+          <div style={{ flex: 1 }} />
+          <button onClick={() => setShowManager(true)}
+            style={{ ...pill(false), display: "flex", alignItems: "center", gap: 7, color: "#b99c64", borderColor: "rgba(212,175,55,0.25)" }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.55)"; e.currentTarget.style.color = "#f8e49b"; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.25)"; e.currentTarget.style.color = "#b99c64"; }}>
+            <span style={{ fontSize: 8 }}>◆</span> PACK MANAGER
+          </button>
         </div>
-      )}
-
-      {/* CONTROLS */}
-      <div style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 11, padding: "13px 16px", marginBottom: 20 }}>
-        <button style={pill(interval_ === "1d")} onClick={() => setInterval_("1d")}>Daily</button>
-        <button style={pill(interval_ === "1wk")} onClick={() => setInterval_("1wk")}>Weekly</button>
-        <div style={divider} />
-        <span style={{ fontSize: 9, letterSpacing: "0.2em", color: "#888", fontFamily: "'Montserrat', sans-serif", fontWeight: 700 }}>
-          TAIL <span style={{ color: "#f8e49b" }}>{tailLen}</span>{interval_ === "1wk" ? "W" : "D"}
-        </span>
-        <input type="range" min={3} max={10} value={tailLen} onChange={e => setTailLen(+e.target.value)}
-          style={{ width: 110, accentColor: GOLD }} />
-        {drill && (
-          <>
-            <div style={divider} />
-            <button style={pill(benchMode === "SECTOR")} onClick={() => setBenchMode("SECTOR")}>vs {drill}</button>
-            <button style={pill(benchMode === "TOP")} onClick={() => setBenchMode("TOP")}>vs {preset.bench}</button>
-            <div style={divider} />
-            <button onClick={() => setVsxPack(v => !v)} title="VisionX-Watchlist-Titel dieses Sektors ein-/ausblenden"
-              style={{ ...pill(vsxPack), display: "flex", alignItems: "center", gap: 7,
-                color: vsxPack ? GOLD : "#777",
-                textShadow: vsxPack ? "0 0 10px rgba(212,175,55,0.5)" : "none" }}>
-              <span style={{ fontSize: 8 }}>◆</span> VSX PACK
-              {vsxPack && VSX_PACK[drill]?.length > 0 && (
-                <span style={{ fontSize: 8, color: "#b99c64" }}>{VSX_PACK[drill].length}</span>
-              )}
-            </button>
-          </>
+        {presetId === "sectors" && (
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 14 }}>
+            {SECTORS.map(s => (
+              <button key={s.etf} title={s.name}
+                style={{ ...pill(drill === s.etf), padding: "6.5px 12px", fontSize: 9, letterSpacing: "0.12em",
+                  color: drill === s.etf ? "#f8e49b" : (SECTOR_COLORS[s.etf] ? `${SECTOR_COLORS[s.etf]}aa` : "#777") }}
+                onClick={() => { setDrill(d => d === s.etf ? null : s.etf); setBenchMode("SECTOR"); setHovered(null); }}>
+                {s.etf}
+              </button>
+            ))}
+          </div>
         )}
-        <div style={divider} />
-        <input value={addInput} onChange={e => setAddInput(e.target.value.toUpperCase())}
-          onKeyDown={e => e.key === "Enter" && addSymbol()}
-          placeholder={preset.cryptoSuffix && !drill ? "z.B. PEPE" : "z.B. NVDA"}
-          style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)", color: "#f8e49b", fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.12em", padding: "8px 14px", borderRadius: 10, outline: "none", width: 110, textTransform: "uppercase" }}
-          onFocus={e => e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"}
-          onBlur={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.09)"} />
-        <button style={{ ...pill(true), padding: "9px 15px" }} onClick={addSymbol}>+ ADD</button>
-        {hasEdits && (
-          <button style={{ ...pill(false), color: "#777" }} onClick={resetView}>↺ RESET</button>
+
+        {/* CONTROLS */}
+        <div style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 11, padding: "13px 16px", marginBottom: 22 }}>
+          <button style={pill(interval_ === "1d")} onClick={() => setInterval_("1d")}>Daily</button>
+          <button style={pill(interval_ === "1wk")} onClick={() => setInterval_("1wk")}>Weekly</button>
+          <div style={divider} />
+          <span style={{ fontSize: 9, letterSpacing: "0.2em", color: "#888", fontFamily: "'Montserrat', sans-serif", fontWeight: 700 }}>
+            TAIL <span style={{ color: "#f8e49b" }}>{tailLen}</span>{interval_ === "1wk" ? "W" : "D"}
+          </span>
+          <input type="range" min={3} max={10} value={tailLen} onChange={e => setTailLen(+e.target.value)}
+            style={{ width: 110, accentColor: GOLD }} />
+          {drill && (
+            <>
+              <div style={divider} />
+              <button style={pill(benchMode === "SECTOR")} onClick={() => setBenchMode("SECTOR")}>vs {drill}</button>
+              <button style={pill(benchMode === "TOP")} onClick={() => setBenchMode("TOP")}>vs {preset.bench}</button>
+              <div style={divider} />
+              <button onClick={() => setVsxPack(v => !v)} title="VisionX-Watchlist-Titel dieses Sektors ein-/ausblenden"
+                style={{ ...pill(vsxPack), display: "flex", alignItems: "center", gap: 7,
+                  color: vsxPack ? GOLD : "#777",
+                  textShadow: vsxPack ? "0 0 10px rgba(212,175,55,0.5)" : "none" }}>
+                <span style={{ fontSize: 8 }}>◆</span> VSX PACK
+                {vsxPack && (pack[drill] || []).length > 0 && (
+                  <span style={{ fontSize: 8, color: "#b99c64" }}>{(pack[drill] || []).length}</span>
+                )}
+              </button>
+            </>
+          )}
+          <div style={divider} />
+          <input value={addInput} onChange={e => setAddInput(e.target.value.toUpperCase())}
+            onKeyDown={e => e.key === "Enter" && addSymbol()}
+            placeholder={preset.cryptoSuffix && !drill ? "z.B. PEPE" : "z.B. NVDA"}
+            style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)", color: "#f8e49b", fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.12em", padding: "8px 14px", borderRadius: 10, outline: "none", width: 110, textTransform: "uppercase" }}
+            onFocus={e => e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"}
+            onBlur={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.09)"} />
+          <button style={{ ...pill(true), padding: "9px 15px" }} onClick={addSymbol}>+ ADD</button>
+          {hasEdits && (
+            <button style={{ ...pill(false), color: "#777" }} onClick={resetView}>↺ RESET</button>
+          )}
+          {loading && <span style={{ marginLeft: "auto", fontSize: 10, color: GOLD, fontFamily: "'DM Mono', monospace", letterSpacing: "0.14em" }}>LOADING…</span>}
+        </div>
+
+        {error && (
+          <div style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "14px 18px", marginBottom: 22, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#f87171" }}>
+            {error}
+          </div>
         )}
-        {loading && <span style={{ marginLeft: "auto", fontSize: 10, color: GOLD, fontFamily: "'DM Mono', monospace", letterSpacing: "0.14em" }}>LOADING…</span>}
-      </div>
+        {failed.length > 0 && !error && (
+          <div style={{ fontSize: 10, color: "#666", fontFamily: "'DM Mono', monospace", marginBottom: 12 }}>
+            Keine Daten: {failed.join(", ")}
+          </div>
+        )}
 
-      {error && (
-        <div style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "14px 18px", marginBottom: 20, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#f87171" }}>
-          {error}
-        </div>
-      )}
-      {failed.length > 0 && !error && (
-        <div style={{ fontSize: 10, color: "#666", fontFamily: "'DM Mono', monospace", marginBottom: 12 }}>
-          Keine Daten: {failed.join(", ")}
-        </div>
-      )}
-
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 22, alignItems: "flex-start" }}>
-        {/* CHART */}
-        <div style={{ ...glass, padding: 16, flex: "1 1 560px", minWidth: 320 }}>
+        {/* CHART — volle Breite */}
+        <div style={{ ...glass, padding: "18px 18px 8px", marginBottom: 22 }}>
           {items.length > 0 ? (
-            <RRGChart items={items} hovered={hovered} setHovered={setHovered} tailLen={tailLen}
+            <RRGChart key={viewKey + interval_} items={items} hovered={hovered} setHovered={setHovered} tailLen={tailLen}
               onNodeClick={preset.drillable && !drill
                 ? (it) => { setDrill(it.symbol); setBenchMode("SECTOR"); setHovered(null); }
                 : null} />
           ) : !loading && !error ? (
-            <div style={{ padding: 90, textAlign: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.3em", color: "#262626" }}>KEINE DATEN</div>
+            <div style={{ padding: 110, textAlign: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.3em", color: "#262626" }}>KEINE DATEN</div>
           ) : (
-            <div style={{ padding: 90, textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.22em", color: "#3d3d3d" }}>FETCHING {neededSymbols.length} SYMBOLS…</div>
+            <div style={{ padding: 110, textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.22em", color: "#3d3d3d" }}>FETCHING {neededSymbols.length} SYMBOLS…</div>
           )}
           {preset.drillable && !drill && items.length > 0 && (
-            <div style={{ textAlign: "center", fontSize: 8.5, color: "#4d4d4d", letterSpacing: "0.2em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600, textTransform: "uppercase", paddingBottom: 6 }}>
-              Sektor anklicken → Drilldown mit Holdings + <span style={{ color: GOLD }}>VSX Watchlist</span>
+            <div style={{ textAlign: "center", fontSize: 8.5, color: "#4d4d4d", letterSpacing: "0.2em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600, textTransform: "uppercase", padding: "6px 0 10px" }}>
+              Sektor anklicken → Drilldown mit Holdings + <span style={{ color: GOLD }}>VSX Pack</span> · Scroll = Zoom
             </div>
           )}
         </div>
 
-        {/* RANKING */}
-        <div style={{ ...glass, padding: "18px 18px 14px", flex: "1 1 330px", minWidth: 310 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 13 }}>
+        {/* RANKING — volle Breite */}
+        <div style={{ ...glass, padding: "20px 22px 16px" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.2em", color: "#fdfdfd" }}>ROTATION RANKING</span>
             <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.16em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>{items.length} TITEL</span>
           </div>
@@ -486,9 +728,9 @@ export default function RRG() {
               <tr style={{ fontSize: 8.5, letterSpacing: "0.16em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, textTransform: "uppercase" }}>
                 {th("alpha", "Symbol")}
                 {th("quad", "Quadrant")}
-                {th("rsr", "RS-R", "right")}
-                {th("rsm", "RS-M", "right")}
-                <th style={{ width: 24 }} />
+                {th("rsr", "RS-Ratio", "right")}
+                {th("rsm", "RS-Momentum", "right")}
+                <th style={{ width: 28 }} />
               </tr>
             </thead>
             <tbody>
@@ -499,17 +741,18 @@ export default function RRG() {
                   <tr key={it.symbol}
                     onMouseEnter={() => setHovered(it.symbol)} onMouseLeave={() => setHovered(null)}
                     style={{ borderTop: "1px solid rgba(255,255,255,0.05)", background: hovered === it.symbol ? "rgba(212,175,55,0.07)" : "transparent", transition: "background 0.15s" }}>
-                    <td style={{ padding: "8px 8px", color: it.vsx ? "#f8e49b" : "#e8e8e8", fontWeight: it.vsx ? 700 : 400, whiteSpace: "nowrap" }}>
+                    <td style={{ padding: "9px 10px", color: it.vsx ? "#f8e49b" : "#e8e8e8", fontWeight: it.vsx ? 700 : 400, whiteSpace: "nowrap" }}>
                       <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: it.color, marginRight: 9, boxShadow: it.vsx ? `0 0 7px ${GOLD}` : "none" }} />
                       {it.label}
-                      {it.custom && <span style={{ marginLeft: 6, fontSize: 7, color: "#666", letterSpacing: "0.1em" }}>ADD</span>}
+                      {it.vsx && <span style={{ marginLeft: 7, fontSize: 7, color: "#8a7440", letterSpacing: "0.14em" }}>◆ VSX</span>}
+                      {it.custom && <span style={{ marginLeft: 7, fontSize: 7, color: "#666", letterSpacing: "0.1em" }}>ADD</span>}
                     </td>
-                    <td style={{ padding: "8px 8px" }}>
-                      <span style={{ fontSize: 8, letterSpacing: "0.12em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, color: QUAD_COLOR[q], background: `${QUAD_COLOR[q]}14`, border: `1px solid ${QUAD_COLOR[q]}30`, padding: "2.5px 8px", borderRadius: 20 }}>{q}</span>
+                    <td style={{ padding: "9px 10px" }}>
+                      <span style={{ fontSize: 8, letterSpacing: "0.12em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, color: QUAD_COLOR[q], background: `${QUAD_COLOR[q]}14`, border: `1px solid ${QUAD_COLOR[q]}30`, padding: "2.5px 9px", borderRadius: 20 }}>{q}</span>
                     </td>
-                    <td style={{ padding: "8px 8px", textAlign: "right", color: h.x >= 100 ? "#22c55e" : "#ef4444" }}>{h.x.toFixed(2)}</td>
-                    <td style={{ padding: "8px 8px", textAlign: "right", color: h.y >= 100 ? "#22c55e" : "#ef4444" }}>{h.y.toFixed(2)}</td>
-                    <td style={{ padding: "8px 4px", textAlign: "center" }}>
+                    <td style={{ padding: "9px 10px", textAlign: "right", color: h.x >= 100 ? "#22c55e" : "#ef4444" }}>{h.x.toFixed(2)}</td>
+                    <td style={{ padding: "9px 10px", textAlign: "right", color: h.y >= 100 ? "#22c55e" : "#ef4444" }}>{h.y.toFixed(2)}</td>
+                    <td style={{ padding: "9px 6px", textAlign: "center" }}>
                       <button onClick={() => removeSymbol(it.symbol)} title="Titel entfernen"
                         style={{ background: "none", border: "none", color: "#3a3a3a", cursor: "pointer", fontSize: 11, padding: 2, transition: "color 0.15s" }}
                         onMouseEnter={e => e.currentTarget.style.color = "#ef4444"}
@@ -521,11 +764,13 @@ export default function RRG() {
             </tbody>
           </table>
         </div>
+
+        <div style={{ marginTop: 20, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
+          JdK RS-Ratio / RS-Momentum als Normalisierungs-Approximation ({params.window}{interval_ === "1wk" ? "W" : "D"} Fenster · ROC {params.momP}). Structural analysis — not investment advice.
+        </div>
       </div>
 
-      <div style={{ marginTop: 20, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
-        JdK RS-Ratio / RS-Momentum als Normalisierungs-Approximation ({params.window}{interval_ === "1wk" ? "W" : "D"} Fenster · ROC {params.momP}). Structural analysis — not investment advice.
-      </div>
+      {showManager && <PackManager pack={pack} setPack={setPack} onClose={() => setShowManager(false)} />}
     </div>
   );
 }
