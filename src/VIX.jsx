@@ -64,8 +64,13 @@ function VixChart({ candles }) {
   const n = candles.length;
   const [view, setView] = useState({ a: 0, b: n });   // sichtbarer Index-Bereich (float)
 
-  // Bei neuen Daten / Aggregation: Range zurücksetzen
-  useEffect(() => { setView({ a: 0, b: n }); }, [n]);
+  // Temporäres Drawing-Tool (nur im Chart, nicht persistiert)
+  const [tool, setTool] = useState("pan");             // "pan" | "free" | "line"
+  const [drawings, setDrawings] = useState([]);        // in Daten-Koordinaten {i, v}
+  const [draft, setDraft] = useState(null);
+
+  // Bei neuen Daten / Aggregation: Range + Zeichnungen zurücksetzen
+  useEffect(() => { setView({ a: 0, b: n }); setDrawings([]); setDraft(null); }, [n]);
 
   const a = Math.max(0, Math.min(view.a, n - 2));
   const b = Math.max(a + 2, Math.min(view.b, n));
@@ -115,12 +120,38 @@ function VixChart({ candles }) {
     return () => el.removeEventListener("wheel", onWheel);
   }, [zoomAt]);
 
+  // Pixel → Daten-Koordinaten (Index i, Wert v), auf Plot geclampt
+  const toData = (clientX, clientY) => {
+    const r = svgRef.current.getBoundingClientRect();
+    const px = Math.min(PADL + plotW, Math.max(PADL, ((clientX - r.left) / r.width) * W));
+    const py = Math.min(PADT + plotH, Math.max(PADT, ((clientY - r.top) / r.height) * H));
+    return {
+      i: a + ((px - PADL) / plotW) * span - 0.5,
+      v: yMin + (1 - (py - PADT) / plotH) * (yMax - yMin),
+    };
+  };
+
   const onPointerDown = (e) => {
+    e.preventDefault();
+    if (tool !== "pan") {
+      const p = toData(e.clientX, e.clientY);
+      setDraft({ type: tool, pts: [p, p] });
+      setHover(null);
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
     dragRef.current = { x: e.clientX, a: view.a, b: view.b, moved: false };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
   const onPointerMove = (e) => {
     const r = svgRef.current.getBoundingClientRect();
+    if (draft) {
+      const p = toData(e.clientX, e.clientY);
+      setDraft(d => d.type === "line"
+        ? { ...d, pts: [d.pts[0], p] }
+        : { ...d, pts: [...d.pts, p] });
+      return;
+    }
     const d = dragRef.current;
     if (d) {
       const dxIdx = ((e.clientX - d.x) / r.width) * W / plotW * (d.b - d.a);
@@ -129,13 +160,22 @@ function VixChart({ candles }) {
       if (na < 0) { nb -= na; na = 0; }
       if (nb > n) { na -= nb - n; nb = n; }
       setView({ a: na, b: nb });
+      setHover(null);
       return;
     }
     const px = ((e.clientX - r.left) / r.width) * W;
     const i = Math.round(a + ((px - PADL) / plotW) * span - 0.5);
     setHover(i >= 0 && i < n ? i : null);
   };
-  const onPointerUp = () => { dragRef.current = null; };
+  const onPointerUp = () => {
+    if (draft) {
+      if (draft.pts.length >= 2) setDrawings(ds => [...ds, draft]);
+      setDraft(null);
+    }
+    dragRef.current = null;
+  };
+
+  const drawPath = (dw) => dw.pts.map((p, k) => `${k ? "L" : "M"} ${X(p.i).toFixed(1)} ${Y(p.v).toFixed(1)}`).join(" ");
 
   // Zeit-Ticks: Jahre, bei starkem Zoom Monate
   const ticks = useMemo(() => {
@@ -169,7 +209,8 @@ function VixChart({ candles }) {
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
         onMouseLeave={() => setHover(null)}
-        style={{ width: "100%", display: "block", touchAction: "none", cursor: dragRef.current ? "grabbing" : "grab" }}>
+        style={{ width: "100%", display: "block", touchAction: "none", userSelect: "none", WebkitUserSelect: "none",
+          cursor: tool !== "pan" ? "crosshair" : dragRef.current ? "grabbing" : "grab" }}>
         <defs>
           <clipPath id="vix-clip"><rect x={PADL} y={PADT} width={plotW} height={plotH} rx="2" /></clipPath>
         </defs>
@@ -205,6 +246,13 @@ function VixChart({ candles }) {
               </g>
             );
           })}
+
+          {/* Temporäre Zeichnungen (Daten-Koordinaten → pan/zoom-fest) */}
+          {[...drawings, ...(draft ? [draft] : [])].map((dw, k) => (
+            <path key={"dw" + k} d={drawPath(dw)} fill="none" stroke={GOLD}
+              strokeWidth={dw.type === "line" ? 1.6 : 1.4} strokeLinecap="round" strokeLinejoin="round"
+              opacity={0.85} style={{ filter: "drop-shadow(0 0 4px rgba(212,175,55,0.4))" }} />
+          ))}
         </g>
 
         {/* Rechte Zonen-Labels (mittig im sichtbaren Band-Ausschnitt) */}
@@ -234,7 +282,7 @@ function VixChart({ candles }) {
         <rect x={PADL} y={PADT} width={plotW} height={plotH} fill="none" stroke="rgba(255,255,255,0.09)" rx="2" />
 
         {/* Hover-Crosshair + Tooltip */}
-        {hover != null && candles[hover] && (() => {
+        {hover != null && !draft && tool === "pan" && candles[hover] && (() => {
           const [t, o, h, l, cl] = candles[hover];
           const x = X(hover);
           const tipX = x > W / 2 ? x - 186 : x + 14;
@@ -250,6 +298,22 @@ function VixChart({ candles }) {
           );
         })()}
       </svg>
+
+      {/* Drawing-Toolbar */}
+      <div style={{ position: "absolute", top: 10, left: 56, display: "flex", gap: 7 }}>
+        {[["pan", "✋", "Pan / Hover"], ["free", "✏", "Freihand zeichnen"], ["line", "╱", "Trendlinie ziehen"]].map(([id, icon, tip]) => (
+          <button key={id} title={tip} onClick={() => setTool(id)}
+            style={{ ...zoomBtn, color: tool === id ? "#f8e49b" : "#c9c9c9",
+              borderColor: tool === id ? "rgba(212,175,55,0.55)" : "rgba(255,255,255,0.1)",
+              background: tool === id ? "rgba(212,175,55,0.12)" : zoomBtn.background }}>
+            {icon}
+          </button>
+        ))}
+        {drawings.length > 0 && (
+          <button title="Zeichnungen löschen" onClick={() => { setDrawings([]); setDraft(null); }}
+            style={{ ...zoomBtn, color: "#b06060", borderColor: "rgba(239,68,68,0.35)" }}>🗑</button>
+        )}
+      </div>
 
       {/* Zoom-Controls */}
       <div style={{ position: "absolute", top: 10, right: 160, display: "flex", gap: 7 }}>
@@ -282,7 +346,7 @@ export default function VIX() {
 
   useEffect(() => {
     let alive = true;
-    fetch(`/api/history?symbols=${encodeURIComponent("^VIX")}&interval=1d&range=8y&ohlc=1`)
+    fetch(`/api/history?symbols=${encodeURIComponent("^VIX")}&interval=1d&range=10y&ohlc=1`)
       .then(r => { if (!r.ok) throw new Error(`API ${r.status} — läuft die Seite auf Vercel / \`vercel dev\`?`); return r.json(); })
       .then(json => {
         if (!alive) return;
