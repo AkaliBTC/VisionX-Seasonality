@@ -77,6 +77,68 @@ const loadPack = () => {
   return { ...VSX_PACK_DEFAULTS };
 };
 
+// ── VOLLE NAMEN (Defaults · via Pack Manager überschreib-/ergänzbar) ─────────
+const NAMES_STORAGE_KEY = "vsx_rrg_names_v1";
+const NAME_DEFAULTS = {
+  SPY: "SPDR S&P 500 ETF",
+  XLK: "Technology Select Sector", XLF: "Financial Select Sector", XLV: "Health Care Select Sector",
+  XLY: "Consumer Discretionary Select", XLP: "Consumer Staples Select", XLE: "Energy Select Sector",
+  XLI: "Industrial Select Sector", XLB: "Materials Select Sector", XLRE: "Real Estate Select Sector",
+  XLU: "Utilities Select Sector", XLC: "Communication Services Select",
+  // Holdings
+  MSFT: "Microsoft", AAPL: "Apple", NVDA: "NVIDIA", AVGO: "Broadcom", CRM: "Salesforce", ORCL: "Oracle",
+  AMD: "Advanced Micro Devices", ADBE: "Adobe", CSCO: "Cisco Systems", ACN: "Accenture",
+  "BRK-B": "Berkshire Hathaway", JPM: "JPMorgan Chase", V: "Visa", MA: "Mastercard", BAC: "Bank of America",
+  WFC: "Wells Fargo", GS: "Goldman Sachs", MS: "Morgan Stanley", SPGI: "S&P Global", AXP: "American Express",
+  LLY: "Eli Lilly & Co.", UNH: "UnitedHealth Group", JNJ: "Johnson & Johnson", ABBV: "AbbVie", MRK: "Merck & Co.",
+  TMO: "Thermo Fisher Scientific", ABT: "Abbott Laboratories", AMGN: "Amgen", ISRG: "Intuitive Surgical", PFE: "Pfizer",
+  AMZN: "Amazon", TSLA: "Tesla", HD: "Home Depot", MCD: "McDonald's", BKNG: "Booking Holdings", LOW: "Lowe's",
+  TJX: "TJX Companies", NKE: "Nike", SBUX: "Starbucks", CMG: "Chipotle Mexican Grill",
+  PG: "Procter & Gamble", COST: "Costco Wholesale", WMT: "Walmart", KO: "Coca-Cola", PEP: "PepsiCo",
+  PM: "Philip Morris Intl.", MDLZ: "Mondelez Intl.", MO: "Altria Group", CL: "Colgate-Palmolive", TGT: "Target",
+  XOM: "Exxon Mobil", CVX: "Chevron", COP: "ConocoPhillips", WMB: "Williams Companies", EOG: "EOG Resources",
+  SLB: "Schlumberger", PSX: "Phillips 66", MPC: "Marathon Petroleum", KMI: "Kinder Morgan", OKE: "ONEOK",
+  GE: "GE Aerospace", CAT: "Caterpillar", UBER: "Uber Technologies", RTX: "RTX Corp.", HON: "Honeywell",
+  UNP: "Union Pacific", ETN: "Eaton", BA: "Boeing", DE: "Deere & Co.", LMT: "Lockheed Martin",
+  LIN: "Linde", SHW: "Sherwin-Williams", APD: "Air Products", ECL: "Ecolab", FCX: "Freeport-McMoRan",
+  NEM: "Newmont", CTVA: "Corteva", DD: "DuPont", DOW: "Dow Inc.", PPG: "PPG Industries",
+  PLD: "Prologis", AMT: "American Tower", EQIX: "Equinix", WELL: "Welltower", SPG: "Simon Property Group",
+  PSA: "Public Storage", O: "Realty Income", CCI: "Crown Castle", DLR: "Digital Realty", VICI: "VICI Properties",
+  NEE: "NextEra Energy", SO: "Southern Company", DUK: "Duke Energy", CEG: "Constellation Energy", SRE: "Sempra",
+  AEP: "American Electric Power", D: "Dominion Energy", PCG: "PG&E", EXC: "Exelon", XEL: "Xcel Energy",
+  META: "Meta Platforms", GOOGL: "Alphabet", NFLX: "Netflix", DIS: "Walt Disney", CMCSA: "Comcast",
+  T: "AT&T", VZ: "Verizon", TMUS: "T-Mobile US", EA: "Electronic Arts", WBD: "Warner Bros. Discovery",
+  // VSX Pack
+  "ADS.DE": "Adidas", INTC: "Intel", PLTR: "Palantir Technologies", QBTS: "D-Wave Quantum", RGTI: "Rigetti Computing",
+  SNDK: "Sandisk", WDAY: "Workday", "1810.HK": "Xiaomi", CRCL: "Circle Internet Group", COIN: "Coinbase",
+  FIS: "Fidelity National Info.", FI: "Fiserv", "BAYN.DE": "Bayer", HIMS: "Hims & Hers Health", ILMN: "Illumina",
+  MRNA: "Moderna", MOH: "Molina Healthcare", "NOVO-B.CO": "Novo Nordisk", REGN: "Regeneron Pharmaceuticals",
+  BABA: "Alibaba Group", "BMW.DE": "BMW", "RACE.MI": "Ferrari", LULU: "Lululemon Athletica", "MC.PA": "LVMH",
+  "MBG.DE": "Mercedes-Benz Group", "P911.DE": "Porsche AG", PHM: "PulteGroup", TSCO: "Tractor Supply",
+  VSCO: "Victoria's Secret", EL: "Estée Lauder", "LISN.SW": "Lindt & Sprüngli", "OR.PA": "L'Oréal",
+  "NESN.SW": "Nestlé", "RI.PA": "Pernod Ricard", OXY: "Occidental Petroleum", "RHM.DE": "Rheinmetall",
+  AEM: "Agnico Eagle Mines", ALB: "Albemarle", B: "Barrick Mining", "BAS.DE": "BASF", AG: "First Majestic Silver",
+  "FRES.L": "Fresnillo", LAC: "Lithium Americas", PAAS: "Pan American Silver", SCCO: "Southern Copper",
+  IRM: "Iron Mountain", ASTS: "AST SpaceMobile", RDDT: "Reddit", "0700.HK": "Tencent Holdings", TME: "Tencent Music",
+  // Crypto
+  "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum", "SOL-USD": "Solana", "LINK-USD": "Chainlink", "TRX-USD": "Tron",
+  "XRP-USD": "XRP", "XLM-USD": "Stellar", "DOGE-USD": "Dogecoin", "SUI-USD": "Sui", "TAO-USD": "Bittensor",
+  "HYPE-USD": "Hyperliquid", "FET-USD": "Fetch.ai / ASI", "PEPE-USD": "Pepe", "AKT-USD": "Akash Network", "ZEC-USD": "Zcash",
+  // Countries
+  EWG: "Germany (MSCI)", EWQ: "France (MSCI)", EWU: "United Kingdom (MSCI)", EWL: "Switzerland (MSCI)",
+  EWI: "Italy (MSCI)", EWP: "Spain (MSCI)", EWJ: "Japan (MSCI)", EWY: "South Korea (MSCI)", EWT: "Taiwan (MSCI)",
+  MCHI: "China (MSCI)", EWH: "Hong Kong (MSCI)", INDA: "India (MSCI)", EWZ: "Brazil (MSCI)", EWW: "Mexico (MSCI)",
+  EWC: "Canada (MSCI)", EWA: "Australia (MSCI)",
+};
+
+const loadNames = () => {
+  try {
+    const raw = localStorage.getItem(NAMES_STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* empty */ }
+  return {};
+};
+
 const SECTOR_COLORS = {
   XLK: "#63b6ff", XLF: "#22c55e", XLV: "#f472b6", XLY: "#a855f7",
   XLP: "#facc15", XLE: "#fb923c", XLI: "#94a3b8", XLB: "#2dd4bf",
@@ -251,20 +313,15 @@ function BenchChart({ series, label, offset, tailLen, onScrub, maxOffset }) {
 }
 
 // ── RRG-CHART (breites Rechteck · zoombar) ───────────────────────────────────
-function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen }) {
+function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext }) {
   const W = 1480, H = 560, PADL = 52, PADR = 18, PADT = 14, PADB = 38;
   const plotW = W - PADL - PADR, plotH = H - PADT - PADB;
   const svgRef = useRef(null);
   const dragRef = useRef(null);
   const [view, setView] = useState({ cx: 100, cy: 100, z: 1 });
 
-  const baseExt = useMemo(() => {
-    let m = 2;
-    items.forEach(it => it.tail.forEach(p => {
-      m = Math.max(m, Math.abs(p.x - 100), Math.abs(p.y - 100));
-    }));
-    return m * 1.12;
-  }, [items]);
+  // Fester Extent über die gesamte scrubbare Historie — kein Jiggle bei Animation
+  const baseExt = ext;
 
   const half = baseExt / view.z;
   const X = v => PADL + ((v - (view.cx - half)) / (2 * half)) * plotW;
@@ -430,9 +487,10 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen }) {
 }
 
 // ── PACK MANAGER MODAL ───────────────────────────────────────────────────────
-function PackManager({ pack, setPack, onClose }) {
+function PackManager({ pack, setPack, names, setNames, onClose }) {
   const [sel, setSel] = useState("XLK");
   const [inp, setInp] = useState("");
+  const [nameInp, setNameInp] = useState("");
   const titles = pack[sel] || [];
   const selTab = PACK_TABS.find(t => t.key === sel);
 
@@ -441,7 +499,9 @@ function PackManager({ pack, setPack, onClose }) {
     if (!sym) return;
     if (sel === "CRYPTO" && !sym.includes("-") && !sym.includes(".")) sym = `${sym}-USD`;
     setPack(p => ({ ...p, [sel]: [...new Set([...(p[sel] || []), sym])] }));
-    setInp("");
+    const nm = nameInp.trim();
+    if (nm) setNames(n => ({ ...n, [sym]: nm }));
+    setInp(""); setNameInp("");
   };
   const remove = (sym) => setPack(p => ({ ...p, [sel]: (p[sel] || []).filter(s => s !== sym) }));
   const clearSector = () => setPack(p => ({ ...p, [sel]: [] }));
@@ -490,8 +550,11 @@ function PackManager({ pack, setPack, onClose }) {
             <span style={{ fontSize: 10, color: "#3a3a3a", fontFamily: "'DM Mono', monospace", letterSpacing: "0.1em", padding: "8px 0" }}>— leer —</span>
           )}
           {titles.map(t => (
-            <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 8px 6px 12px", borderRadius: 9, background: "rgba(212,175,55,0.07)", border: "1px solid rgba(212,175,55,0.25)", fontFamily: "'DM Mono', monospace", fontSize: 10.5, color: "#f8e49b", letterSpacing: "0.06em" }}>
+            <span key={t} title={names[t] || NAME_DEFAULTS[t] || ""} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 8px 6px 12px", borderRadius: 9, background: "rgba(212,175,55,0.07)", border: "1px solid rgba(212,175,55,0.25)", fontFamily: "'DM Mono', monospace", fontSize: 10.5, color: "#f8e49b", letterSpacing: "0.06em" }}>
               {t}
+              {(names[t] || NAME_DEFAULTS[t]) && (
+                <span style={{ fontSize: 8.5, color: "#8a7440", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.02em", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{names[t] || NAME_DEFAULTS[t]}</span>
+              )}
               <button onClick={() => remove(t)}
                 style={{ background: "none", border: "none", color: "#7a6a3d", cursor: "pointer", fontSize: 10, padding: 0, transition: "color 0.15s" }}
                 onMouseEnter={e => e.currentTarget.style.color = "#ef4444"}
@@ -500,11 +563,17 @@ function PackManager({ pack, setPack, onClose }) {
           ))}
         </div>
 
-        <div style={{ display: "flex", gap: 9, marginBottom: 22 }}>
+        <div style={{ display: "flex", gap: 9, marginBottom: 22, flexWrap: "wrap" }}>
           <input value={inp} onChange={e => setInp(e.target.value.toUpperCase())}
             onKeyDown={e => e.key === "Enter" && add()}
-            placeholder={sel === "CRYPTO" ? "z.B. PEPE (wird zu PEPE-USD)" : "Yahoo-Ticker · z.B. NVDA, BAS.DE, 0700.HK"}
-            style={{ flex: 1, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)", color: "#f8e49b", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.1em", padding: "10px 15px", borderRadius: 11, outline: "none", textTransform: "uppercase" }}
+            placeholder={sel === "CRYPTO" ? "TICKER · z.B. PEPE" : "TICKER · z.B. NVDA, BAS.DE"}
+            style={{ flex: "1 1 180px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)", color: "#f8e49b", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.1em", padding: "10px 15px", borderRadius: 11, outline: "none", textTransform: "uppercase" }}
+            onFocus={e => e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"}
+            onBlur={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.09)"} />
+          <input value={nameInp} onChange={e => setNameInp(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && add()}
+            placeholder="Voller Name · z.B. NVIDIA Corp. (optional)"
+            style={{ flex: "2 1 240px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)", color: "#c9c9c9", fontFamily: "'Montserrat', sans-serif", fontSize: 12, padding: "10px 15px", borderRadius: 11, outline: "none" }}
             onFocus={e => e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"}
             onBlur={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.09)"} />
           <button onClick={add}
@@ -535,6 +604,7 @@ export default function RRG() {
   const [benchMode, setBenchMode] = useState("SECTOR");
   const [vsxPack, setVsxPack] = useState(true);
   const [pack, setPack] = useState(loadPack);
+  const [names, setNames] = useState(loadNames);
   const [showManager, setShowManager] = useState(false);
   const [customAdd, setCustomAdd] = useState({});
   const [removed, setRemoved] = useState({});
@@ -554,6 +624,9 @@ export default function RRG() {
   useEffect(() => {
     try { localStorage.setItem(PACK_STORAGE_KEY, JSON.stringify(pack)); } catch { /* private mode */ }
   }, [pack]);
+  useEffect(() => {
+    try { localStorage.setItem(NAMES_STORAGE_KEY, JSON.stringify(names)); } catch { /* private mode */ }
+  }, [names]);
 
   // Animate: fließend via requestAnimationFrame (interpolierte Frames)
   useEffect(() => {
@@ -653,6 +726,19 @@ export default function RRG() {
       return tail ? { ...it, tail } : null;
     }).filter(Boolean),
   [fullItems, offset, tailLen]);
+
+  // Fester Chart-Extent über die komplette scrubbare Range (stoppt Skalen-Jiggle)
+  const chartExt = useMemo(() => {
+    let m = 2;
+    fullItems.forEach(it => {
+      const len = it.full.xs.length;
+      const start = Math.max(0, len - MAX_OFFSET - tailLen);
+      for (let i = start; i < len; i++) {
+        m = Math.max(m, Math.abs(it.full.xs[i] - 100), Math.abs(it.full.ys[i] - 100));
+      }
+    });
+    return m * 1.08;
+  }, [fullItems, tailLen]);
 
   const sorted = useMemo(() => {
     const arr = [...items];
@@ -850,7 +936,7 @@ export default function RRG() {
               </div>
             )}
             {items.length > 0 ? (
-              <RRGChart key={viewKey + interval_} items={items} hovered={hovered} setHovered={setHovered} tailLen={tailLen}
+              <RRGChart key={viewKey + interval_} items={items} hovered={hovered} setHovered={setHovered} tailLen={tailLen} ext={chartExt}
                 onNodeClick={preset.drillable && !drill
                   ? (it) => { setDrill(it.symbol); setBenchMode("SECTOR"); setHovered(null); setOffset(0); setPlaying(false); }
                   : null} />
@@ -928,6 +1014,7 @@ export default function RRG() {
                 <tr style={{ fontSize: 8.5, letterSpacing: "0.16em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, textTransform: "uppercase" }}>
                   <th style={{ padding: "6px 9px", textAlign: "left", color: "#555" }}>Tail</th>
                   {th("alpha", "Symbol")}
+                  <th style={{ padding: "6px 9px", textAlign: "left", color: "#555" }}>Name</th>
                   {th("quad", "Quadrant")}
                   {th("rsr", "RS-Ratio", "right")}
                   {th("rsm", "RS-Momentum", "right")}
@@ -956,6 +1043,9 @@ export default function RRG() {
                         {it.label}
                         {it.vsx && <span style={{ marginLeft: 6, fontSize: 6.5, color: "#8a7440", letterSpacing: "0.12em" }}>◆ VSX</span>}
                       </td>
+                      <td style={{ padding: "8px 9px", color: "#8f8f8f", fontFamily: "'Montserrat', sans-serif", fontSize: 10.5, maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {names[it.symbol] || NAME_DEFAULTS[it.symbol] || "—"}
+                      </td>
                       <td style={{ padding: "8px 9px" }}>
                         <span style={{ fontSize: 8, letterSpacing: "0.12em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, color: QUAD_COLOR[q], background: `${QUAD_COLOR[q]}14`, border: `1px solid ${QUAD_COLOR[q]}30`, padding: "2.5px 9px", borderRadius: 20 }}>{q}</span>
                       </td>
@@ -978,7 +1068,7 @@ export default function RRG() {
         </div>
       </div>
 
-      {showManager && <PackManager pack={pack} setPack={setPack} onClose={() => setShowManager(false)} />}
+      {showManager && <PackManager pack={pack} setPack={setPack} names={names} setNames={setNames} onClose={() => setShowManager(false)} />}
     </div>
   );
 }
