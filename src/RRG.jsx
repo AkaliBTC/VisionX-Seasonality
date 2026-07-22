@@ -31,20 +31,35 @@ const PRESETS = [
     members: SECTORS.map(s => ({ symbol: s.etf, label: s.etf })),
   },
   {
+    id: "countries", label: "COUNTRIES", bench: "SPY", drillable: false,
+    // USD-notierte Länder-ETFs — währungsbereinigt, sauber gegen SPY vergleichbar
+    members: [
+      ["EWG","GER"],["EWQ","FRA"],["EWU","UK"],["EWL","SUI"],["EWI","ITA"],["EWP","ESP"],
+      ["EWJ","JPN"],["EWY","KOR"],["EWT","TWN"],["MCHI","CHN"],["EWH","HK"],["INDA","IND"],
+      ["EWZ","BRA"],["EWW","MEX"],["EWC","CAN"],["EWA","AUS"],
+    ].map(([s, l]) => ({ symbol: s, label: l })),
+  },
+  {
     id: "crypto", label: "CRYPTO", bench: "BTC-USD", drillable: false, cryptoSuffix: true,
-    members: ["ETH","SOL","BNB","XRP","ADA","AVAX","DOGE","LINK","DOT","LTC"]
+    // Eure Crypto-Watchlist — Alts rotieren gegen BTC (Binance-first via API)
+    members: ["ETH","SOL","LINK","TRX","SUI","TAO","XRP","XLM","HYPE","FET","DOGE","PEPE","AKT","ZEC"]
       .map(c => ({ symbol: `${c}-USD`, label: c })),
   },
 ];
 
-// ── VISIONX WATCHLIST · gold markiert, je View-Key ───────────────────────────
-// Keys: Preset-Id oder "sectors:XLV" für Drilldowns. Hier eure Titel pflegen.
-const VSX_WATCHLIST = {
-  "sectors:XLK": ["MSFT"],
-  "sectors:XLF": ["FI"],
-  "sectors:XLV": ["HIMS", "JNJ"],
-  "sectors:XLY": ["BABA"],
-  "crypto": [],
+// ── VSX PACK · eure Watchlist-Titel je Sektor (Toggle im Drilldown) ──────────
+const VSX_PACK = {
+  XLK:  ["ADBE","AMD","AAPL","INTC","MSFT","NVDA","PLTR","QBTS","RGTI","SNDK","WDAY","1810.HK"],
+  XLF:  ["AXP","BRK-B","CRCL","COIN","FIS","FI","GS","JPM"],
+  XLV:  ["BAYN.DE","HIMS","ILMN","JNJ","MRNA","MOH","NOVO-B.CO","PFE","REGN","UNH"],
+  XLY:  ["ADS.DE","BABA","AMZN","BMW.DE","RACE.MI","LULU","MC.PA","MBG.DE","P911.DE","PHM","TSLA","TSCO","VSCO"],
+  XLP:  ["EL","LISN.SW","OR.PA","NESN.SW","RI.PA"],
+  XLE:  ["CVX","OXY"],
+  XLI:  ["GE","RHM.DE"],
+  XLB:  ["AEM","ALB","B","BAS.DE","DOW","AG","FCX","FRES.L","LAC","NEM","PAAS","SCCO"],
+  XLRE: ["IRM"],
+  XLU:  [],
+  XLC:  ["ASTS","GOOGL","META","NFLX","RDDT","TMUS","0700.HK","TME"],
 };
 
 const SECTOR_COLORS = {
@@ -212,6 +227,7 @@ export default function RRG() {
   const [interval_, setInterval_] = useState("1d");
   const [tailLen, setTailLen] = useState(5);
   const [benchMode, setBenchMode] = useState("SECTOR");     // Drilldown-Basis: "SECTOR" | "TOP"
+  const [vsxPack, setVsxPack] = useState(true);             // VSX Pack im Drilldown mergen
   const [customAdd, setCustomAdd] = useState({});           // viewKey → [symbols]
   const [removed, setRemoved] = useState({});               // viewKey → Set-Array
   const [addInput, setAddInput] = useState("");
@@ -232,27 +248,24 @@ export default function RRG() {
     : preset.bench;
   const benchLabel = benchSym.replace("-USD", "");
 
-  // Universum der aktuellen View: Preset-Members bzw. Holdings + Watchlist + Custom − Removed
+  // Universum der aktuellen View: Members/Holdings + VSX Pack (Toggle) + Custom − Removed
   const universe = useMemo(() => {
     const rm = new Set(removed[viewKey] || []);
     const custom = customAdd[viewKey] || [];
     let base;
     if (drill) {
+      const pack = vsxPack ? (VSX_PACK[drill] || []) : [];
       base = [
-        ...drillSector.holdings.map(h => ({ symbol: h, label: h, vsx: false })),
-        ...(VSX_WATCHLIST[viewKey] || []).filter(w => !drillSector.holdings.includes(w))
-          .map(w => ({ symbol: w, label: w, vsx: true })),
+        ...drillSector.holdings.filter(h => !pack.includes(h)).map(h => ({ symbol: h, label: h, vsx: false })),
+        ...pack.map(w => ({ symbol: w, label: w.replace(/\.[A-Z]+$|-USD$/, ""), vsx: true })),
       ];
     } else {
-      base = [
-        ...preset.members.map(m => ({ ...m, vsx: false })),
-        ...(VSX_WATCHLIST[viewKey] || []).map(w => ({ symbol: w, label: w.replace("-USD", ""), vsx: true })),
-      ];
+      base = preset.members.map(m => ({ ...m, vsx: false }));
     }
     const known = new Set(base.map(b => b.symbol));
     custom.forEach(c => { if (!known.has(c)) base.push({ symbol: c, label: c.replace("-USD", ""), vsx: false, custom: true }); });
     return base.filter(b => !rm.has(b.symbol) && b.symbol !== benchSym);
-  }, [preset, drill, drillSector, viewKey, customAdd, removed, benchSym]);
+  }, [preset, drill, drillSector, viewKey, customAdd, removed, benchSym, vsxPack]);
 
   const neededSymbols = useMemo(
     () => [...new Set([benchSym, ...universe.map(u => u.symbol)])],
@@ -369,21 +382,26 @@ export default function RRG() {
       </div>
 
       {/* PRESETS + DRILL-BREADCRUMB */}
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 9, marginBottom: 14 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 9, marginBottom: 10 }}>
         {PRESETS.map(p => (
           <button key={p.id} style={pill(presetId === p.id && !drill)}
             onClick={() => { setPresetId(p.id); setDrill(null); setHovered(null); }}>
             {p.label}
           </button>
         ))}
-        {drill && (
-          <>
-            <span style={{ color: "#3a3a3a", fontSize: 11 }}>›</span>
-            <button style={pill(true)} onClick={() => {}}>{drill}</button>
-            <button style={{ ...pill(false), padding: "9px 13px" }} onClick={() => { setDrill(null); setHovered(null); }}>✕</button>
-          </>
-        )}
       </div>
+      {presetId === "sectors" && (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 14 }}>
+          {SECTORS.map(s => (
+            <button key={s.etf} title={s.name}
+              style={{ ...pill(drill === s.etf), padding: "6.5px 12px", fontSize: 9, letterSpacing: "0.12em",
+                color: drill === s.etf ? "#f8e49b" : (SECTOR_COLORS[s.etf] ? `${SECTOR_COLORS[s.etf]}aa` : "#777") }}
+              onClick={() => { setDrill(d => d === s.etf ? null : s.etf); setBenchMode("SECTOR"); setHovered(null); }}>
+              {s.etf}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* CONTROLS */}
       <div style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 11, padding: "13px 16px", marginBottom: 20 }}>
@@ -400,6 +418,16 @@ export default function RRG() {
             <div style={divider} />
             <button style={pill(benchMode === "SECTOR")} onClick={() => setBenchMode("SECTOR")}>vs {drill}</button>
             <button style={pill(benchMode === "TOP")} onClick={() => setBenchMode("TOP")}>vs {preset.bench}</button>
+            <div style={divider} />
+            <button onClick={() => setVsxPack(v => !v)} title="VisionX-Watchlist-Titel dieses Sektors ein-/ausblenden"
+              style={{ ...pill(vsxPack), display: "flex", alignItems: "center", gap: 7,
+                color: vsxPack ? GOLD : "#777",
+                textShadow: vsxPack ? "0 0 10px rgba(212,175,55,0.5)" : "none" }}>
+              <span style={{ fontSize: 8 }}>◆</span> VSX PACK
+              {vsxPack && VSX_PACK[drill]?.length > 0 && (
+                <span style={{ fontSize: 8, color: "#b99c64" }}>{VSX_PACK[drill].length}</span>
+              )}
+            </button>
           </>
         )}
         <div style={divider} />

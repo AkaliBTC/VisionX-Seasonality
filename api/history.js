@@ -34,6 +34,21 @@ const fetchYahoo = async (symbol, range, interval) => {
   return null;
 };
 
+// Krypto: Binance Public Data Mirror (data-api.binance.vision — kein Geo-Block
+// auf US-Vercel-Regionen). "-USD"-Symbole werden als ‹BASE›USDT geladen.
+const fetchBinance = async (symbol, interval) => {
+  try {
+    const base = symbol.replace(/-USD$/, "");
+    const iv = interval === "1wk" ? "1w" : "1d";
+    const url = `https://data-api.binance.vision/api/v3/klines?symbol=${base}USDT&interval=${iv}&limit=750`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length < 30) return null;
+    return rows.map(r => [r[0], parseFloat(r[4])]).filter(([, c]) => Number.isFinite(c));
+  } catch { return null; }
+};
+
 const fetchTwelveData = async (symbol, interval) => {
   if (!TD_KEY) return null;
   try {
@@ -63,7 +78,9 @@ export default async function handler(req, res) {
   // Batches à 6 parallel — schnell genug, ohne Yahoo zu triggern
   for (let i = 0; i < symbols.length; i += 6) {
     await Promise.all(symbols.slice(i, i + 6).map(async sym => {
-      let series = await fetchYahoo(sym, range, interval);
+      let series = null;
+      if (/-USD$/.test(sym)) series = await fetchBinance(sym, interval);
+      if (!series) series = await fetchYahoo(sym, range, interval);
       if (!series) series = await fetchTwelveData(sym, interval);
       if (series) data[sym] = series; else failed.push(sym);
     }));
