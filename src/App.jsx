@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Seasonality from "./Charts";
 import RRG from "./RRG";
+import VIX from "./VIX";
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · MODULE HUB
@@ -11,6 +12,7 @@ import RRG from "./RRG";
 const MODULES = [
   { id: "seasonality", label: "SEASONALITY" },
   { id: "rrg",         label: "RRG" },
+  { id: "vix",         label: "VIX ANALYSIS" },
 ];
 
 // Subline-Tabs im Stil der alten .logo-sub (7px, letterspaced, gold)
@@ -70,7 +72,7 @@ export default function App() {
         body { margin: 0; background: #121212; }
       `}</style>
       <HubHeader nav={nav} />
-      <RRG />
+      {active === "rrg" ? <RRG /> : <VIX />}
     </div>
   );
 }

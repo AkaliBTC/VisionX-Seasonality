@@ -13,7 +13,7 @@ const TD_KEY = process.env.TD_KEY || ""; // Vercel → Settings → Environment 
 
 const YAHOO_HOSTS = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
 
-const fetchYahoo = async (symbol, range, interval) => {
+const fetchYahoo = async (symbol, range, interval, ohlc = false) => {
   for (const host of YAHOO_HOSTS) {
     try {
       const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&events=div%2Csplit`;
@@ -22,11 +22,17 @@ const fetchYahoo = async (symbol, range, interval) => {
       const json = await res.json();
       const r = json?.chart?.result?.[0];
       const ts = r?.timestamp;
-      const closes = r?.indicators?.quote?.[0]?.close;
-      if (!ts || !closes) continue;
+      const q = r?.indicators?.quote?.[0];
+      if (!ts || !q?.close) continue;
       const out = [];
       for (let i = 0; i < ts.length; i++) {
-        if (closes[i] != null) out.push([ts[i] * 1000, +closes[i].toFixed(6)]);
+        if (q.close[i] == null) continue;
+        if (ohlc) {
+          if (q.open[i] == null || q.high[i] == null || q.low[i] == null) continue;
+          out.push([ts[i] * 1000, +q.open[i].toFixed(4), +q.high[i].toFixed(4), +q.low[i].toFixed(4), +q.close[i].toFixed(4)]);
+        } else {
+          out.push([ts[i] * 1000, +q.close[i].toFixed(6)]);
+        }
       }
       if (out.length > 30) return out;
     } catch { /* nächster Host / Fallback */ }
@@ -36,7 +42,7 @@ const fetchYahoo = async (symbol, range, interval) => {
 
 // Krypto: Binance Public Data Mirror (data-api.binance.vision — kein Geo-Block
 // auf US-Vercel-Regionen). "-USD"-Symbole werden als ‹BASE›USDT geladen.
-const fetchBinance = async (symbol, interval) => {
+const fetchBinance = async (symbol, interval, ohlc = false) => {
   try {
     const base = symbol.replace(/-USD$/, "");
     const iv = interval === "1wk" ? "1w" : "1d";
@@ -45,11 +51,13 @@ const fetchBinance = async (symbol, interval) => {
     if (!res.ok) return null;
     const rows = await res.json();
     if (!Array.isArray(rows) || rows.length < 30) return null;
-    return rows.map(r => [r[0], parseFloat(r[4])]).filter(([, c]) => Number.isFinite(c));
+    return ohlc
+      ? rows.map(r => [r[0], parseFloat(r[1]), parseFloat(r[2]), parseFloat(r[3]), parseFloat(r[4])]).filter(r => r.every(Number.isFinite))
+      : rows.map(r => [r[0], parseFloat(r[4])]).filter(([, c]) => Number.isFinite(c));
   } catch { return null; }
 };
 
-const fetchTwelveData = async (symbol, interval) => {
+const fetchTwelveData = async (symbol, interval, ohlc = false) => {
   if (!TD_KEY) return null;
   try {
     const tdInterval = interval === "1wk" ? "1week" : "1day";
@@ -58,8 +66,10 @@ const fetchTwelveData = async (symbol, interval) => {
     const json = await res.json();
     if (json.status === "error" || !json.values) return null;
     return json.values
-      .map(v => [new Date(v.datetime + "T00:00:00Z").getTime(), parseFloat(v.close)])
-      .filter(([, c]) => Number.isFinite(c))
+      .map(v => ohlc
+        ? [new Date(v.datetime + "T00:00:00Z").getTime(), parseFloat(v.open), parseFloat(v.high), parseFloat(v.low), parseFloat(v.close)]
+        : [new Date(v.datetime + "T00:00:00Z").getTime(), parseFloat(v.close)])
+      .filter(r => r.slice(1).every(Number.isFinite))
       .reverse();
   } catch { return null; }
 };
@@ -69,6 +79,7 @@ export default async function handler(req, res) {
     .split(",").map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 30);
   const interval = req.query.interval === "1wk" ? "1wk" : "1d";
   const range = /^\d+(y|mo)$/.test(req.query.range || "") ? req.query.range : "2y";
+  const ohlc = req.query.ohlc === "1";
 
   if (!symbols.length) return res.status(400).json({ error: "symbols required" });
 
@@ -79,14 +90,14 @@ export default async function handler(req, res) {
   for (let i = 0; i < symbols.length; i += 6) {
     await Promise.all(symbols.slice(i, i + 6).map(async sym => {
       let series = null;
-      if (/-USD$/.test(sym)) series = await fetchBinance(sym, interval);
-      if (!series) series = await fetchYahoo(sym, range, interval);
-      if (!series) series = await fetchTwelveData(sym, interval);
+      if (/-USD$/.test(sym)) series = await fetchBinance(sym, interval, ohlc);
+      if (!series) series = await fetchYahoo(sym, range, interval, ohlc);
+      if (!series) series = await fetchTwelveData(sym, interval, ohlc);
       if (series) data[sym] = series; else failed.push(sym);
     }));
   }
 
   res.setHeader("Cache-Control", "public, s-maxage=43200, stale-while-revalidate=86400");
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.status(200).json({ interval, range, asOf: Date.now(), failed, data });
+  res.status(200).json({ interval, range, ohlc, asOf: Date.now(), failed, data });
 }
