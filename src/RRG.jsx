@@ -161,10 +161,10 @@ const smoothSegs = (pts) => {
   return segs;
 };
 
-// ── CHART (zoombar: Wheel · Drag · Buttons) ──────────────────────────────────
+// ── CHART (breites Rechteck · zoombar: Wheel · Drag · Buttons) ───────────────
 function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen }) {
-  const SIZE = 680, PAD = 46;
-  const plot = SIZE - PAD * 2;
+  const W = 1180, H = 540, PADL = 52, PADR = 18, PADT = 16, PADB = 40;
+  const plotW = W - PADL - PADR, plotH = H - PADT - PADB;
   const svgRef = useRef(null);
   const dragRef = useRef(null);
   const [view, setView] = useState({ cx: 100, cy: 100, z: 1 });
@@ -174,25 +174,23 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen }) {
     items.forEach(it => it.tail.forEach(p => {
       m = Math.max(m, Math.abs(p.x - 100), Math.abs(p.y - 100));
     }));
-    return m * 1.15;
+    return m * 1.12;
   }, [items]);
 
   const half = baseExt / view.z;
-  const X = v => PAD + ((v - (view.cx - half)) / (2 * half)) * plot;
-  const Y = v => PAD + (1 - (v - (view.cy - half)) / (2 * half)) * plot;
-  const invX = px => (view.cx - half) + ((px - PAD) / plot) * 2 * half;
-  const invY = py => (view.cy - half) + (1 - (py - PAD) / plot) * 2 * half;
+  const X = v => PADL + ((v - (view.cx - half)) / (2 * half)) * plotW;
+  const Y = v => PADT + (1 - (v - (view.cy - half)) / (2 * half)) * plotH;
 
   const zoomAt = useCallback((factor, px, py) => {
     setView(v => {
       const z = Math.min(8, Math.max(1, v.z * factor));
       if (z === 1) return { cx: 100, cy: 100, z: 1 };
       const h0 = baseExt / v.z, h1 = baseExt / z;
-      const dx = px != null ? (v.cx - h0 + ((px - PAD) / plot) * 2 * h0) : v.cx;
-      const dy = py != null ? (v.cy - h0 + (1 - (py - PAD) / plot) * 2 * h0) : v.cy;
+      const dx = px != null ? (v.cx - h0 + ((px - PADL) / plotW) * 2 * h0) : v.cx;
+      const dy = py != null ? (v.cy - h0 + (1 - (py - PADT) / plotH) * 2 * h0) : v.cy;
       return { z, cx: dx - (dx - v.cx) * (h1 / h0), cy: dy - (dy - v.cy) * (h1 / h0) };
     });
-  }, [baseExt, plot]);
+  }, [baseExt, plotW, plotH]);
 
   // Wheel-Zoom (non-passive, damit die Seite nicht mitscrollt)
   useEffect(() => {
@@ -201,8 +199,8 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen }) {
     const onWheel = (e) => {
       e.preventDefault();
       const r = el.getBoundingClientRect();
-      const px = ((e.clientX - r.left) / r.width) * SIZE;
-      const py = ((e.clientY - r.top) / r.height) * SIZE;
+      const px = ((e.clientX - r.left) / r.width) * W;
+      const py = ((e.clientY - r.top) / r.height) * H;
       zoomAt(e.deltaY < 0 ? 1.18 : 1 / 1.18, px, py);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -218,15 +216,16 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen }) {
     const d = dragRef.current;
     if (!d) return;
     const r = svgRef.current.getBoundingClientRect();
-    const scale = (2 * half) / (plot * (r.width / SIZE));
-    setView(v => ({ ...v, cx: d.cx - (e.clientX - d.x) * scale, cy: d.cy + (e.clientY - d.y) * scale }));
+    const sx = (2 * half) / (plotW * (r.width / W));
+    const sy = (2 * half) / (plotH * (r.height / H));
+    setView(v => ({ ...v, cx: d.cx - (e.clientX - d.x) * sx, cy: d.cy + (e.clientY - d.y) * sy }));
   };
   const onPointerUp = () => { dragRef.current = null; };
 
   const zoomBtn = {
-    width: 32, height: 32, borderRadius: 9, cursor: "pointer",
+    width: 30, height: 30, borderRadius: 9, cursor: "pointer",
     background: "rgba(18,18,18,0.75)", border: "1px solid rgba(255,255,255,0.1)",
-    color: "#c9c9c9", fontSize: 14, fontFamily: "'DM Mono', monospace",
+    color: "#c9c9c9", fontSize: 13, fontFamily: "'DM Mono', monospace",
     backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
     display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.2s",
   };
@@ -241,44 +240,44 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen }) {
     if (Math.abs(g - 100) > 1e-9) gridLines.push({ o: "h", v: g });
   }
 
+  const cxP = X(100), cyP = Y(100);
+  const R = W - PADR, B = H - PADB;
+
   return (
     <div style={{ position: "relative" }}>
-      <svg ref={svgRef} viewBox={`0 0 ${SIZE} ${SIZE}`}
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
-        style={{ width: "100%", maxWidth: 960, display: "block", margin: "0 auto", touchAction: "none", cursor: view.z > 1 ? "grab" : "default" }}>
+        style={{ width: "100%", display: "block", touchAction: "none", cursor: view.z > 1 ? "grab" : "default" }}>
         <defs>
-          <clipPath id="rrg-clip"><rect x={PAD} y={PAD} width={plot} height={plot} rx="3" /></clipPath>
-          <radialGradient id="rrg-glow-lead" cx="100%" cy="0%" r="90%">
-            <stop offset="0%" stopColor="rgba(34,197,94,0.09)" /><stop offset="60%" stopColor="transparent" />
-          </radialGradient>
-          <radialGradient id="rrg-glow-lag" cx="0%" cy="100%" r="90%">
-            <stop offset="0%" stopColor="rgba(239,68,68,0.08)" /><stop offset="60%" stopColor="transparent" />
-          </radialGradient>
-          <radialGradient id="rrg-glow-imp" cx="0%" cy="0%" r="90%">
-            <stop offset="0%" stopColor="rgba(99,182,255,0.07)" /><stop offset="60%" stopColor="transparent" />
-          </radialGradient>
-          <radialGradient id="rrg-glow-weak" cx="100%" cy="100%" r="90%">
-            <stop offset="0%" stopColor="rgba(250,204,21,0.06)" /><stop offset="60%" stopColor="transparent" />
-          </radialGradient>
+          <clipPath id="rrg-clip"><rect x={PADL} y={PADT} width={plotW} height={plotH} rx="4" /></clipPath>
+          <linearGradient id="q-lead" x1="0" y1="1" x2="1" y2="0">
+            <stop offset="0%" stopColor="rgba(34,197,94,0.03)" /><stop offset="100%" stopColor="rgba(34,197,94,0.14)" />
+          </linearGradient>
+          <linearGradient id="q-weak" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="rgba(250,204,21,0.025)" /><stop offset="100%" stopColor="rgba(250,204,21,0.11)" />
+          </linearGradient>
+          <linearGradient id="q-lag" x1="1" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="rgba(239,68,68,0.03)" /><stop offset="100%" stopColor="rgba(239,68,68,0.13)" />
+          </linearGradient>
+          <linearGradient id="q-imp" x1="1" y1="1" x2="0" y2="0">
+            <stop offset="0%" stopColor="rgba(99,182,255,0.03)" /><stop offset="100%" stopColor="rgba(99,182,255,0.12)" />
+          </linearGradient>
         </defs>
 
-        {/* Plot-Fläche: Glass-Gradient statt toter Fläche */}
-        <rect x={PAD} y={PAD} width={plot} height={plot} rx="3" fill="rgba(255,255,255,0.015)" />
+        <rect x={PADL} y={PADT} width={plotW} height={plotH} rx="4" fill="rgba(255,255,255,0.012)" />
         <g clipPath="url(#rrg-clip)">
-          {/* Quadranten-Glows von den Ecken */}
-          <rect x={X(100)} y={PAD} width={Math.max(0, SIZE - PAD - X(100))} height={Math.max(0, Y(100) - PAD)} fill="url(#rrg-glow-lead)" />
-          <rect x={X(100)} y={Y(100)} width={Math.max(0, SIZE - PAD - X(100))} height={Math.max(0, SIZE - PAD - Y(100))} fill="url(#rrg-glow-weak)" />
-          <rect x={PAD} y={Y(100)} width={Math.max(0, X(100) - PAD)} height={Math.max(0, SIZE - PAD - Y(100))} fill="url(#rrg-glow-lag)" />
-          <rect x={PAD} y={PAD} width={Math.max(0, X(100) - PAD)} height={Math.max(0, Y(100) - PAD)} fill="url(#rrg-glow-imp)" />
+          {/* Quadranten — Gradient zur Ecke, klar unterscheidbar */}
+          <rect x={cxP} y={PADT} width={Math.max(0, R - cxP)} height={Math.max(0, cyP - PADT)} fill="url(#q-lead)" />
+          <rect x={cxP} y={cyP} width={Math.max(0, R - cxP)} height={Math.max(0, B - cyP)} fill="url(#q-weak)" />
+          <rect x={PADL} y={cyP} width={Math.max(0, cxP - PADL)} height={Math.max(0, B - cyP)} fill="url(#q-lag)" />
+          <rect x={PADL} y={PADT} width={Math.max(0, cxP - PADL)} height={Math.max(0, cyP - PADT)} fill="url(#q-imp)" />
 
-          {/* Feines Grid */}
           {gridLines.map((g, i) => g.o === "v"
-            ? <line key={i} x1={X(g.v)} y1={PAD} x2={X(g.v)} y2={SIZE - PAD} stroke="rgba(255,255,255,0.028)" />
-            : <line key={i} x1={PAD} y1={Y(g.v)} x2={SIZE - PAD} y2={Y(g.v)} stroke="rgba(255,255,255,0.028)" />)}
+            ? <line key={i} x1={X(g.v)} y1={PADT} x2={X(g.v)} y2={B} stroke="rgba(255,255,255,0.03)" />
+            : <line key={i} x1={PADL} y1={Y(g.v)} x2={R} y2={Y(g.v)} stroke="rgba(255,255,255,0.03)" />)}
 
-          {/* Achsen bei 100 */}
-          <line x1={X(100)} y1={PAD} x2={X(100)} y2={SIZE - PAD} stroke="rgba(255,255,255,0.16)" strokeDasharray="2 6" />
-          <line x1={PAD} y1={Y(100)} x2={SIZE - PAD} y2={Y(100)} stroke="rgba(255,255,255,0.16)" strokeDasharray="2 6" />
+          <line x1={cxP} y1={PADT} x2={cxP} y2={B} stroke="rgba(255,255,255,0.18)" strokeDasharray="2 6" />
+          <line x1={PADL} y1={cyP} x2={R} y2={cyP} stroke="rgba(255,255,255,0.18)" strokeDasharray="2 6" />
 
           {/* Tails + Nodes */}
           {items.map(it => {
@@ -299,11 +298,11 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen }) {
                 {pts.slice(0, -1).map((p, i) => (
                   <circle key={"d" + i} cx={p.x} cy={p.y} r={1.8} fill={it.color} opacity={0.18 + 0.55 * (i / Math.max(1, tailLen - 1))} />
                 ))}
-                {it.vsx && <circle cx={X(head.x)} cy={Y(head.y)} r={9.5} fill="none" stroke={GOLD} strokeWidth={0.75} opacity={0.45} />}
-                <circle cx={X(head.x)} cy={Y(head.y)} r={it.vsx ? 5.4 : 5.4} fill={it.color}
+                {it.vsx && <circle cx={X(head.x)} cy={Y(head.y)} r={9} fill="none" stroke={GOLD} strokeWidth={0.75} opacity={0.45} />}
+                <circle cx={X(head.x)} cy={Y(head.y)} r={5.2} fill={it.color}
                   stroke={it.vsx ? GOLD : "#0a0a0a"} strokeWidth={it.vsx ? 1.2 : 1.4}
                   style={it.vsx ? { filter: "drop-shadow(0 0 5px rgba(212,175,55,0.55))" } : {}} />
-                <text x={X(head.x)} y={Y(head.y) - 11} textAnchor="middle"
+                <text x={X(head.x)} y={Y(head.y) - 10.5} textAnchor="middle"
                   fill={it.vsx ? "#f8e49b" : "#eaeaea"}
                   style={{ font: `700 ${it.vsx ? 11 : 10.5}px Montserrat, sans-serif`, letterSpacing: "0.06em", paintOrder: "stroke", stroke: "#0a0a0add", strokeWidth: 3.5 }}>
                   {it.label}
@@ -313,20 +312,19 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen }) {
           })}
         </g>
 
-        {/* Rahmen + Labels */}
-        <rect x={PAD} y={PAD} width={plot} height={plot} rx="3" fill="none" stroke="rgba(255,255,255,0.09)" />
-        {[["LEADING", SIZE - PAD - 10, PAD + 20, "end", "#22c55e"], ["WEAKENING", SIZE - PAD - 10, SIZE - PAD - 12, "end", "#facc15"],
-          ["LAGGING", PAD + 10, SIZE - PAD - 12, "start", "#ef4444"], ["IMPROVING", PAD + 10, PAD + 20, "start", "#63b6ff"]]
+        <rect x={PADL} y={PADT} width={plotW} height={plotH} rx="4" fill="none" stroke="rgba(255,255,255,0.09)" />
+        {[["LEADING", R - 12, PADT + 20, "end", "#22c55e"], ["WEAKENING", R - 12, B - 12, "end", "#facc15"],
+          ["LAGGING", PADL + 12, B - 12, "start", "#ef4444"], ["IMPROVING", PADL + 12, PADT + 20, "start", "#63b6ff"]]
           .map(([label, x, y, anchor, col]) => (
-            <text key={label} x={x} y={y} textAnchor={anchor} fill={col} opacity={0.5}
-              style={{ font: "700 10.5px Montserrat, sans-serif", letterSpacing: "0.26em" }}>{label}</text>
+            <text key={label} x={x} y={y} textAnchor={anchor} fill={col} opacity={0.6}
+              style={{ font: "700 11px Montserrat, sans-serif", letterSpacing: "0.26em" }}>{label}</text>
           ))}
-        <text x={SIZE / 2} y={SIZE - 12} textAnchor="middle" fill="#4a4a4a" style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>JDK RS-RATIO →</text>
-        <text x={14} y={SIZE / 2} textAnchor="middle" fill="#4a4a4a" transform={`rotate(-90 14 ${SIZE / 2})`} style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>JDK RS-MOMENTUM →</text>
+        <text x={PADL + plotW / 2} y={H - 10} textAnchor="middle" fill="#4a4a4a" style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>JDK RS-RATIO →</text>
+        <text x={16} y={PADT + plotH / 2} textAnchor="middle" fill="#4a4a4a" transform={`rotate(-90 16 ${PADT + plotH / 2})`} style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>JDK RS-MOMENTUM →</text>
       </svg>
 
       {/* Zoom-Controls */}
-      <div style={{ position: "absolute", top: 14, right: 14, display: "flex", flexDirection: "column", gap: 7 }}>
+      <div style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: 7 }}>
         <button style={zoomBtn} onClick={() => zoomAt(1.35)} title="Zoom in"
           onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"; e.currentTarget.style.color = "#f8e49b"; }}
           onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "#c9c9c9"; }}>＋</button>
@@ -339,7 +337,7 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen }) {
         )}
       </div>
       {view.z > 1 && (
-        <div style={{ position: "absolute", bottom: 16, right: 16, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#666", letterSpacing: "0.14em", background: "rgba(18,18,18,0.7)", padding: "4px 9px", borderRadius: 7, backdropFilter: "blur(10px)" }}>
+        <div style={{ position: "absolute", bottom: 14, right: 14, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#666", letterSpacing: "0.14em", background: "rgba(18,18,18,0.7)", padding: "4px 9px", borderRadius: 7, backdropFilter: "blur(10px)" }}>
           {view.z.toFixed(1)}× · DRAG TO PAN
         </div>
       )}
@@ -459,7 +457,7 @@ export default function RRG() {
   const [customAdd, setCustomAdd] = useState({});
   const [removed, setRemoved] = useState({});
   const [addInput, setAddInput] = useState("");
-  const [sort, setSort] = useState({ key: "rsr", dir: "desc" });
+  const [sort, setSort] = useState({ key: "quad", dir: "asc" });
   const [raw, setRaw] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -539,9 +537,11 @@ export default function RRG() {
   const sorted = useMemo(() => {
     const arr = [...items];
     const head = it => it.tail[it.tail.length - 1];
+    const dist = it => { const h = head(it); return Math.hypot(h.x - 100, h.y - 100); };
     const cmp = {
       alpha: (a, b) => a.label.localeCompare(b.label),
-      quad:  (a, b) => (QUAD_ORDER[quadrantOf(head(a).x, head(a).y)] - QUAD_ORDER[quadrantOf(head(b).x, head(b).y)]) || (head(b).x - head(a).x),
+      // Quadranten-Gruppen, innerhalb vom Extrem (Leader) zum Zentrum (Basic)
+      quad:  (a, b) => (QUAD_ORDER[quadrantOf(head(a).x, head(a).y)] - QUAD_ORDER[quadrantOf(head(b).x, head(b).y)]) || (dist(b) - dist(a)),
       rsr:   (a, b) => head(a).x - head(b).x,
       rsm:   (a, b) => head(a).y - head(b).y,
     }[sort.key];
@@ -602,9 +602,9 @@ export default function RRG() {
         <div style={{ position: "absolute", top: "34%", left: "42%", width: 500, height: 500, borderRadius: "50%", background: "radial-gradient(circle, rgba(255,255,255,0.02), transparent 60%)", filter: "blur(40px)" }} />
       </div>
 
-      <div style={{ position: "relative", zIndex: 1, maxWidth: 1280, margin: "0 auto", padding: "30px 24px 80px" }}>
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 1280, margin: "0 auto", padding: "22px 24px 60px" }}>
         {/* TITELZEILE */}
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 14, marginBottom: 20 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 14, marginBottom: 12 }}>
           <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 27, letterSpacing: "0.2em", color: "#fdfdfd" }}>
             RELATIVE ROTATION
           </div>
@@ -647,7 +647,7 @@ export default function RRG() {
         )}
 
         {/* CONTROLS */}
-        <div style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 11, padding: "13px 16px", marginBottom: 22 }}>
+        <div style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 11, padding: "12px 16px", marginBottom: 16 }}>
           <button style={pill(interval_ === "1d")} onClick={() => setInterval_("1d")}>Daily</button>
           <button style={pill(interval_ === "1wk")} onClick={() => setInterval_("1wk")}>Weekly</button>
           <div style={divider} />
@@ -698,71 +698,75 @@ export default function RRG() {
           </div>
         )}
 
-        {/* CHART — volle Breite */}
-        <div style={{ ...glass, padding: "18px 18px 8px", marginBottom: 22 }}>
-          {items.length > 0 ? (
-            <RRGChart key={viewKey + interval_} items={items} hovered={hovered} setHovered={setHovered} tailLen={tailLen}
-              onNodeClick={preset.drillable && !drill
-                ? (it) => { setDrill(it.symbol); setBenchMode("SECTOR"); setHovered(null); }
-                : null} />
-          ) : !loading && !error ? (
-            <div style={{ padding: 110, textAlign: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.3em", color: "#262626" }}>KEINE DATEN</div>
-          ) : (
-            <div style={{ padding: 110, textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.22em", color: "#3d3d3d" }}>FETCHING {neededSymbols.length} SYMBOLS…</div>
-          )}
-          {preset.drillable && !drill && items.length > 0 && (
-            <div style={{ textAlign: "center", fontSize: 8.5, color: "#4d4d4d", letterSpacing: "0.2em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600, textTransform: "uppercase", padding: "6px 0 10px" }}>
-              Sektor anklicken → Drilldown mit Holdings + <span style={{ color: GOLD }}>VSX Pack</span> · Scroll = Zoom
-            </div>
-          )}
-        </div>
-
-        {/* RANKING — volle Breite */}
-        <div style={{ ...glass, padding: "20px 22px 16px" }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
-            <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.2em", color: "#fdfdfd" }}>ROTATION RANKING</span>
-            <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.16em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>{items.length} TITEL</span>
+        {/* CHART + RANKING nebeneinander */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 18, alignItems: "stretch" }}>
+          <div style={{ ...glass, padding: "14px 14px 6px", flex: "1 1 700px", minWidth: 340 }}>
+            {items.length > 0 ? (
+              <RRGChart key={viewKey + interval_} items={items} hovered={hovered} setHovered={setHovered} tailLen={tailLen}
+                onNodeClick={preset.drillable && !drill
+                  ? (it) => { setDrill(it.symbol); setBenchMode("SECTOR"); setHovered(null); }
+                  : null} />
+            ) : !loading && !error ? (
+              <div style={{ padding: 110, textAlign: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.3em", color: "#262626" }}>KEINE DATEN</div>
+            ) : (
+              <div style={{ padding: 110, textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.22em", color: "#3d3d3d" }}>FETCHING {neededSymbols.length} SYMBOLS…</div>
+            )}
+            {preset.drillable && !drill && items.length > 0 && (
+              <div style={{ textAlign: "center", fontSize: 8.5, color: "#4d4d4d", letterSpacing: "0.2em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600, textTransform: "uppercase", padding: "4px 0 8px" }}>
+                Sektor anklicken → Drilldown mit Holdings + <span style={{ color: GOLD }}>VSX Pack</span> · Scroll = Zoom
+              </div>
+            )}
           </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
-            <thead>
-              <tr style={{ fontSize: 8.5, letterSpacing: "0.16em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, textTransform: "uppercase" }}>
-                {th("alpha", "Symbol")}
-                {th("quad", "Quadrant")}
-                {th("rsr", "RS-Ratio", "right")}
-                {th("rsm", "RS-Momentum", "right")}
-                <th style={{ width: 28 }} />
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map(it => {
-                const h = it.tail[it.tail.length - 1];
-                const q = quadrantOf(h.x, h.y);
-                return (
-                  <tr key={it.symbol}
-                    onMouseEnter={() => setHovered(it.symbol)} onMouseLeave={() => setHovered(null)}
-                    style={{ borderTop: "1px solid rgba(255,255,255,0.05)", background: hovered === it.symbol ? "rgba(212,175,55,0.07)" : "transparent", transition: "background 0.15s" }}>
-                    <td style={{ padding: "9px 10px", color: it.vsx ? "#f8e49b" : "#e8e8e8", fontWeight: it.vsx ? 700 : 400, whiteSpace: "nowrap" }}>
-                      <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: it.color, marginRight: 9, boxShadow: it.vsx ? `0 0 7px ${GOLD}` : "none" }} />
-                      {it.label}
-                      {it.vsx && <span style={{ marginLeft: 7, fontSize: 7, color: "#8a7440", letterSpacing: "0.14em" }}>◆ VSX</span>}
-                      {it.custom && <span style={{ marginLeft: 7, fontSize: 7, color: "#666", letterSpacing: "0.1em" }}>ADD</span>}
-                    </td>
-                    <td style={{ padding: "9px 10px" }}>
-                      <span style={{ fontSize: 8, letterSpacing: "0.12em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, color: QUAD_COLOR[q], background: `${QUAD_COLOR[q]}14`, border: `1px solid ${QUAD_COLOR[q]}30`, padding: "2.5px 9px", borderRadius: 20 }}>{q}</span>
-                    </td>
-                    <td style={{ padding: "9px 10px", textAlign: "right", color: h.x >= 100 ? "#22c55e" : "#ef4444" }}>{h.x.toFixed(2)}</td>
-                    <td style={{ padding: "9px 10px", textAlign: "right", color: h.y >= 100 ? "#22c55e" : "#ef4444" }}>{h.y.toFixed(2)}</td>
-                    <td style={{ padding: "9px 6px", textAlign: "center" }}>
-                      <button onClick={() => removeSymbol(it.symbol)} title="Titel entfernen"
-                        style={{ background: "none", border: "none", color: "#3a3a3a", cursor: "pointer", fontSize: 11, padding: 2, transition: "color 0.15s" }}
-                        onMouseEnter={e => e.currentTarget.style.color = "#ef4444"}
-                        onMouseLeave={e => e.currentTarget.style.color = "#3a3a3a"}>✕</button>
-                    </td>
+
+          {/* RANKING rechts, scrollt intern */}
+          <div style={{ ...glass, padding: "16px 16px 12px", flex: "0 1 340px", minWidth: 300, maxHeight: 620, display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 11 }}>
+              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.2em", color: "#fdfdfd" }}>ROTATION RANKING</span>
+              <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.16em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>{items.length} TITEL</span>
+            </div>
+            <div style={{ overflowY: "auto", flex: 1, marginRight: -6, paddingRight: 6 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 10.5 }}>
+                <thead style={{ position: "sticky", top: 0, background: "rgba(20,20,20,0.96)", backdropFilter: "blur(8px)" }}>
+                  <tr style={{ fontSize: 8, letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, textTransform: "uppercase" }}>
+                    {th("alpha", "Symbol")}
+                    {th("quad", "Quad")}
+                    {th("rsr", "RS-R", "right")}
+                    {th("rsm", "RS-M", "right")}
+                    <th style={{ width: 22 }} />
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                </thead>
+                <tbody>
+                  {sorted.map(it => {
+                    const h = it.tail[it.tail.length - 1];
+                    const q = quadrantOf(h.x, h.y);
+                    return (
+                      <tr key={it.symbol}
+                        onMouseEnter={() => setHovered(it.symbol)} onMouseLeave={() => setHovered(null)}
+                        style={{ borderTop: "1px solid rgba(255,255,255,0.05)", background: hovered === it.symbol ? "rgba(212,175,55,0.07)" : "transparent", transition: "background 0.15s" }}>
+                        <td style={{ padding: "7px 7px", color: it.vsx ? "#f8e49b" : "#e8e8e8", fontWeight: it.vsx ? 700 : 400, whiteSpace: "nowrap" }}>
+                          <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: it.color, marginRight: 8, boxShadow: it.vsx ? `0 0 6px ${GOLD}` : "none" }} />
+                          {it.label}
+                          {it.vsx && <span style={{ marginLeft: 6, fontSize: 6.5, color: "#8a7440", letterSpacing: "0.12em" }}>◆</span>}
+                          {it.custom && <span style={{ marginLeft: 6, fontSize: 6.5, color: "#666", letterSpacing: "0.1em" }}>ADD</span>}
+                        </td>
+                        <td style={{ padding: "7px 6px" }}>
+                          <span title={q} style={{ display: "inline-block", width: 9, height: 9, borderRadius: 3, background: `${QUAD_COLOR[q]}cc`, boxShadow: `0 0 6px ${QUAD_COLOR[q]}55` }} />
+                        </td>
+                        <td style={{ padding: "7px 7px", textAlign: "right", color: h.x >= 100 ? "#22c55e" : "#ef4444" }}>{h.x.toFixed(2)}</td>
+                        <td style={{ padding: "7px 7px", textAlign: "right", color: h.y >= 100 ? "#22c55e" : "#ef4444" }}>{h.y.toFixed(2)}</td>
+                        <td style={{ padding: "7px 3px", textAlign: "center" }}>
+                          <button onClick={() => removeSymbol(it.symbol)} title="Titel entfernen"
+                            style={{ background: "none", border: "none", color: "#3a3a3a", cursor: "pointer", fontSize: 10, padding: 2, transition: "color 0.15s" }}
+                            onMouseEnter={e => e.currentTarget.style.color = "#ef4444"}
+                            onMouseLeave={e => e.currentTarget.style.color = "#3a3a3a"}>✕</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
 
         <div style={{ marginTop: 20, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
