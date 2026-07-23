@@ -13,7 +13,7 @@ const STAGE_STORAGE_KEY = "vsx_spx_cycle_stage_v1";
 const STAGES = [
   {
     n: 1, title: "CYCLE TROUGH",
-    desc: "Boden ist drin — Recovery beginnt. Zinssensitive Consumer-Gruppen führen als Erste.",
+    desc: "The bottom is in — recovery begins. Rate-sensitive consumer groups lead first.",
     best: [
       { name: "Home Building", t: "XHB" },
       { name: "Restaurants", t: "PEJ" },
@@ -27,7 +27,7 @@ const STAGES = [
   },
   {
     n: 2, title: "EARLY BULL",
-    desc: "Financials und Risk-Zykliker beschleunigen — Liquidität treibt den Markt breit an.",
+    desc: "Financials and risk cyclicals accelerate — liquidity lifts the market broadly.",
     best: [
       { name: "Brokers", t: "IAI" },
       { name: "Automobiles", t: "CARZ" },
@@ -41,7 +41,7 @@ const STAGES = [
   },
   {
     n: 3, title: "MID BULL",
-    desc: "Tech, Materials und Energy übernehmen die Führung — der Zyklus läuft heiß.",
+    desc: "Tech, materials and energy take over leadership — the cycle runs hot.",
     best: [
       { name: "Comm. Equipment", t: "XLC" },
       { name: "Diversified Metals", t: "XME" },
@@ -55,7 +55,7 @@ const STAGES = [
   },
   {
     n: 4, title: "LATE BULL",
-    desc: "Inflations-Trades peaken — Hardware und Gold glänzen, Frühzykliker rollen ab.",
+    desc: "Inflation trades peak — hardware and gold shine while early cyclicals roll over.",
     best: [
       { name: "Oil Drillers", t: "OIH" },
       { name: "Computer Hardware", t: "IYW" },
@@ -69,7 +69,7 @@ const STAGES = [
   },
   {
     n: 5, title: "TOP FORMS",
-    desc: "Breadth verengt sich — Defensives outperformt, während der Index noch hält.",
+    desc: "Breadth narrows — defensives outperform while the index still holds up.",
     best: [
       { name: "Health Care", t: "XLV" },
       { name: "Diversified Chemicals", t: "XLB" },
@@ -83,7 +83,7 @@ const STAGES = [
   },
   {
     n: 6, title: "BEAR PHASE",
-    desc: "Staples, Insurance und Food verteidigen — tiefe Zykliker bluten in den Boden.",
+    desc: "Staples, insurance and food defend — deep cyclicals bleed into the low.",
     best: [
       { name: "Household Products", t: "XLP" },
       { name: "Life Insurance", t: "IAK" },
@@ -232,7 +232,7 @@ export default function Cycle() {
       .then(json => {
         if (!alive) return;
         const s = computeStageScores(json.data || {});
-        if (!s) throw new Error("Zu wenige Daten für Auto-Detect");
+        if (!s) throw new Error("Not enough data for auto-detect");
         setScores(s);
       })
       .catch(e => alive && setScoreError(e.message))
@@ -317,12 +317,12 @@ export default function Cycle() {
           {current && (
             <div style={{ display: "flex", alignItems: "center", gap: 9, fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.08em" }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: GOLD, boxShadow: `0 0 9px ${GOLD}` }} />
-              <span style={{ color: "#c9c9c9" }}>MANUELL: STAGE <span style={{ color: "#f8e49b", fontWeight: 700 }}>{current}</span></span>
+              <span style={{ color: "#c9c9c9" }}>MANUAL: STAGE <span style={{ color: "#f8e49b", fontWeight: 700 }}>{current}</span></span>
             </div>
           )}
         </div>
         <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11, color: "#b99c64", letterSpacing: "0.04em", marginBottom: 18 }}>
-          6-Stage Rotation Framework · Best & Worst Performers je Zyklusphase · Stage oder Industrie anklicken für Beispiel-Titel
+          6-Stage Rotation Framework · Best & worst performers per cycle phase · Click a stage or industry for example names
         </div>
 
         {/* MATRIX */}
@@ -340,7 +340,7 @@ export default function Cycle() {
                       <span style={{ fontSize: 7, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.18em", color: "#22c55e" }}>● AUTO</span>
                     )}
                     {current === s.n && (
-                      <span style={{ fontSize: 7, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.18em", color: GOLD }}>● MANUELL</span>
+                      <span style={{ fontSize: 7, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.18em", color: GOLD }}>● MANUAL</span>
                     )}
                   </span>
                 </div>
@@ -396,11 +396,11 @@ export default function Cycle() {
           {/* WO SIND WIR — Score-Panel */}
           <div style={{ ...glass, flex: "1 1 340px", minWidth: 320, padding: "18px 22px 16px", borderColor: "rgba(34,197,94,0.3)" }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
-              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.18em", color: "#fdfdfd" }}>WO SIND WIR?</span>
+              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.18em", color: "#fdfdfd" }}>WHERE ARE WE?</span>
               <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>RS vs SPY · 21/63D BLEND</span>
             </div>
             <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, color: "#666", marginBottom: 13, lineHeight: 1.6 }}>
-              Score je Stage = Ø Relative Stärke des Best-Korbs − Ø des Worst-Korbs. Höchster Score = wahrscheinlichste Phase.
+              Stage score = aggregated RS of the 3 Best vs SPY minus aggregated RS of the 3 Worst vs SPY. Highest score = most likely phase.
             </div>
             {scoreLoading ? (
               <div style={{ padding: "26px 0", textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 10, letterSpacing: "0.2em", color: "#3d3d3d" }}>COMPUTING…</div>
@@ -445,12 +445,12 @@ export default function Cycle() {
                 )}
                 {current === sel.n ? (
                   <button onClick={() => setCurrent(null)}
-                    style={{ padding: "6px 14px", borderRadius: 9, cursor: "pointer", background: "rgba(212,175,55,0.13)", border: "1px solid rgba(212,175,55,0.5)", color: "#f8e49b", fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em" }}>● MANUELL — ENTFERNEN</button>
+                    style={{ padding: "6px 14px", borderRadius: 9, cursor: "pointer", background: "rgba(212,175,55,0.13)", border: "1px solid rgba(212,175,55,0.5)", color: "#f8e49b", fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em" }}>● MANUAL — REMOVE</button>
                 ) : (
                   <button onClick={() => setCurrent(sel.n)}
                     style={{ padding: "6px 14px", borderRadius: 9, cursor: "pointer", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(212,175,55,0.3)", color: "#b99c64", fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em", transition: "all 0.2s" }}
                     onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.6)"; e.currentTarget.style.color = "#f8e49b"; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.3)"; e.currentTarget.style.color = "#b99c64"; }}>MANUELL SETZEN</button>
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.3)"; e.currentTarget.style.color = "#b99c64"; }}>SET MANUAL</button>
                 )}
               </div>
               <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11.5, color: "#8f8f8f", lineHeight: 1.7, marginBottom: 16 }}>
@@ -459,7 +459,7 @@ export default function Cycle() {
 
               <div style={{ display: "flex", flexWrap: "wrap", gap: 22 }}>
                 <div style={{ flex: "1 1 240px" }}>
-                  <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.2em", color: "#22c55e", marginBottom: 8 }}>BEST PERFORMERS <span style={{ color: "#4a4a4a", fontWeight: 600, letterSpacing: "0.06em", textTransform: "none" }}>· klicken für Beispiel-Titel</span></div>
+                  <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.2em", color: "#22c55e", marginBottom: 8 }}>BEST PERFORMERS <span style={{ color: "#4a4a4a", fontWeight: 600, letterSpacing: "0.06em", textTransform: "none" }}>· click for example names</span></div>
                   {sel.best.map(x => indRow(x, "best"))}
                 </div>
                 <div style={{ flex: "1 1 240px" }}>
@@ -472,7 +472,7 @@ export default function Cycle() {
         </div>
 
         <div style={{ marginTop: 16, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
-          SPX Cycle Framework · Auto-Detect auf Basis Relativer Stärke der Stage-Körbe vs SPY (50/50-Blend aus 21- und 63-Tage-RS). Structural analysis — not investment advice.
+          SPX Cycle Framework · Auto-detect aggregates the relative strength vs SPY of each stage\u2019s 3 Best and 3 Worst performers (50/50 blend of 21- and 63-day RS). Structural analysis — not investment advice.
         </div>
       </div>
     </div>
