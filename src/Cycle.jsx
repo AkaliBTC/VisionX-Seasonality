@@ -169,20 +169,30 @@ const ewRs = (series, spy, halflife) => {
   return den > 0 ? (num / den) * 252 : null;        // annualisierte EW-RS
 };
 
-function computeStageScores(data, halflife) {
+function computeStageScores(data, halflife, mode) {
   const spy = data.SPY;
   if (!spy) return null;
   const cache = {};
-  const score = t => {
+  const raw = t => {
     if (!(t in cache)) cache[t] = ewRs(data[t], spy, halflife);
     return cache[t];
   };
+  // Cross-Sectional-Ranks (0..1) über alle Zyklus-ETFs — für den RANK-Modus
+  const universe = CYCLE_ETFS.map(t => [t, raw(t)]).filter(([, v]) => v != null);
+  universe.sort((a, b) => a[1] - b[1]);
+  const rankMap = new Map(universe.map(([t], i) => [t, universe.length > 1 ? i / (universe.length - 1) : 0.5]));
+  const val = t => mode === "rank" ? (rankMap.has(t) ? rankMap.get(t) - 0.5 : null) : raw(t);
+
+  const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
   const scores = STAGES.map(st => {
-    const bestVals = st.best.map(x => score(x.t)).filter(v => v != null);
-    const worstVals = st.worst.map(x => score(x.t)).filter(v => v != null);
-    if (!bestVals.length || !worstVals.length) return { n: st.n, score: null };
-    const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
-    return { n: st.n, score: avg(bestVals) - avg(worstVals) };
+    const bestParts = st.best.map(x => ({ ...x, v: raw(x.t), s: val(x.t) }));
+    const worstParts = st.worst.map(x => ({ ...x, v: raw(x.t), s: val(x.t) }));
+    const bestVals = bestParts.map(p => p.s).filter(v => v != null);
+    const worstVals = worstParts.map(p => p.s).filter(v => v != null);
+    if (!bestVals.length || (mode !== "best" && !worstVals.length))
+      return { n: st.n, score: null, best: bestParts, worst: worstParts };
+    const score = mode === "best" ? avg(bestVals) : avg(bestVals) - avg(worstVals);
+    return { n: st.n, score, best: bestParts, worst: worstParts };
   });
   return scores.every(s => s.score == null) ? null : scores;
 }
@@ -235,6 +245,8 @@ export default function Cycle() {
   const [scores, setScores] = useState(null);          // Auto-Detect-Scores
   const [rawData, setRawData] = useState(null);
   const [halflife, setHalflife] = useState(42);        // EW-Halflife in Handelstagen
+  const [scoreMode, setScoreMode] = useState("diff");  // "diff" | "best" | "rank"
+  const [expandedScore, setExpandedScore] = useState(null);
   const [scoreLoading, setScoreLoading] = useState(true);
   const [scoreError, setScoreError] = useState("");
 
@@ -263,10 +275,10 @@ export default function Cycle() {
   // Scores bei Daten oder Halflife-Wechsel neu berechnen
   useEffect(() => {
     if (!rawData) return;
-    const s = computeStageScores(rawData, halflife);
+    const s = computeStageScores(rawData, halflife, scoreMode);
     if (!s) { setScoreError("Not enough data for auto-detect"); setScores(null); }
     else { setScoreError(""); setScores(s); }
-  }, [rawData, halflife]);
+  }, [rawData, halflife, scoreMode]);
 
   const autoStage = useMemo(() => {
     if (!scores) return null;
@@ -439,8 +451,23 @@ export default function Cycle() {
                 ))}
               </span>
             </div>
+            <div style={{ display: "flex", gap: 5, margin: "8px 0 10px" }}>
+              {[["diff", "BEST − WORST"], ["best", "BEST ONLY"], ["rank", "RANKED"]].map(([id, l]) => (
+                <button key={id} onClick={() => setScoreMode(id)}
+                  style={{ padding: "4.5px 11px", borderRadius: 8, cursor: "pointer",
+                    background: scoreMode === id ? "rgba(212,175,55,0.12)" : "rgba(255,255,255,0.03)",
+                    border: `1px solid ${scoreMode === id ? "rgba(212,175,55,0.5)" : "rgba(255,255,255,0.08)"}`,
+                    color: scoreMode === id ? "#f8e49b" : "#666",
+                    fontFamily: "'Montserrat', sans-serif", fontSize: 7.5, fontWeight: 700, letterSpacing: "0.14em" }}>
+                  {l}
+                </button>
+              ))}
+            </div>
             <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, color: "#666", marginBottom: 13, lineHeight: 1.6 }}>
-              Stage score = aggregated RS of the 3 Best vs SPY minus aggregated RS of the 3 Worst vs SPY — full 252-day lookback, exponentially weighted (halflife {halflife}D), annualized.
+              {scoreMode === "diff" && <>Aggregated EW-RS of the 3 Best vs SPY minus the 3 Worst — 252D lookback, halflife {halflife}D, annualized.</>}
+              {scoreMode === "best" && <>Aggregated EW-RS of the 3 Best vs SPY only — for cycles where the historical Worst baskets don\u2019t underperform.</>}
+              {scoreMode === "rank" && <>Cross-sectional rank of each ETF\u2019s EW-RS across all cycle ETFs — Best ranks minus Worst ranks, outlier-robust.</>}
+              {" Click ▸ on a stage for the ETF breakdown."}
             </div>
             {scoreLoading ? (
               <div style={{ padding: "26px 0", textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 10, letterSpacing: "0.2em", color: "#3d3d3d" }}>COMPUTING…</div>
@@ -451,21 +478,46 @@ export default function Cycle() {
                 {scores.map(sc => {
                   const st = STAGES[sc.n - 1];
                   const isTop = sc.n === autoStage;
+                  const isOpen = expandedScore === sc.n;
                   const w = sc.score == null ? 0 : (Math.abs(sc.score) / maxAbs) * 100;
                   const pos = (sc.score ?? 0) >= 0;
+                  const chip = (p, side) => (
+                    <span key={side + p.t + p.name} title={p.name}
+                      style={{ padding: "3px 8px", borderRadius: 7, fontFamily: "'DM Mono', monospace", fontSize: 8.5, letterSpacing: "0.04em",
+                        background: "rgba(255,255,255,0.03)", border: `1px solid ${side === "b" ? "rgba(34,197,94,0.25)" : "rgba(239,68,68,0.22)"}`,
+                        color: p.v == null ? "#555" : p.v >= 0 ? "#22c55e" : "#ef4444" }}>
+                      {p.t} {p.v == null ? "—" : `${p.v >= 0 ? "+" : ""}${(p.v * 100).toFixed(0)}%`}
+                    </span>
+                  );
                   return (
-                    <div key={sc.n} onClick={() => { setSelected(sc.n); setSelInd(null); }}
-                      style={{ display: "grid", gridTemplateColumns: "18px 96px 1fr 56px", alignItems: "center", gap: 10, cursor: "pointer", padding: "5px 8px", borderRadius: 9, background: isTop ? "rgba(34,197,94,0.06)" : selected === sc.n ? "rgba(212,175,55,0.05)" : "transparent", transition: "background 0.15s" }}>
-                      <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, color: isTop ? "#22c55e" : "#c9c9c9" }}>{sc.n}</span>
-                      <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.1em", color: isTop ? "#22c55e" : "#777" }}>
-                        {st.title}{isTop && " ●"}
-                      </span>
-                      <div style={{ height: 7, borderRadius: 4, background: "rgba(255,255,255,0.04)", overflow: "hidden" }}>
-                        <div style={{ width: `${w}%`, height: "100%", borderRadius: 4, background: pos ? (isTop ? "linear-gradient(90deg, #22c55e88, #22c55e)" : "rgba(34,197,94,0.45)") : "rgba(239,68,68,0.5)", transition: "width 0.5s cubic-bezier(0.22,1,0.36,1)" }} />
+                    <div key={sc.n}>
+                      <div onClick={() => { setSelected(sc.n); setSelInd(null); }}
+                        style={{ display: "grid", gridTemplateColumns: "16px 18px 92px 1fr 56px", alignItems: "center", gap: 8, cursor: "pointer", padding: "5px 8px", borderRadius: 9, background: isTop ? "rgba(34,197,94,0.06)" : selected === sc.n ? "rgba(212,175,55,0.05)" : "transparent", transition: "background 0.15s" }}>
+                        <span onClick={e => { e.stopPropagation(); setExpandedScore(o => o === sc.n ? null : sc.n); }}
+                          style={{ color: isOpen ? GOLD : "#4a4a4a", fontSize: 9, cursor: "pointer", userSelect: "none" }}>{isOpen ? "▾" : "▸"}</span>
+                        <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, color: isTop ? "#22c55e" : "#c9c9c9" }}>{sc.n}</span>
+                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.1em", color: isTop ? "#22c55e" : "#777" }}>
+                          {st.title}{isTop && " ●"}
+                        </span>
+                        <div style={{ height: 7, borderRadius: 4, background: "rgba(255,255,255,0.04)", overflow: "hidden" }}>
+                          <div style={{ width: `${w}%`, height: "100%", borderRadius: 4, background: pos ? (isTop ? "linear-gradient(90deg, #22c55e88, #22c55e)" : "rgba(34,197,94,0.45)") : "rgba(239,68,68,0.5)", transition: "width 0.5s cubic-bezier(0.22,1,0.36,1)" }} />
+                        </div>
+                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5, textAlign: "right", color: sc.score == null ? "#555" : sc.score >= 0 ? "#22c55e" : "#ef4444" }}>
+                          {sc.score == null ? "—" : scoreMode === "rank" ? sc.score.toFixed(2) : `${sc.score >= 0 ? "+" : ""}${(sc.score * 100).toFixed(1)}%`}
+                        </span>
                       </div>
-                      <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5, textAlign: "right", color: sc.score == null ? "#555" : sc.score >= 0 ? "#22c55e" : "#ef4444" }}>
-                        {sc.score == null ? "—" : `${sc.score >= 0 ? "+" : ""}${(sc.score * 100).toFixed(1)}%`}
-                      </span>
+                      {isOpen && (
+                        <div style={{ padding: "6px 8px 10px 42px", display: "flex", flexDirection: "column", gap: 6 }}>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
+                            <span style={{ fontSize: 7, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.16em", color: "#22c55e", width: 38 }}>BEST</span>
+                            {sc.best.map(p => chip(p, "b"))}
+                          </div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
+                            <span style={{ fontSize: 7, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.16em", color: "#ef4444", width: 38 }}>WORST</span>
+                            {sc.worst.map(p => chip(p, "w"))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
