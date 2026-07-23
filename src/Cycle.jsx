@@ -140,26 +140,46 @@ const loadStage = () => {
 // ── AUTO-DETECT · Relative Stärke vs SPY ─────────────────────────────────────
 const CYCLE_ETFS = [...new Set(STAGES.flatMap(s => [...s.best, ...s.worst].map(x => x.t)))];
 
-// RS-Return: ETF-Rendite minus SPY-Rendite über `days` Handelstage
-const rsReturn = (series, spy, days) => {
-  if (!series || !spy || series.length < days + 2 || spy.length < days + 2) return null;
-  const p = series[series.length - 1][1] / series[series.length - 1 - days][1];
-  const b = spy[spy.length - 1][1] / spy[spy.length - 1 - days][1];
-  return p / b - 1;
+// Exponentiell gewichteter RS-Score: langer Lookback (252 Handelstage),
+// tägliche RS-Returns vs SPY, Gewichte 0.5^(Alter/Halflife) — jüngste Tage
+// zählen am meisten, aber die volle Historie fließt ein. Annualisiert (×252).
+const LOOKBACK = 252;
+
+const ewRs = (series, spy, halflife) => {
+  if (!series || !spy) return null;
+  const key = t => new Date(t).toISOString().slice(0, 10);
+  const sMap = new Map(series.map(([t, c]) => [key(t), c]));
+  // Auf SPY-Timestamps alignen (forward-fill)
+  const px = []; let last = null;
+  for (const [t, b] of spy) {
+    const k = key(t);
+    if (sMap.has(k)) last = sMap.get(k);
+    if (last != null) px.push([last, b]);
+  }
+  if (px.length < 60) return null;
+  const win = px.slice(-Math.min(LOOKBACK + 1, px.length));
+  const lam = Math.pow(0.5, 1 / halflife);
+  let num = 0, den = 0;
+  for (let i = 1; i < win.length; i++) {
+    const r = Math.log(win[i][0] / win[i - 1][0]) - Math.log(win[i][1] / win[i - 1][1]);
+    const age = win.length - 1 - i;                 // 0 = heute
+    const w = Math.pow(lam, age);
+    num += w * r; den += w;
+  }
+  return den > 0 ? (num / den) * 252 : null;        // annualisierte EW-RS
 };
 
-function computeStageScores(data) {
+function computeStageScores(data, halflife) {
   const spy = data.SPY;
   if (!spy) return null;
-  const blend = t => {
-    const s = data[t];
-    const r21 = rsReturn(s, spy, 21), r63 = rsReturn(s, spy, 63);
-    if (r21 == null || r63 == null) return null;
-    return 0.5 * r21 + 0.5 * r63;
+  const cache = {};
+  const score = t => {
+    if (!(t in cache)) cache[t] = ewRs(data[t], spy, halflife);
+    return cache[t];
   };
   const scores = STAGES.map(st => {
-    const bestVals = st.best.map(x => blend(x.t)).filter(v => v != null);
-    const worstVals = st.worst.map(x => blend(x.t)).filter(v => v != null);
+    const bestVals = st.best.map(x => score(x.t)).filter(v => v != null);
+    const worstVals = st.worst.map(x => score(x.t)).filter(v => v != null);
     if (!bestVals.length || !worstVals.length) return { n: st.n, score: null };
     const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
     return { n: st.n, score: avg(bestVals) - avg(worstVals) };
@@ -213,6 +233,8 @@ export default function Cycle() {
   const [current, setCurrent] = useState(loadStage);
   const [hoverCol, setHoverCol] = useState(null);
   const [scores, setScores] = useState(null);          // Auto-Detect-Scores
+  const [rawData, setRawData] = useState(null);
+  const [halflife, setHalflife] = useState(42);        // EW-Halflife in Handelstagen
   const [scoreLoading, setScoreLoading] = useState(true);
   const [scoreError, setScoreError] = useState("");
 
@@ -223,22 +245,28 @@ export default function Cycle() {
     } catch { /* private mode */ }
   }, [current]);
 
-  // AUTO-DETECT: RS vs SPY laden
+  // AUTO-DETECT: RS vs SPY laden (2y für vollen 252-Tage-Lookback)
   useEffect(() => {
     let alive = true;
     const symbols = ["SPY", ...CYCLE_ETFS];
-    fetch(`/api/history?symbols=${symbols.join(",")}&interval=1d&range=1y`)
+    fetch(`/api/history?symbols=${symbols.join(",")}&interval=1d&range=2y`)
       .then(r => { if (!r.ok) throw new Error(`API ${r.status}`); return r.json(); })
       .then(json => {
         if (!alive) return;
-        const s = computeStageScores(json.data || {});
-        if (!s) throw new Error("Not enough data for auto-detect");
-        setScores(s);
+        setRawData(json.data || {});
       })
       .catch(e => alive && setScoreError(e.message))
       .finally(() => alive && setScoreLoading(false));
     return () => { alive = false; };
   }, []);
+
+  // Scores bei Daten oder Halflife-Wechsel neu berechnen
+  useEffect(() => {
+    if (!rawData) return;
+    const s = computeStageScores(rawData, halflife);
+    if (!s) { setScoreError("Not enough data for auto-detect"); setScores(null); }
+    else { setScoreError(""); setScores(s); }
+  }, [rawData, halflife]);
 
   const autoStage = useMemo(() => {
     if (!scores) return null;
@@ -395,12 +423,24 @@ export default function Cycle() {
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
           {/* WO SIND WIR — Score-Panel */}
           <div style={{ ...glass, flex: "1 1 340px", minWidth: 320, padding: "18px 22px 16px", borderColor: "rgba(34,197,94,0.3)" }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
               <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.18em", color: "#fdfdfd" }}>WHERE ARE WE?</span>
-              <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>RS vs SPY · 21/63D BLEND</span>
+              <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>EW-RS vs SPY · 252D LOOKBACK</span>
+              <span style={{ marginLeft: "auto", display: "flex", gap: 5 }}>
+                {[[21, "FAST"], [42, "MID"], [63, "SLOW"]].map(([v, l]) => (
+                  <button key={v} onClick={() => setHalflife(v)} title={`Halflife ${v} Handelstage`}
+                    style={{ padding: "4px 10px", borderRadius: 8, cursor: "pointer",
+                      background: halflife === v ? "rgba(212,175,55,0.12)" : "rgba(255,255,255,0.03)",
+                      border: `1px solid ${halflife === v ? "rgba(212,175,55,0.5)" : "rgba(255,255,255,0.08)"}`,
+                      color: halflife === v ? "#f8e49b" : "#666",
+                      fontFamily: "'Montserrat', sans-serif", fontSize: 7.5, fontWeight: 700, letterSpacing: "0.14em" }}>
+                    {l}
+                  </button>
+                ))}
+              </span>
             </div>
             <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, color: "#666", marginBottom: 13, lineHeight: 1.6 }}>
-              Stage score = aggregated RS of the 3 Best vs SPY minus aggregated RS of the 3 Worst vs SPY. Highest score = most likely phase.
+              Stage score = aggregated RS of the 3 Best vs SPY minus aggregated RS of the 3 Worst vs SPY — full 252-day lookback, exponentially weighted (halflife {halflife}D), annualized.
             </div>
             {scoreLoading ? (
               <div style={{ padding: "26px 0", textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 10, letterSpacing: "0.2em", color: "#3d3d3d" }}>COMPUTING…</div>
@@ -472,7 +512,7 @@ export default function Cycle() {
         </div>
 
         <div style={{ marginTop: 16, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
-          SPX Cycle Framework · Auto-detect aggregates the relative strength vs SPY of each stage\u2019s 3 Best and 3 Worst performers (50/50 blend of 21- and 63-day RS). Structural analysis — not investment advice.
+          SPX Cycle Framework · Auto-detect aggregates the relative strength vs SPY of each stage\u2019s 3 Best and 3 Worst performers — 252-day lookback with exponential weighting (selectable halflife), annualized. Structural analysis — not investment advice.
         </div>
       </div>
     </div>
