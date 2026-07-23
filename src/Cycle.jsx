@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  VISIONX ANALYTICS · SPX SECTOR CYCLE v2
-//  6-Stufen-Rotationsmatrix mit Zyklus-Welle, Beispiel-Titeln je Industrie
-//  und AUTO-DETECT: aktuelle Zyklusphase aus Relativer Stärke vs SPY
-//  (21/63-Tage-Blend, Best-Korb minus Worst-Korb je Stage).
+//  VISIONX ANALYTICS · SPX SECTOR CYCLE
+//  6-stage rotation matrix (best/worst performers per phase) with cycle wave,
+//  example names per industry and a manually set, persisted current stage.
 // ═════════════════════════════════════════════════════════════════════════════
 
 const GOLD = "#d4af37";
@@ -97,7 +96,7 @@ const STAGES = [
   },
 ];
 
-// ── BEISPIEL-TITEL je Industrie ──────────────────────────────────────────────
+// ── EXAMPLE NAMES per industry ───────────────────────────────────────────────
 const EXAMPLES = {
   "Home Building":        ["DHI", "LEN", "TOL", "PHM"],
   "Restaurants":          ["MCD", "CMG", "SBUX", "DRI"],
@@ -137,68 +136,8 @@ const loadStage = () => {
   return null;
 };
 
-// ── AUTO-DETECT · Relative Stärke vs SPY ─────────────────────────────────────
-const CYCLE_ETFS = [...new Set(STAGES.flatMap(s => [...s.best, ...s.worst].map(x => x.t)))];
-
-// Exponentiell gewichteter RS-Score: langer Lookback (252 Handelstage),
-// tägliche RS-Returns vs SPY, Gewichte 0.5^(Alter/Halflife) — jüngste Tage
-// zählen am meisten, aber die volle Historie fließt ein. Annualisiert (×252).
-const LOOKBACK = 252;
-
-const ewRs = (series, spy, halflife) => {
-  if (!series || !spy) return null;
-  const key = t => new Date(t).toISOString().slice(0, 10);
-  const sMap = new Map(series.map(([t, c]) => [key(t), c]));
-  // Auf SPY-Timestamps alignen (forward-fill)
-  const px = []; let last = null;
-  for (const [t, b] of spy) {
-    const k = key(t);
-    if (sMap.has(k)) last = sMap.get(k);
-    if (last != null) px.push([last, b]);
-  }
-  if (px.length < 60) return null;
-  const win = px.slice(-Math.min(LOOKBACK + 1, px.length));
-  const lam = Math.pow(0.5, 1 / halflife);
-  let num = 0, den = 0;
-  for (let i = 1; i < win.length; i++) {
-    const r = Math.log(win[i][0] / win[i - 1][0]) - Math.log(win[i][1] / win[i - 1][1]);
-    const age = win.length - 1 - i;                 // 0 = heute
-    const w = Math.pow(lam, age);
-    num += w * r; den += w;
-  }
-  return den > 0 ? (num / den) * 252 : null;        // annualisierte EW-RS
-};
-
-function computeStageScores(data, halflife, mode) {
-  const spy = data.SPY;
-  if (!spy) return null;
-  const cache = {};
-  const raw = t => {
-    if (!(t in cache)) cache[t] = ewRs(data[t], spy, halflife);
-    return cache[t];
-  };
-  // Cross-Sectional-Ranks (0..1) über alle Zyklus-ETFs — für den RANK-Modus
-  const universe = CYCLE_ETFS.map(t => [t, raw(t)]).filter(([, v]) => v != null);
-  universe.sort((a, b) => a[1] - b[1]);
-  const rankMap = new Map(universe.map(([t], i) => [t, universe.length > 1 ? i / (universe.length - 1) : 0.5]));
-  const val = t => mode === "rank" ? (rankMap.has(t) ? rankMap.get(t) - 0.5 : null) : raw(t);
-
-  const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
-  const scores = STAGES.map(st => {
-    const bestParts = st.best.map(x => ({ ...x, v: raw(x.t), s: val(x.t) }));
-    const worstParts = st.worst.map(x => ({ ...x, v: raw(x.t), s: val(x.t) }));
-    const bestVals = bestParts.map(p => p.s).filter(v => v != null);
-    const worstVals = worstParts.map(p => p.s).filter(v => v != null);
-    if (!bestVals.length || (mode !== "best" && !worstVals.length))
-      return { n: st.n, score: null, best: bestParts, worst: worstParts };
-    const score = mode === "best" ? avg(bestVals) : avg(bestVals) - avg(worstVals);
-    return { n: st.n, score, best: bestParts, worst: worstParts };
-  });
-  return scores.every(s => s.score == null) ? null : scores;
-}
-
-// ── ZYKLUS-WELLE ─────────────────────────────────────────────────────────────
-function CycleWave({ selected, auto }) {
+// ── CYCLE WAVE ───────────────────────────────────────────────────────────────
+function CycleWave({ selected, current }) {
   const pts = [];
   for (let x = 0; x <= 600; x += 4) {
     const y = 50 - 40 * Math.sin(((x - 40) / 600) * Math.PI * 2 - Math.PI / 2);
@@ -219,15 +158,14 @@ function CycleWave({ selected, auto }) {
       {STAGES.map((s, i) => {
         const x = i * 100 + 50;
         const y = 50 - 40 * Math.sin(((x - 40) / 600) * Math.PI * 2 - Math.PI / 2);
-        const isAuto = auto === s.n;
         return (
           <g key={s.n}>
             <circle cx={x} cy={y} r={selected === s.n ? 5 : 3}
               fill={selected === s.n ? "#f8e49b" : GOLD} vectorEffect="non-scaling-stroke"
               style={{ filter: selected === s.n ? "drop-shadow(0 0 8px rgba(212,175,55,0.9))" : "none", transition: "all 0.25s" }} />
-            {isAuto && (
-              <circle cx={x} cy={y} r={8} fill="none" stroke="#22c55e" strokeWidth="1.4"
-                vectorEffect="non-scaling-stroke" style={{ filter: "drop-shadow(0 0 6px rgba(34,197,94,0.7))" }} />
+            {current === s.n && (
+              <circle cx={x} cy={y} r={8} fill="none" stroke={GOLD} strokeWidth="1.2"
+                vectorEffect="non-scaling-stroke" style={{ filter: "drop-shadow(0 0 6px rgba(212,175,55,0.7))" }} />
             )}
           </g>
         );
@@ -236,19 +174,12 @@ function CycleWave({ selected, auto }) {
   );
 }
 
-// ── HAUPT-MODUL ──────────────────────────────────────────────────────────────
+// ── MAIN MODULE ──────────────────────────────────────────────────────────────
 export default function Cycle() {
-  const [selected, setSelected] = useState(1);
-  const [selInd, setSelInd] = useState(null);          // ausgewählte Industrie (Name)
+  const [selected, setSelected] = useState(loadStage() || 1);
+  const [selInd, setSelInd] = useState(null);
   const [current, setCurrent] = useState(loadStage);
   const [hoverCol, setHoverCol] = useState(null);
-  const [scores, setScores] = useState(null);          // Auto-Detect-Scores
-  const [rawData, setRawData] = useState(null);
-  const [halflife, setHalflife] = useState(42);        // EW-Halflife in Handelstagen
-  const [scoreMode, setScoreMode] = useState("diff");  // "diff" | "best" | "rank"
-  const [expandedScore, setExpandedScore] = useState(null);
-  const [scoreLoading, setScoreLoading] = useState(true);
-  const [scoreError, setScoreError] = useState("");
 
   useEffect(() => {
     try {
@@ -257,43 +188,7 @@ export default function Cycle() {
     } catch { /* private mode */ }
   }, [current]);
 
-  // AUTO-DETECT: RS vs SPY laden (2y für vollen 252-Tage-Lookback)
-  useEffect(() => {
-    let alive = true;
-    const symbols = ["SPY", ...CYCLE_ETFS];
-    fetch(`/api/history?symbols=${symbols.join(",")}&interval=1d&range=2y`)
-      .then(r => { if (!r.ok) throw new Error(`API ${r.status}`); return r.json(); })
-      .then(json => {
-        if (!alive) return;
-        setRawData(json.data || {});
-      })
-      .catch(e => alive && setScoreError(e.message))
-      .finally(() => alive && setScoreLoading(false));
-    return () => { alive = false; };
-  }, []);
-
-  // Scores bei Daten oder Halflife-Wechsel neu berechnen
-  useEffect(() => {
-    if (!rawData) return;
-    const s = computeStageScores(rawData, halflife, scoreMode);
-    if (!s) { setScoreError("Not enough data for auto-detect"); setScores(null); }
-    else { setScoreError(""); setScores(s); }
-  }, [rawData, halflife, scoreMode]);
-
-  const autoStage = useMemo(() => {
-    if (!scores) return null;
-    const valid = scores.filter(s => s.score != null);
-    if (!valid.length) return null;
-    return valid.reduce((a, b) => (b.score > a.score ? b : a)).n;
-  }, [scores]);
-
-  // Beim ersten Auto-Ergebnis direkt dorthin springen (wenn kein manuelles Current)
-  useEffect(() => {
-    if (autoStage && !current) setSelected(autoStage);
-  }, [autoStage]); // eslint-disable-line
-
   const sel = STAGES.find(s => s.n === selected);
-  const maxAbs = scores ? Math.max(1e-9, ...scores.map(s => Math.abs(s.score ?? 0))) : 1;
 
   const glass = {
     background: "linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015) 55%, rgba(212,175,55,0.02))",
@@ -342,22 +237,16 @@ export default function Cycle() {
       </div>
 
       <div style={{ position: "relative", zIndex: 1, maxWidth: 1840, margin: "0 auto", padding: "22px 30px 50px" }}>
-        {/* KOPF */}
+        {/* HEADER */}
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 16, marginBottom: 6 }}>
           <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 30, letterSpacing: "0.18em", color: "#fdfdfd" }}>
             SPX SECTOR CYCLE
           </div>
-          {autoStage && (
-            <div style={{ display: "flex", alignItems: "center", gap: 9, fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.08em" }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", boxShadow: "0 0 9px #22c55e" }} />
-              <span style={{ color: "#c9c9c9" }}>AUTO-DETECT: STAGE <span style={{ color: "#f8e49b", fontWeight: 700 }}>{autoStage}</span></span>
-              <span style={{ color: "#22c55e", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: 9.5, letterSpacing: "0.16em" }}>{STAGES[autoStage - 1].title}</span>
-            </div>
-          )}
           {current && (
             <div style={{ display: "flex", alignItems: "center", gap: 9, fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.08em" }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: GOLD, boxShadow: `0 0 9px ${GOLD}` }} />
-              <span style={{ color: "#c9c9c9" }}>MANUAL: STAGE <span style={{ color: "#f8e49b", fontWeight: 700 }}>{current}</span></span>
+              <span style={{ color: "#c9c9c9" }}>CURRENT STAGE <span style={{ color: "#f8e49b", fontWeight: 700 }}>{current}</span></span>
+              <span style={{ color: "#b99c64", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: 9.5, letterSpacing: "0.16em" }}>{STAGES[current - 1].title}</span>
             </div>
           )}
         </div>
@@ -375,14 +264,9 @@ export default function Cycle() {
                   onMouseEnter={() => setHoverCol(s.n)} onMouseLeave={() => setHoverCol(null)}
                   style={{ ...cellBase(s.n), padding: "11px 8px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
                   <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 20, letterSpacing: "0.12em", color: selected === s.n ? "#f8e49b" : "#c9c9c9" }}>{s.n}</span>
-                  <span style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 2 }}>
-                    {autoStage === s.n && (
-                      <span style={{ fontSize: 7, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.18em", color: "#22c55e" }}>● AUTO</span>
-                    )}
-                    {current === s.n && (
-                      <span style={{ fontSize: 7, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.18em", color: GOLD }}>● MANUAL</span>
-                    )}
-                  </span>
+                  {current === s.n && (
+                    <span style={{ display: "block", fontSize: 7, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.22em", color: GOLD, marginTop: 2 }}>● CURRENT</span>
+                  )}
                 </div>
               ))}
 
@@ -426,145 +310,47 @@ export default function Cycle() {
             </div>
 
             <div style={{ position: "absolute", top: 0, bottom: 0, left: 150, right: 0, pointerEvents: "none" }}>
-              <CycleWave selected={selected} auto={autoStage} />
+              <CycleWave selected={selected} current={current} />
             </div>
           </div>
         </div>
 
-        {/* AUTO-DETECT PANEL + DETAIL */}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
-          {/* WO SIND WIR — Score-Panel */}
-          <div style={{ ...glass, flex: "1 1 340px", minWidth: 320, padding: "18px 22px 16px", borderColor: "rgba(34,197,94,0.3)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
-              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.18em", color: "#fdfdfd" }}>WHERE ARE WE?</span>
-              <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>EW-RS vs SPY · 252D LOOKBACK</span>
-              <span style={{ marginLeft: "auto", display: "flex", gap: 5 }}>
-                {[[21, "FAST"], [42, "MID"], [63, "SLOW"]].map(([v, l]) => (
-                  <button key={v} onClick={() => setHalflife(v)} title={`Halflife ${v} Handelstage`}
-                    style={{ padding: "4px 10px", borderRadius: 8, cursor: "pointer",
-                      background: halflife === v ? "rgba(212,175,55,0.12)" : "rgba(255,255,255,0.03)",
-                      border: `1px solid ${halflife === v ? "rgba(212,175,55,0.5)" : "rgba(255,255,255,0.08)"}`,
-                      color: halflife === v ? "#f8e49b" : "#666",
-                      fontFamily: "'Montserrat', sans-serif", fontSize: 7.5, fontWeight: 700, letterSpacing: "0.14em" }}>
-                    {l}
-                  </button>
-                ))}
+        {/* DETAIL */}
+        {sel && (
+          <div style={{ ...glass, padding: "20px 24px 18px" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 12, marginBottom: 8 }}>
+              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 23, letterSpacing: "0.14em", color: "#fdfdfd" }}>
+                STAGE {sel.n} <span style={{ color: GOLD }}>·</span> {sel.title}
               </span>
+              {current === sel.n ? (
+                <button onClick={() => setCurrent(null)}
+                  style={{ padding: "6px 14px", borderRadius: 9, cursor: "pointer", background: "rgba(212,175,55,0.13)", border: "1px solid rgba(212,175,55,0.5)", color: "#f8e49b", fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em" }}>● CURRENT — REMOVE</button>
+              ) : (
+                <button onClick={() => setCurrent(sel.n)}
+                  style={{ padding: "6px 14px", borderRadius: 9, cursor: "pointer", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(212,175,55,0.3)", color: "#b99c64", fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em", transition: "all 0.2s" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.6)"; e.currentTarget.style.color = "#f8e49b"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.3)"; e.currentTarget.style.color = "#b99c64"; }}>SET AS CURRENT</button>
+              )}
             </div>
-            <div style={{ display: "flex", gap: 5, margin: "8px 0 10px" }}>
-              {[["diff", "BEST − WORST"], ["best", "BEST ONLY"], ["rank", "RANKED"]].map(([id, l]) => (
-                <button key={id} onClick={() => setScoreMode(id)}
-                  style={{ padding: "4.5px 11px", borderRadius: 8, cursor: "pointer",
-                    background: scoreMode === id ? "rgba(212,175,55,0.12)" : "rgba(255,255,255,0.03)",
-                    border: `1px solid ${scoreMode === id ? "rgba(212,175,55,0.5)" : "rgba(255,255,255,0.08)"}`,
-                    color: scoreMode === id ? "#f8e49b" : "#666",
-                    fontFamily: "'Montserrat', sans-serif", fontSize: 7.5, fontWeight: 700, letterSpacing: "0.14em" }}>
-                  {l}
-                </button>
-              ))}
+            <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11.5, color: "#8f8f8f", lineHeight: 1.7, marginBottom: 16 }}>
+              {sel.desc}
             </div>
-            <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, color: "#666", marginBottom: 13, lineHeight: 1.6 }}>
-              {scoreMode === "diff" && <>Aggregated EW-RS of the 3 Best vs SPY minus the 3 Worst — 252D lookback, halflife {halflife}D, annualized.</>}
-              {scoreMode === "best" && <>Aggregated EW-RS of the 3 Best vs SPY only — for cycles where the historical Worst baskets don\u2019t underperform.</>}
-              {scoreMode === "rank" && <>Cross-sectional rank of each ETF\u2019s EW-RS across all cycle ETFs — Best ranks minus Worst ranks, outlier-robust.</>}
-              {" Click ▸ on a stage for the ETF breakdown."}
-            </div>
-            {scoreLoading ? (
-              <div style={{ padding: "26px 0", textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 10, letterSpacing: "0.2em", color: "#3d3d3d" }}>COMPUTING…</div>
-            ) : scoreError ? (
-              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#f87171" }}>{scoreError}</div>
-            ) : scores && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {scores.map(sc => {
-                  const st = STAGES[sc.n - 1];
-                  const isTop = sc.n === autoStage;
-                  const isOpen = expandedScore === sc.n;
-                  const w = sc.score == null ? 0 : (Math.abs(sc.score) / maxAbs) * 100;
-                  const pos = (sc.score ?? 0) >= 0;
-                  const chip = (p, side) => (
-                    <span key={side + p.t + p.name} title={p.name}
-                      style={{ padding: "3px 8px", borderRadius: 7, fontFamily: "'DM Mono', monospace", fontSize: 8.5, letterSpacing: "0.04em",
-                        background: "rgba(255,255,255,0.03)", border: `1px solid ${side === "b" ? "rgba(34,197,94,0.25)" : "rgba(239,68,68,0.22)"}`,
-                        color: p.v == null ? "#555" : p.v >= 0 ? "#22c55e" : "#ef4444" }}>
-                      {p.t} {p.v == null ? "—" : `${p.v >= 0 ? "+" : ""}${(p.v * 100).toFixed(0)}%`}
-                    </span>
-                  );
-                  return (
-                    <div key={sc.n}>
-                      <div onClick={() => { setSelected(sc.n); setSelInd(null); }}
-                        style={{ display: "grid", gridTemplateColumns: "16px 18px 92px 1fr 56px", alignItems: "center", gap: 8, cursor: "pointer", padding: "5px 8px", borderRadius: 9, background: isTop ? "rgba(34,197,94,0.06)" : selected === sc.n ? "rgba(212,175,55,0.05)" : "transparent", transition: "background 0.15s" }}>
-                        <span onClick={e => { e.stopPropagation(); setExpandedScore(o => o === sc.n ? null : sc.n); }}
-                          style={{ color: isOpen ? GOLD : "#4a4a4a", fontSize: 9, cursor: "pointer", userSelect: "none" }}>{isOpen ? "▾" : "▸"}</span>
-                        <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, color: isTop ? "#22c55e" : "#c9c9c9" }}>{sc.n}</span>
-                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.1em", color: isTop ? "#22c55e" : "#777" }}>
-                          {st.title}{isTop && " ●"}
-                        </span>
-                        <div style={{ height: 7, borderRadius: 4, background: "rgba(255,255,255,0.04)", overflow: "hidden" }}>
-                          <div style={{ width: `${w}%`, height: "100%", borderRadius: 4, background: pos ? (isTop ? "linear-gradient(90deg, #22c55e88, #22c55e)" : "rgba(34,197,94,0.45)") : "rgba(239,68,68,0.5)", transition: "width 0.5s cubic-bezier(0.22,1,0.36,1)" }} />
-                        </div>
-                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5, textAlign: "right", color: sc.score == null ? "#555" : sc.score >= 0 ? "#22c55e" : "#ef4444" }}>
-                          {sc.score == null ? "—" : scoreMode === "rank" ? sc.score.toFixed(2) : `${sc.score >= 0 ? "+" : ""}${(sc.score * 100).toFixed(1)}%`}
-                        </span>
-                      </div>
-                      {isOpen && (
-                        <div style={{ padding: "6px 8px 10px 42px", display: "flex", flexDirection: "column", gap: 6 }}>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
-                            <span style={{ fontSize: 7, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.16em", color: "#22c55e", width: 38 }}>BEST</span>
-                            {sc.best.map(p => chip(p, "b"))}
-                          </div>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
-                            <span style={{ fontSize: 7, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.16em", color: "#ef4444", width: 38 }}>WORST</span>
-                            {sc.worst.map(p => chip(p, "w"))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 22 }}>
+              <div style={{ flex: "1 1 280px" }}>
+                <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.2em", color: "#22c55e", marginBottom: 8 }}>BEST PERFORMERS <span style={{ color: "#4a4a4a", fontWeight: 600, letterSpacing: "0.06em", textTransform: "none" }}>· click for example names</span></div>
+                {sel.best.map(x => indRow(x, "best"))}
               </div>
-            )}
+              <div style={{ flex: "1 1 280px" }}>
+                <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.2em", color: "#ef4444", marginBottom: 8 }}>WORST PERFORMERS</div>
+                {sel.worst.map(x => indRow(x, "worst"))}
+              </div>
+            </div>
           </div>
-
-          {/* DETAIL */}
-          {sel && (
-            <div style={{ ...glass, flex: "2 1 560px", padding: "20px 24px 18px" }}>
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 12, marginBottom: 8 }}>
-                <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 23, letterSpacing: "0.14em", color: "#fdfdfd" }}>
-                  STAGE {sel.n} <span style={{ color: GOLD }}>·</span> {sel.title}
-                </span>
-                {autoStage === sel.n && (
-                  <span style={{ fontSize: 8.5, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.16em", color: "#22c55e" }}>● AUTO-DETECTED</span>
-                )}
-                {current === sel.n ? (
-                  <button onClick={() => setCurrent(null)}
-                    style={{ padding: "6px 14px", borderRadius: 9, cursor: "pointer", background: "rgba(212,175,55,0.13)", border: "1px solid rgba(212,175,55,0.5)", color: "#f8e49b", fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em" }}>● MANUAL — REMOVE</button>
-                ) : (
-                  <button onClick={() => setCurrent(sel.n)}
-                    style={{ padding: "6px 14px", borderRadius: 9, cursor: "pointer", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(212,175,55,0.3)", color: "#b99c64", fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em", transition: "all 0.2s" }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.6)"; e.currentTarget.style.color = "#f8e49b"; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.3)"; e.currentTarget.style.color = "#b99c64"; }}>SET MANUAL</button>
-                )}
-              </div>
-              <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11.5, color: "#8f8f8f", lineHeight: 1.7, marginBottom: 16 }}>
-                {sel.desc}
-              </div>
-
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 22 }}>
-                <div style={{ flex: "1 1 240px" }}>
-                  <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.2em", color: "#22c55e", marginBottom: 8 }}>BEST PERFORMERS <span style={{ color: "#4a4a4a", fontWeight: 600, letterSpacing: "0.06em", textTransform: "none" }}>· click for example names</span></div>
-                  {sel.best.map(x => indRow(x, "best"))}
-                </div>
-                <div style={{ flex: "1 1 240px" }}>
-                  <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.2em", color: "#ef4444", marginBottom: 8 }}>WORST PERFORMERS</div>
-                  {sel.worst.map(x => indRow(x, "worst"))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+        )}
 
         <div style={{ marginTop: 16, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
-          SPX Cycle Framework · Auto-detect aggregates the relative strength vs SPY of each stage\u2019s 3 Best and 3 Worst performers — 252-day lookback with exponential weighting (selectable halflife), annualized. Structural analysis — not investment advice.
+          SPX Cycle Framework · Historical sector leadership per cycle phase. Structural analysis — not investment advice.
         </div>
       </div>
     </div>
