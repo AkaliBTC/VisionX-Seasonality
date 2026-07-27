@@ -168,7 +168,7 @@ const toWeekly = (series) => {
 };
 
 // Volle RS-Ratio/-Momentum-Serien (für Animate/History-Scrub)
-const computeFull = (series, bench, { window: W, momP }) => {
+const computeFull = (series, bench, { window: W, momP, normW }) => {
   const bMap = new Map(bench.map(([t, c]) => [new Date(t).toISOString().slice(0, 10), c]));
   const sMap = new Map(series.map(([t, c]) => [new Date(t).toISOString().slice(0, 10), c]));
   const rs = []; const ts = []; const px = [];
@@ -180,25 +180,31 @@ const computeFull = (series, bench, { window: W, momP }) => {
     if (sMap.has(key)) lastS = sMap.get(key);
     if (b != null && s != null) { rs.push(100 * s / b); ts.push(t); px.push(s); }
   }
-  if (rs.length < W + momP + 6) return null;
+  if (rs.length < W + momP + (normW || momP * 6) + 4) return null;
 
   // JdK-Approximation im StockCharts-Stil:
-  // RS-Ratio = 100 · RS / SMA(RS, W)   → Level relativ zum eigenen Trend,
-  // persistente Outperformer bleiben dauerhaft >100 (keine Mean-Reversion).
-  // RS-Momentum = 100 · Ratio / SMA(Ratio, P) → Drehgeschwindigkeit der Ratio.
+  // RS-Ratio = 100 · RS / SMA(RS, W) → Level relativ zum 1y-Trend (Platzierung
+  // wie StockCharts, persistente Outperformer bleiben dauerhaft >100).
+  // RS-Momentum = 100 + z(ROC_p(Ratio), WN) · 2.5 → kurzperiodige, volatilitäts-
+  // normalisierte Drehgeschwindigkeit. Der kurze ROC führt die Ratio (Derivat),
+  // dadurch entstehen die typischen Kurven/Loops statt reiner Diagonalen.
   const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
   const ratio = new Array(rs.length).fill(null);
   for (let i = W - 1; i < rs.length; i++) {
     const m = mean(rs.slice(i - W + 1, i + 1));
     ratio[i] = m > 1e-9 ? (100 * rs[i]) / m : null;
   }
-  // RS-Momentum = 100 + (Ratio − SMA(Ratio, P)) · 3 → Drehrichtung & -geschwindigkeit
-  // mit sichtbarer Spreizung (Quotient wäre bei 1y-Trendbasis nahezu bewegungslos).
-  const mom = new Array(rs.length).fill(null);
+  const NW = normW || momP * 6;
+  const roc = new Array(rs.length).fill(null);
   for (let i = W - 1 + momP; i < rs.length; i++) {
-    const win = ratio.slice(i - momP + 1, i + 1).filter(v => v != null);
-    if (win.length < momP) continue;
-    mom[i] = 100 + (ratio[i] - mean(win)) * 3;
+    if (ratio[i] != null && ratio[i - momP] != null) roc[i] = ratio[i] - ratio[i - momP];
+  }
+  const mom = new Array(rs.length).fill(null);
+  for (let i = W - 1 + momP + NW - 1; i < rs.length; i++) {
+    const win = roc.slice(i - NW + 1, i + 1).filter(v => v != null);
+    if (win.length < NW) continue;
+    const [m, sd] = meanStd(win);
+    mom[i] = sd > 1e-9 ? 100 + (((roc[i] - m) / sd) * 2.5) : 100;
   }
   // Auf valide Punkte trimmen
   const xs = [], ys = [], tts = [], pxs = [];
@@ -703,8 +709,8 @@ export default function RRG() {
   }, [neededSymbols]);
 
   const params = interval_ === "1wk"
-    ? { window: 52, momP: 10 }
-    : { window: 252, momP: 50 };
+    ? { window: 52, momP: 4, normW: 26 }
+    : { window: 252, momP: 10, normW: 63 };
 
   const benchSeries = useMemo(() => {
     const s = raw[benchSym];
@@ -723,7 +729,7 @@ export default function RRG() {
       const color = u.vsx ? GOLD : (SECTOR_COLORS[u.symbol] || PALETTE[i % PALETTE.length]);
       return { ...u, color, full };
     }).filter(Boolean);
-  }, [raw, universe, interval_, benchSeries, params.window, params.momP]);
+  }, [raw, universe, interval_, benchSeries, params.window, params.momP, params.normW]);
 
   // Anzeige-Tails am aktuellen (float-)Offset — interpoliert für smooth Animation
   const items = useMemo(() =>
@@ -1072,7 +1078,7 @@ export default function RRG() {
         )}
 
         <div style={{ marginTop: 16, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
-          JdK-style approximation: RS-Ratio = 100 · RS / SMA(RS, {params.window}{interval_ === "1wk" ? "W" : "D"}), RS-Momentum = 100 · Ratio / SMA(Ratio, {params.momP}). Structural analysis — not investment advice.
+          JdK-style approximation: RS-Ratio = 100 · RS / SMA(RS, {params.window}{interval_ === "1wk" ? "W" : "D"}) · RS-Momentum = 100 + z-scored {params.momP}-period ROC of the ratio (norm window {params.normW}). Not an exact JdK replica — quadrants and rotation shape match StockCharts, absolute values may differ. Not investment advice.
         </div>
       </div>
 
