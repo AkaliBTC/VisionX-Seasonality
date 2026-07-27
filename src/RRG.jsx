@@ -180,21 +180,24 @@ const computeFull = (series, bench, { window: W, momP }) => {
     if (sMap.has(key)) lastS = sMap.get(key);
     if (b != null && s != null) { rs.push(100 * s / b); ts.push(t); px.push(s); }
   }
-  if (rs.length < W * 2 + momP + 4) return null;
+  if (rs.length < W + momP + 6) return null;
 
+  // JdK-Approximation im StockCharts-Stil:
+  // RS-Ratio = 100 · RS / SMA(RS, W)   → Level relativ zum eigenen Trend,
+  // persistente Outperformer bleiben dauerhaft >100 (keine Mean-Reversion).
+  // RS-Momentum = 100 · Ratio / SMA(Ratio, P) → Drehgeschwindigkeit der Ratio.
+  const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
   const ratio = new Array(rs.length).fill(null);
   for (let i = W - 1; i < rs.length; i++) {
-    const [m, sd] = meanStd(rs.slice(i - W + 1, i + 1));
-    ratio[i] = sd > 1e-9 ? 100 + ((rs[i] - m) / sd) : 100;
+    const m = mean(rs.slice(i - W + 1, i + 1));
+    ratio[i] = m > 1e-9 ? (100 * rs[i]) / m : null;
   }
-  const roc = new Array(rs.length).fill(null);
-  for (let i = W - 1 + momP; i < rs.length; i++) roc[i] = ratio[i] - ratio[i - momP];
   const mom = new Array(rs.length).fill(null);
-  for (let i = W - 1 + momP + W - 1; i < rs.length; i++) {
-    const win = roc.slice(i - W + 1, i + 1).filter(v => v != null);
-    if (win.length < W) continue;
-    const [m, sd] = meanStd(win);
-    mom[i] = sd > 1e-9 ? 100 + ((roc[i] - m) / sd) : 100;
+  for (let i = W - 1 + momP; i < rs.length; i++) {
+    const win = ratio.slice(i - momP + 1, i + 1).filter(v => v != null);
+    if (win.length < momP) continue;
+    const m = mean(win);
+    mom[i] = m > 1e-9 ? (100 * ratio[i]) / m : null;
   }
   // Auf valide Punkte trimmen
   const xs = [], ys = [], tts = [], pxs = [];
@@ -233,7 +236,7 @@ const fetchHistories = async (symbols) => {
   const out = {}; const failed = [];
   for (let i = 0; i < symbols.length; i += 25) {
     const chunk = symbols.slice(i, i + 25);
-    const res = await fetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=2y`);
+    const res = await fetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=5y`);
     if (!res.ok) throw new Error(`API ${res.status} — läuft die Seite auf Vercel / \`vercel dev\`?`);
     const json = await res.json();
     Object.assign(out, json.data);
@@ -313,7 +316,7 @@ function BenchChart({ series, label, offset, tailLen, onScrub, maxOffset }) {
 }
 
 // ── RRG-CHART (breites Rechteck · zoombar) ───────────────────────────────────
-function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext }) {
+function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showTails }) {
   const W = 1480, H = 560, PADL = 52, PADR = 18, PADT = 14, PADB = 38;
   const plotW = W - PADL - PADR, plotH = H - PADT - PADB;
   const svgRef = useRef(null);
@@ -431,14 +434,14 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext }) {
               <g key={it.symbol} opacity={dim ? 0.1 : 1} style={{ transition: "opacity 0.25s", cursor: onNodeClick ? "pointer" : undefined }}
                 onMouseEnter={() => setHovered(it.symbol)} onMouseLeave={() => setHovered(null)}
                 onClick={() => onNodeClick && onNodeClick(it)}>
-                {segs.map((d, i) => (
+                {showTails && segs.map((d, i) => (
                   <path key={i} d={d} fill="none" stroke={it.color}
-                    strokeWidth={it.vsx ? 2.2 : 1.9}
-                    opacity={0.13 + 0.75 * (i / Math.max(1, segs.length - 1))}
+                    strokeWidth={it.vsx ? 1.8 : 1.45}
+                    opacity={0.08 + 0.5 * (i / Math.max(1, segs.length - 1))}
                     strokeLinecap="round" />
                 ))}
-                {pts.slice(0, -1).map((p, i) => (
-                  <circle key={"d" + i} cx={p.x} cy={p.y} r={1.8} fill={it.color} opacity={0.18 + 0.55 * (i / Math.max(1, tailLen - 1))} />
+                {showTails && pts.slice(0, -1).map((p, i) => (
+                  <circle key={"d" + i} cx={p.x} cy={p.y} r={1.4} fill={it.color} opacity={0.12 + 0.42 * (i / Math.max(1, tailLen - 1))} />
                 ))}
                 {it.vsx && <circle cx={X(head.x)} cy={Y(head.y)} r={9} fill="none" stroke={GOLD} strokeWidth={0.75} opacity={0.45} />}
                 <circle cx={X(head.x)} cy={Y(head.y)} r={5.2} fill={it.color}
@@ -601,6 +604,7 @@ export default function RRG() {
   const [drill, setDrill] = useState(null);
   const [interval_, setInterval_] = useState("1d");
   const [tailLen, setTailLen] = useState(5);
+  const [showTails, setShowTails] = useState(true);
   const [benchMode, setBenchMode] = useState("SECTOR");
   const [vsxPack, setVsxPack] = useState(true);
   const [pack, setPack] = useState(loadPack);
@@ -632,7 +636,7 @@ export default function RRG() {
   useEffect(() => {
     if (!playing) return;
     let raf; let lastT = performance.now();
-    const SPEED = 5; // Perioden pro Sekunde
+    const SPEED = 4; // Perioden pro Sekunde (−20%)
     const step = (now) => {
       const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
       setOffset(o => Math.max(0, o - dt * SPEED));
@@ -697,8 +701,8 @@ export default function RRG() {
   }, [neededSymbols]);
 
   const params = interval_ === "1wk"
-    ? { window: 14, momP: 4 }
-    : { window: 63, momP: 10 };
+    ? { window: 26, momP: 10 }
+    : { window: 126, momP: 21 };
 
   const benchSeries = useMemo(() => {
     const s = raw[benchSym];
@@ -879,6 +883,7 @@ export default function RRG() {
           </span>
           <input type="range" min={3} max={10} value={tailLen} onChange={e => setTailLen(+e.target.value)}
             style={{ width: 100, accentColor: GOLD }} />
+          <button style={pill(showTails)} onClick={() => setShowTails(v => !v)} title="Tails ein-/ausblenden">Tails</button>
           {drill && (
             <>
               <div style={divider} />
@@ -936,7 +941,7 @@ export default function RRG() {
               </div>
             )}
             {items.length > 0 ? (
-              <RRGChart key={viewKey + interval_} items={items} hovered={hovered} setHovered={setHovered} tailLen={tailLen} ext={chartExt}
+              <RRGChart key={viewKey + interval_} items={items} hovered={hovered} setHovered={setHovered} tailLen={tailLen} ext={chartExt} showTails={showTails}
                 onNodeClick={preset.drillable && !drill
                   ? (it) => { setDrill(it.symbol); setBenchMode("SECTOR"); setHovered(null); setOffset(0); setPlaying(false); }
                   : null} />
@@ -1064,7 +1069,7 @@ export default function RRG() {
         )}
 
         <div style={{ marginTop: 16, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
-          JdK RS-Ratio / RS-Momentum als Normalisierungs-Approximation ({params.window}{interval_ === "1wk" ? "W" : "D"} Fenster · ROC {params.momP}). Structural analysis — not investment advice.
+          JdK-style approximation: RS-Ratio = 100 · RS / SMA(RS, {params.window}{interval_ === "1wk" ? "W" : "D"}), RS-Momentum = 100 · Ratio / SMA(Ratio, {params.momP}). Structural analysis — not investment advice.
         </div>
       </div>
 
