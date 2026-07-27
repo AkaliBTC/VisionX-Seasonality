@@ -180,17 +180,17 @@ const computeFull = (series, bench, { window: W, momWindow: M }) => {
     if (sMap.has(key)) lastS = sMap.get(key);
     if (b != null && s != null) { rs.push(100 * s / b); ts.push(t); px.push(s); }
   }
-  if (rs.length < W + M + 4) return null;
+  if (rs.length < 2 * W + M + 4) return null;
 
-  // ── JdK-Approximation (StockCharts-Logik) ────────────────────────────────
-  // RS        = 100 · Preis / Benchmark          → reine Relative Stärke
-  // RS-Ratio  = 100 · RS / SMA(RS, W)            → RS relativ zum eigenen Trend
-  // RS-Mom    = 100 · Ratio / SMA(Ratio, M)      → M ist KURZ (Drehgeschwindigkeit)
+  // ── JdK-Approximation ────────────────────────────────────────────────────
+  // RS       = 100 · Preis / Benchmark
+  // RS-Ratio = 100 · RS / SMA(RS, W)                    → Trend-Level (X)
+  // RS-Mom   = 100 + z(SMA(ΔRatio, M), W) · 3           → Drehrichtung (Y)
   //
-  // Kritisch: M muss deutlich kürzer als W sein. Mit M = W wäre SMA(Ratio) über
-  // einen Tail praktisch konstant → mom wäre eine lineare Funktion von ratio
-  // (Korrelation 1.0) und jeder Tail eine Gerade. Mit kurzem M bewegt sich der
-  // Referenz-Durchschnitt mit → Ratio und Momentum entkoppeln, echte Loops.
+  // Entscheidend ist die ABLEITUNG: das Momentum muss der Ratio ~90° voraus-
+  // laufen, sonst sind beide Achsen kollinear und jeder Tail wird zur Geraden.
+  // Ein kurzes M (3 Wochen / 15 Tage) hält die Phasenverschiebung; die z-Norm
+  // über W macht die Achse skalenfrei und über Sektoren vergleichbar.
   const smaAt = (arr, i, n) => {
     let s = 0;
     for (let k = i - n + 1; k <= i; k++) { if (arr[k] == null) return null; s += arr[k]; }
@@ -201,10 +201,21 @@ const computeFull = (series, bench, { window: W, momWindow: M }) => {
     const m = smaAt(rs, i, W);
     ratio[i] = m > 1e-9 ? (100 * rs[i]) / m : null;
   }
+  const diff = new Array(rs.length).fill(null);
+  for (let i = W; i < rs.length; i++) {
+    if (ratio[i] != null && ratio[i - 1] != null) diff[i] = ratio[i] - ratio[i - 1];
+  }
+  const slope = new Array(rs.length).fill(null);
+  for (let i = W + M; i < rs.length; i++) slope[i] = smaAt(diff, i, M);
+
   const mom = new Array(rs.length).fill(null);
-  for (let i = W - 1 + M; i < rs.length; i++) {
-    const m = smaAt(ratio, i, M);
-    mom[i] = m != null && m > 1e-9 ? (100 * ratio[i]) / m : null;
+  for (let i = W + M + W; i < rs.length; i++) {
+    const win = [];
+    for (let k = i - W + 1; k <= i; k++) if (slope[k] != null) win.push(slope[k]);
+    if (win.length < W * 0.8) continue;
+    const mu = win.reduce((a, b) => a + b, 0) / win.length;
+    const sd = Math.sqrt(win.reduce((a, b) => a + (b - mu) ** 2, 0) / win.length);
+    mom[i] = sd > 1e-12 ? 100 + ((slope[i] - mu) / sd) * 3 : 100;
   }
 
   // Auf valide Punkte trimmen
@@ -710,8 +721,8 @@ export default function RRG() {
   }, [neededSymbols]);
 
   const params = interval_ === "1wk"
-    ? { window: 52,  momWindow: 10 }   // 1 Jahr Trendbasis · 10W Drehfenster
-    : { window: 252, momWindow: 50 };
+    ? { window: 52,  momWindow: 3 }    // 1 Jahr Trendbasis · 3W Ableitung
+    : { window: 252, momWindow: 15 };  // 1 Jahr Trendbasis · 15D Ableitung
 
   const benchSeries = useMemo(() => {
     const s = raw[benchSym];
@@ -1079,7 +1090,7 @@ export default function RRG() {
         )}
 
         <div style={{ marginTop: 16, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
-          JdK-style approximation · RS = 100 · price / benchmark · RS-Ratio = 100 · RS / SMA(RS, {params.window}) · RS-Momentum = 100 · Ratio / SMA(Ratio, {params.momWindow}) — {interval_ === "1wk" ? "weekly" : "daily"} periods. JdK is proprietary; quadrants and rotation shape align with StockCharts, absolute values may differ. Not investment advice.
+          JdK-style approximation · RS-Ratio = 100 · RS / SMA(RS, {params.window}) · RS-Momentum = z-scored {params.momWindow}-period slope of the ratio, so momentum leads the ratio by ~90° (true rotation, not a diagonal). JdK is proprietary; quadrants and rotation shape align with StockCharts, absolute values may differ. Not investment advice.
         </div>
       </div>
 
