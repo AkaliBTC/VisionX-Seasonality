@@ -165,7 +165,7 @@ const resampleSeries = (series, mode) => {
 };
 
 // EW-gewichtete RS-Returns vs SPY (annualisierungsfrei — Vergleich innerhalb der Zeitebene)
-const ewRsTf = (seriesD, spyD, tf) => {
+const ewRsTf = (seriesD, spyD, tf, shift = 0) => {
   if (!seriesD || !spyD) return null;
   const series = resampleSeries(seriesD, tf.resample);
   const spy = resampleSeries(spyD, tf.resample);
@@ -177,8 +177,9 @@ const ewRsTf = (seriesD, spyD, tf) => {
     if (sMap.has(k)) last = sMap.get(k);
     if (last != null) px.push([last, b]);
   }
-  if (px.length < Math.min(tf.lookback, 12) + 2) return null;
-  const win = px.slice(-Math.min(tf.lookback + 1, px.length));
+  const end = px.length - shift;
+  if (end < Math.min(tf.lookback, 12) + 2) return null;
+  const win = px.slice(Math.max(0, end - (tf.lookback + 1)), end);
   const lam = Math.pow(0.5, 1 / tf.halflife);
   let num = 0, den = 0;
   for (let i = 1; i < win.length; i++) {
@@ -189,12 +190,14 @@ const ewRsTf = (seriesD, spyD, tf) => {
   return den > 0 ? (num / den) * win.length : null;   // skaliert auf Fenster-Länge
 };
 
-const computeCycleScores = (data, tf) => {
+const SPDRS = ["XLK","XLF","XLV","XLY","XLP","XLE","XLI","XLB","XLRE","XLU","XLC"];
+
+const computeCycleScores = (data, tf, shift = 0) => {
   const spy = data.SPY;
   if (!spy) return null;
   const cache = {};
   const raw = t => {
-    if (!(t in cache)) cache[t] = ewRsTf(data[t], spy, tf);
+    if (!(t in cache)) cache[t] = ewRsTf(data[t], spy, tf, shift);
     return cache[t];
   };
   const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
@@ -265,7 +268,7 @@ export default function Cycle() {
 
   useEffect(() => {
     let alive = true;
-    fetch(`/api/history?symbols=${["SPY", ...CYCLE_ETFS].join(",")}&interval=1d&range=5y`)
+    fetch(`/api/history?symbols=${[...new Set(["SPY", ...CYCLE_ETFS, ...SPDRS])].join(",")}&interval=1d&range=5y`)
       .then(r => { if (!r.ok) throw new Error(`API ${r.status}`); return r.json(); })
       .then(json => { if (alive) setRawData(json.data || {}); })
       .catch(e => alive && setScoreError(e.message))
@@ -277,12 +280,44 @@ export default function Cycle() {
     () => rawData ? computeCycleScores(rawData, CYCLE_TFS[cycleTf]) : null,
     [rawData, cycleTf]
   );
+  // Fenster DAVOR (um volle Lookback-Länge zurückgeschoben) — für die Sequenz-Prüfung
+  const scoresPrev = React.useMemo(
+    () => rawData ? computeCycleScores(rawData, CYCLE_TFS[cycleTf], CYCLE_TFS[cycleTf].lookback) : null,
+    [rawData, cycleTf]
+  );
+  const argmax = sc => {
+    if (!sc) return null;
+    const valid = sc.filter(s => s.score != null);
+    return valid.length ? valid.reduce((a, b) => (b.score > a.score ? b : a)).n : null;
+  };
+  const rawTop = React.useMemo(() => argmax(scores), [scores]);
+  const prevStage = React.useMemo(() => argmax(scoresPrev), [scoresPrev]);
+  // Sequenz-Check: Zyklus läuft 1→6→1 — erlaubt ist Verbleib oder der nächste Schritt.
   const autoStage = React.useMemo(() => {
     if (!scores) return null;
-    const valid = scores.filter(s => s.score != null);
-    return valid.length ? valid.reduce((a, b) => (b.score > a.score ? b : a)).n : null;
-  }, [scores]);
+    if (!prevStage) return rawTop;
+    const nextStage = prevStage === 6 ? 1 : prevStage + 1;
+    const sc = n => scores.find(s => s.n === n)?.score;
+    const a = sc(prevStage), b = sc(nextStage);
+    if (a == null && b == null) return rawTop;
+    if (b == null) return prevStage;
+    if (a == null) return nextStage;
+    return b > a ? nextStage : prevStage;
+  }, [scores, prevStage, rawTop]);
   const maxAbs = scores ? Math.max(1e-9, ...scores.map(s => Math.abs(s.score ?? 0))) : 1;
+
+  // SPDR-Extrema (Top / Loser) je Zyklus-Ebene
+  const extremes = React.useMemo(() => {
+    if (!rawData) return null;
+    const out = {};
+    for (const [id, tf] of Object.entries(CYCLE_TFS)) {
+      const vals = SPDRS.map(t => [t, ewRsTf(rawData[t], rawData.SPY, tf)]).filter(([, v]) => v != null);
+      if (!vals.length) { out[id] = null; continue; }
+      vals.sort((a, b) => a[1] - b[1]);
+      out[id] = { low: { t: vals[0][0], v: vals[0][1] }, top: { t: vals[vals.length - 1][0], v: vals[vals.length - 1][1] } };
+    }
+    return out;
+  }, [rawData]);
 
   useEffect(() => {
     try {
@@ -345,6 +380,20 @@ export default function Cycle() {
           <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 30, letterSpacing: "0.18em", color: "#fdfdfd" }}>
             SPX SECTOR CYCLE
           </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {Object.entries(CYCLE_TFS).map(([id, tf]) => (
+              <button key={id} onClick={() => { setCycleTf(id); setExpandedScore(null); }} title={tf.sub}
+                style={{ padding: "7px 15px", borderRadius: 10, cursor: "pointer",
+                  background: cycleTf === id ? "linear-gradient(135deg, rgba(212,175,55,0.16), rgba(212,175,55,0.07))" : "rgba(255,255,255,0.03)",
+                  border: `1px solid ${cycleTf === id ? "rgba(212,175,55,0.5)" : "rgba(255,255,255,0.08)"}`,
+                  color: cycleTf === id ? "#f8e49b" : "#777",
+                  fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em",
+                  transition: "all 0.25s cubic-bezier(0.22,1,0.36,1)",
+                  boxShadow: cycleTf === id ? "0 0 16px rgba(212,175,55,0.12)" : "none" }}>
+                {tf.label}
+              </button>
+            ))}
+          </div>
           {autoStage && (
             <div style={{ display: "flex", alignItems: "center", gap: 9, fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.08em" }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", boxShadow: "0 0 9px #22c55e" }} />
@@ -363,6 +412,34 @@ export default function Cycle() {
         <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11, color: "#b99c64", letterSpacing: "0.04em", marginBottom: 18 }}>
           6-Stage Rotation Framework · Best & worst performers per cycle phase · Click a stage or industry for example names
         </div>
+
+        {/* SPDR SECTOR EXTREMES je Zyklus-Ebene */}
+        {extremes && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+            {Object.entries(CYCLE_TFS).map(([id, tf]) => extremes[id] && (
+              <div key={id} onClick={() => setCycleTf(id)}
+                style={{ ...glass, flex: "1 1 280px", minWidth: 260, padding: "13px 18px 11px", cursor: "pointer",
+                  borderColor: cycleTf === id ? "rgba(212,175,55,0.45)" : "rgba(255,255,255,0.08)",
+                  boxShadow: cycleTf === id ? "0 0 22px rgba(212,175,55,0.1), inset 0 1px 0 rgba(255,255,255,0.06)" : glass.boxShadow }}>
+                <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.2em", color: cycleTf === id ? "#f8e49b" : "#777", marginBottom: 9 }}>
+                  {tf.label} <span style={{ color: "#4a4a4a", fontWeight: 600, letterSpacing: "0.08em" }}>· SPDR EXTREMES</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 7.5, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.16em", color: "#22c55e" }}>TOP</span>
+                    <span style={{ color: "#e8e8e8", fontWeight: 700 }}>{extremes[id].top.t}</span>
+                    <span style={{ color: "#22c55e" }}>+{(extremes[id].top.v * 100).toFixed(1)}%</span>
+                  </span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 7.5, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.16em", color: "#ef4444" }}>LAG</span>
+                    <span style={{ color: "#9a9a9a", fontWeight: 700 }}>{extremes[id].low.t}</span>
+                    <span style={{ color: "#ef4444" }}>{(extremes[id].low.v * 100).toFixed(1)}%</span>
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* MATRIX */}
         <div style={{ ...glass, padding: "6px 0 0", marginBottom: 18, overflow: "hidden" }}>
@@ -437,21 +514,21 @@ export default function Cycle() {
               <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.18em", color: "#fdfdfd" }}>WHERE ARE WE?</span>
               <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>EW-RS vs SPY · BEST − WORST</span>
             </div>
-            <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
-              {Object.entries(CYCLE_TFS).map(([id, tf]) => (
-                <button key={id} onClick={() => { setCycleTf(id); setExpandedScore(null); }} title={tf.sub}
-                  style={{ padding: "6px 13px", borderRadius: 9, cursor: "pointer",
-                    background: cycleTf === id ? "rgba(212,175,55,0.13)" : "rgba(255,255,255,0.03)",
-                    border: `1px solid ${cycleTf === id ? "rgba(212,175,55,0.5)" : "rgba(255,255,255,0.08)"}`,
-                    color: cycleTf === id ? "#f8e49b" : "#666",
-                    fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.14em" }}>
-                  {tf.label}
-                </button>
-              ))}
-            </div>
-            <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, color: "#666", marginBottom: 12, lineHeight: 1.6 }}>
+            <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, color: "#666", marginBottom: 10, lineHeight: 1.6 }}>
               {CYCLE_TFS[cycleTf].sub} · exponentially weighted · aggregated RS of the 3 Best minus the 3 Worst vs SPY. Click ▸ for the ETF breakdown.
             </div>
+            {prevStage && (
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 12, padding: "8px 12px", borderRadius: 10, background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.06)", fontFamily: "'DM Mono', monospace", fontSize: 9.5, letterSpacing: "0.05em" }}>
+                <span style={{ color: "#666" }}>PREV WINDOW:</span>
+                <span style={{ color: "#c9c9c9", fontWeight: 700 }}>STAGE {prevStage}</span>
+                <span style={{ color: "#4a4a4a" }}>→</span>
+                <span style={{ color: "#666" }}>SEQUENCE PICK:</span>
+                <span style={{ color: "#22c55e", fontWeight: 700 }}>STAGE {autoStage}</span>
+                {rawTop != null && rawTop !== autoStage && (
+                  <span style={{ color: "#b99c64", fontSize: 8.5 }}>· raw max Stage {rawTop} — filtered (cycles run 1→6, not sideways)</span>
+                )}
+              </div>
+            )}
             {scoreLoading ? (
               <div style={{ padding: "24px 0", textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 10, letterSpacing: "0.2em", color: "#3d3d3d" }}>COMPUTING…</div>
             ) : scoreError ? (
@@ -547,7 +624,7 @@ export default function Cycle() {
         </div>
 
         <div style={{ marginTop: 16, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
-          SPX Cycle Framework · Auto-detect: exponentially weighted relative strength vs SPY per stage basket (3 Best − 3 Worst) on daily / weekly / monthly resolution. Structural analysis — not investment advice.
+          SPX Cycle Framework · Auto-detect: EW relative strength vs SPY per stage basket (3 Best − 3 Worst) on daily / weekly / monthly resolution, sequence-checked against the previous window (cycles run 1→6). Structural analysis — not investment advice.
         </div>
       </div>
     </div>
