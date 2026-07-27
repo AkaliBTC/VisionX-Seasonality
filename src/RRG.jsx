@@ -180,42 +180,26 @@ const computeFull = (series, bench, { window: W, momWindow: M }) => {
     if (sMap.has(key)) lastS = sMap.get(key);
     if (b != null && s != null) { rs.push(100 * s / b); ts.push(t); px.push(s); }
   }
-  if (rs.length < 2 * W + M + 4) return null;
+  if (rs.length < W + 4) return null;
 
-  // ── JdK-Approximation ────────────────────────────────────────────────────
-  // RS       = 100 · Preis / Benchmark
-  // RS-Ratio = 100 · RS / SMA(RS, W)                    → Trend-Level (X)
-  // RS-Mom   = 100 + z(SMA(ΔRatio, M), W) · 3           → Drehrichtung (Y)
+  // ── DIREKTE RELATIVE STÄRKE ──────────────────────────────────────────────
+  // RS = Preis / Benchmark. Beide Achsen sind reine RS-Performance, nichts sonst:
   //
-  // Entscheidend ist die ABLEITUNG: das Momentum muss der Ratio ~90° voraus-
-  // laufen, sonst sind beide Achsen kollinear und jeder Tail wird zur Geraden.
-  // Ein kurzes M (3 Wochen / 15 Tage) hält die Phasenverschiebung; die z-Norm
-  // über W macht die Achse skalenfrei und über Sektoren vergleichbar.
-  const smaAt = (arr, i, n) => {
-    let s = 0;
-    for (let k = i - n + 1; k <= i; k++) { if (arr[k] == null) return null; s += arr[k]; }
-    return s / n;
-  };
+  //   X = 100 · RS(t) / RS(t−W)   → relative Performance über das lange Fenster
+  //   Y = 100 · RS(t) / RS(t−M)   → relative Performance über das kurze Fenster
+  //
+  // Lesart: >100 heißt Outperformance gegenüber der Basis über den Zeitraum.
+  //   LEADING   = langfristig UND kurzfristig besser als die Basis
+  //   IMPROVING = langfristig schlechter, kurzfristig bereits besser
+  //   WEAKENING = langfristig besser, kurzfristig schon schlechter
+  //   LAGGING   = in beiden Zeiträumen schlechter
   const ratio = new Array(rs.length).fill(null);
-  for (let i = W - 1; i < rs.length; i++) {
-    const m = smaAt(rs, i, W);
-    ratio[i] = m > 1e-9 ? (100 * rs[i]) / m : null;
-  }
-  const diff = new Array(rs.length).fill(null);
-  for (let i = W; i < rs.length; i++) {
-    if (ratio[i] != null && ratio[i - 1] != null) diff[i] = ratio[i] - ratio[i - 1];
-  }
-  const slope = new Array(rs.length).fill(null);
-  for (let i = W + M; i < rs.length; i++) slope[i] = smaAt(diff, i, M);
-
   const mom = new Array(rs.length).fill(null);
-  for (let i = W + M + W; i < rs.length; i++) {
-    const win = [];
-    for (let k = i - W + 1; k <= i; k++) if (slope[k] != null) win.push(slope[k]);
-    if (win.length < W * 0.8) continue;
-    const mu = win.reduce((a, b) => a + b, 0) / win.length;
-    const sd = Math.sqrt(win.reduce((a, b) => a + (b - mu) ** 2, 0) / win.length);
-    mom[i] = sd > 1e-12 ? 100 + ((slope[i] - mu) / sd) * 3 : 100;
+  for (let i = W; i < rs.length; i++) {
+    if (rs[i - W] > 1e-9) ratio[i] = (100 * rs[i]) / rs[i - W];
+  }
+  for (let i = M; i < rs.length; i++) {
+    if (rs[i - M] > 1e-9) mom[i] = (100 * rs[i]) / rs[i - M];
   }
 
   // Auf valide Punkte trimmen
@@ -484,8 +468,8 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showT
             <text key={label} x={x} y={y} textAnchor={anchor} fill={col} opacity={0.6}
               style={{ font: "700 11px Montserrat, sans-serif", letterSpacing: "0.26em" }}>{label}</text>
           ))}
-        <text x={PADL + plotW / 2} y={H - 9} textAnchor="middle" fill="#4a4a4a" style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>JDK RS-RATIO →</text>
-        <text x={16} y={PADT + plotH / 2} textAnchor="middle" fill="#4a4a4a" transform={`rotate(-90 16 ${PADT + plotH / 2})`} style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>JDK RS-MOMENTUM →</text>
+        <text x={PADL + plotW / 2} y={H - 9} textAnchor="middle" fill="#4a4a4a" style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>RS vs BASIS · 1 YEAR →</text>
+        <text x={16} y={PADT + plotH / 2} textAnchor="middle" fill="#4a4a4a" transform={`rotate(-90 16 ${PADT + plotH / 2})`} style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>RS vs BASIS · 1 QUARTER →</text>
       </svg>
 
       <div style={{ position: "absolute", top: 10, right: 10, display: "flex", gap: 7 }}>
@@ -721,8 +705,8 @@ export default function RRG() {
   }, [neededSymbols]);
 
   const params = interval_ === "1wk"
-    ? { window: 52,  momWindow: 3 }    // 1 Jahr Trendbasis · 3W Ableitung
-    : { window: 252, momWindow: 15 };  // 1 Jahr Trendbasis · 15D Ableitung
+    ? { window: 52,  momWindow: 13 }   // RS über 1 Jahr (X) vs. 1 Quartal (Y)
+    : { window: 252, momWindow: 63 };  // dito auf Tagesbasis
 
   const benchSeries = useMemo(() => {
     const s = raw[benchSym];
@@ -990,8 +974,8 @@ export default function RRG() {
                   <tr style={{ fontSize: 8, letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, textTransform: "uppercase" }}>
                     {th("alpha", "Symbol")}
                     {th("quad", "Quad")}
-                    {th("rsr", "RS-R", "right")}
-                    {th("rsm", "RS-M", "right")}
+                    {th("rsr", "RS-L", "right")}
+                    {th("rsm", "RS-S", "right")}
                     <th style={{ width: 22 }} />
                   </tr>
                 </thead>
@@ -1042,8 +1026,8 @@ export default function RRG() {
                   {th("alpha", "Symbol")}
                   <th style={{ padding: "6px 9px", textAlign: "left", color: "#555" }}>Name</th>
                   {th("quad", "Quadrant")}
-                  {th("rsr", "RS-Ratio", "right")}
-                  {th("rsm", "RS-Momentum", "right")}
+                  {th("rsr", "RS long", "right")}
+                  {th("rsm", "RS short", "right")}
                   <th style={{ padding: "6px 9px", textAlign: "right", color: "#555" }}>Price</th>
                   <th style={{ padding: "6px 9px", textAlign: "right", color: "#555" }}>% Chg ({tailLen}{interval_ === "1wk" ? "W" : "D"})</th>
                 </tr>
@@ -1090,7 +1074,7 @@ export default function RRG() {
         )}
 
         <div style={{ marginTop: 16, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
-          JdK-style approximation · RS-Ratio = 100 · RS / SMA(RS, {params.window}) · RS-Momentum = z-scored {params.momWindow}-period slope of the ratio, so momentum leads the ratio by ~90° (true rotation, not a diagonal). JdK is proprietary; quadrants and rotation shape align with StockCharts, absolute values may differ. Not investment advice.
+          Direct relative strength vs benchmark · X = RS performance over {params.window} periods, Y = RS performance over {params.momWindow} periods, both indexed to 100. Above 100 = outperformed the benchmark over that period. Not investment advice.
         </div>
       </div>
 
