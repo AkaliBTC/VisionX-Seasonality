@@ -168,7 +168,7 @@ const toWeekly = (series) => {
 };
 
 // Volle RS-Ratio/-Momentum-Serien (für Animate/History-Scrub)
-const computeFull = (series, bench, { window: W }) => {
+const computeFull = (series, bench, { window: W, momWindow: M }) => {
   const bMap = new Map(bench.map(([t, c]) => [new Date(t).toISOString().slice(0, 10), c]));
   const sMap = new Map(series.map(([t, c]) => [new Date(t).toISOString().slice(0, 10), c]));
   const rs = []; const ts = []; const px = [];
@@ -180,15 +180,17 @@ const computeFull = (series, bench, { window: W }) => {
     if (sMap.has(key)) lastS = sMap.get(key);
     if (b != null && s != null) { rs.push(100 * s / b); ts.push(t); px.push(s); }
   }
-  if (rs.length < 2 * W + 4) return null;
+  if (rs.length < W + M + 4) return null;
 
   // ── JdK-Approximation (StockCharts-Logik) ────────────────────────────────
   // RS        = 100 · Preis / Benchmark          → reine Relative Stärke
   // RS-Ratio  = 100 · RS / SMA(RS, W)            → RS relativ zum eigenen Trend
-  // RS-Mom    = 100 · Ratio / SMA(Ratio, W)      → Ratio relativ zu IHREM Trend
-  // Beide Achsen nutzen dasselbe lange Fenster W. Das entkoppelt Momentum von
-  // der Ratio-Steigung (kein Diagonal-Artefakt) und erzeugt die echten Loops:
-  // ein Wert kann rechts stehen (Ratio > 100) und trotzdem fallen (Mom < 100).
+  // RS-Mom    = 100 · Ratio / SMA(Ratio, M)      → M ist KURZ (Drehgeschwindigkeit)
+  //
+  // Kritisch: M muss deutlich kürzer als W sein. Mit M = W wäre SMA(Ratio) über
+  // einen Tail praktisch konstant → mom wäre eine lineare Funktion von ratio
+  // (Korrelation 1.0) und jeder Tail eine Gerade. Mit kurzem M bewegt sich der
+  // Referenz-Durchschnitt mit → Ratio und Momentum entkoppeln, echte Loops.
   const smaAt = (arr, i, n) => {
     let s = 0;
     for (let k = i - n + 1; k <= i; k++) { if (arr[k] == null) return null; s += arr[k]; }
@@ -200,8 +202,8 @@ const computeFull = (series, bench, { window: W }) => {
     ratio[i] = m > 1e-9 ? (100 * rs[i]) / m : null;
   }
   const mom = new Array(rs.length).fill(null);
-  for (let i = 2 * W - 2; i < rs.length; i++) {
-    const m = smaAt(ratio, i, W);
+  for (let i = W - 1 + M; i < rs.length; i++) {
+    const m = smaAt(ratio, i, M);
     mom[i] = m != null && m > 1e-9 ? (100 * ratio[i]) / m : null;
   }
 
@@ -708,8 +710,8 @@ export default function RRG() {
   }, [neededSymbols]);
 
   const params = interval_ === "1wk"
-    ? { window: 52 }     // 1 Jahr Trendbasis (StockCharts-Default)
-    : { window: 252 };
+    ? { window: 52,  momWindow: 10 }   // 1 Jahr Trendbasis · 10W Drehfenster
+    : { window: 252, momWindow: 50 };
 
   const benchSeries = useMemo(() => {
     const s = raw[benchSym];
@@ -728,7 +730,7 @@ export default function RRG() {
       const color = u.vsx ? GOLD : (SECTOR_COLORS[u.symbol] || PALETTE[i % PALETTE.length]);
       return { ...u, color, full };
     }).filter(Boolean);
-  }, [raw, universe, interval_, benchSeries, params.window]);
+  }, [raw, universe, interval_, benchSeries, params.window, params.momWindow]);
 
   // Anzeige-Tails am aktuellen (float-)Offset — interpoliert für smooth Animation
   const items = useMemo(() =>
@@ -1077,7 +1079,7 @@ export default function RRG() {
         )}
 
         <div style={{ marginTop: 16, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
-          JdK-style approximation · RS = 100 · price / benchmark · RS-Ratio = 100 · RS / SMA(RS, {params.window}{interval_ === "1wk" ? "W" : "D"}) · RS-Momentum = 100 · Ratio / SMA(Ratio, {params.window}). JdK is proprietary — quadrants and rotation shape align with StockCharts, absolute values may differ slightly. Not investment advice.
+          JdK-style approximation · RS = 100 · price / benchmark · RS-Ratio = 100 · RS / SMA(RS, {params.window}) · RS-Momentum = 100 · Ratio / SMA(Ratio, {params.momWindow}) — {interval_ === "1wk" ? "weekly" : "daily"} periods. JdK is proprietary; quadrants and rotation shape align with StockCharts, absolute values may differ. Not investment advice.
         </div>
       </div>
 
