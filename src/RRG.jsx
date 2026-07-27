@@ -34,10 +34,18 @@ const PRESETS = [
   },
   {
     id: "countries", label: "COUNTRIES", bench: "SPY", drillable: false, packKey: "COUNTRIES",
+    // Die 30 wirtschaftlich relevantesten Märkte mit liquidem USD-ETF
     members: [
+      // Europa
       ["EWG","GER"],["EWQ","FRA"],["EWU","UK"],["EWL","SUI"],["EWI","ITA"],["EWP","ESP"],
-      ["EWJ","JPN"],["EWY","KOR"],["EWT","TWN"],["MCHI","CHN"],["EWH","HK"],["INDA","IND"],
-      ["EWZ","BRA"],["EWW","MEX"],["EWC","CAN"],["EWA","AUS"],
+      ["EWN","NED"],["EWD","SWE"],["NORW","NOR"],["EWK","BEL"],["EIRL","IRL"],["EPOL","POL"],
+      // Asien-Pazifik
+      ["EWJ","JPN"],["MCHI","CHN"],["INDA","IND"],["EWY","KOR"],["EWT","TWN"],["EWS","SGP"],
+      ["EWH","HK"],["EWA","AUS"],["EIDO","IDN"],["THD","THA"],["EWM","MYS"],
+      // Amerika
+      ["EWC","CAN"],["EWZ","BRA"],["EWW","MEX"],
+      // Naher Osten & Afrika
+      ["KSA","SAU"],["UAE","UAE"],["EIS","ISR"],["EZA","ZAF"],["TUR","TUR"],
     ].map(([s, l]) => ({ symbol: s, label: l })),
   },
   {
@@ -60,7 +68,7 @@ const VSX_PACK_DEFAULTS = {
   XLU:  [],
   XLC:  ["ASTS","GOOGL","META","NFLX","RDDT","TMUS","0700.HK","TME"],
   CRYPTO:    ["SUI-USD","TAO-USD","HYPE-USD","FET-USD","PEPE-USD","AKT-USD","ZEC-USD"],
-  COUNTRIES: [],
+  COUNTRIES: ["VNM","EPHE","ENZL","EDEN","EFNL","EWO","PGAL","GREK","QAT","ECH","EPU","GXG","ARGT","NGE"],
 };
 
 const PACK_TABS = [
@@ -129,6 +137,14 @@ const NAME_DEFAULTS = {
   EWI: "Italy (MSCI)", EWP: "Spain (MSCI)", EWJ: "Japan (MSCI)", EWY: "South Korea (MSCI)", EWT: "Taiwan (MSCI)",
   MCHI: "China (MSCI)", EWH: "Hong Kong (MSCI)", INDA: "India (MSCI)", EWZ: "Brazil (MSCI)", EWW: "Mexico (MSCI)",
   EWC: "Canada (MSCI)", EWA: "Australia (MSCI)",
+  EWS: "Singapore (MSCI)", EWN: "Netherlands (MSCI)", EWD: "Sweden (MSCI)", NORW: "Norway (Global X)",
+  EWK: "Belgium (MSCI)", EIRL: "Ireland (MSCI)", EPOL: "Poland (MSCI)", EIDO: "Indonesia (MSCI)",
+  THD: "Thailand (MSCI)", EWM: "Malaysia (MSCI)", KSA: "Saudi Arabia (MSCI)", UAE: "United Arab Emirates (MSCI)",
+  EIS: "Israel (MSCI)", EZA: "South Africa (MSCI)", TUR: "Turkey (MSCI)",
+  VNM: "Vietnam (VanEck)", EPHE: "Philippines (MSCI)", ENZL: "New Zealand (MSCI)", EDEN: "Denmark (MSCI)",
+  EFNL: "Finland (MSCI)", EWO: "Austria (MSCI)", PGAL: "Portugal (Global X)", GREK: "Greece (Global X)",
+  QAT: "Qatar (MSCI)", ECH: "Chile (MSCI)", EPU: "Peru (MSCI)", GXG: "Colombia (Global X)",
+  ARGT: "Argentina (Global X)", NGE: "Nigeria (VanEck)",
 };
 
 const loadNames = () => {
