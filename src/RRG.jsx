@@ -701,8 +701,8 @@ export default function RRG() {
   }, [neededSymbols]);
 
   const params = interval_ === "1wk"
-    ? { window: 26, momP: 10 }
-    : { window: 126, momP: 21 };
+    ? { window: 52, momP: 10 }
+    : { window: 252, momP: 50 };
 
   const benchSeries = useMemo(() => {
     const s = raw[benchSym];
