@@ -192,12 +192,13 @@ const computeFull = (series, bench, { window: W, momP }) => {
     const m = mean(rs.slice(i - W + 1, i + 1));
     ratio[i] = m > 1e-9 ? (100 * rs[i]) / m : null;
   }
+  // RS-Momentum = 100 + (Ratio − SMA(Ratio, P)) · 3 → Drehrichtung & -geschwindigkeit
+  // mit sichtbarer Spreizung (Quotient wäre bei 1y-Trendbasis nahezu bewegungslos).
   const mom = new Array(rs.length).fill(null);
   for (let i = W - 1 + momP; i < rs.length; i++) {
     const win = ratio.slice(i - momP + 1, i + 1).filter(v => v != null);
     if (win.length < momP) continue;
-    const m = mean(win);
-    mom[i] = m > 1e-9 ? (100 * ratio[i]) / m : null;
+    mom[i] = 100 + (ratio[i] - mean(win)) * 3;
   }
   // Auf valide Punkte trimmen
   const xs = [], ys = [], tts = [], pxs = [];
@@ -323,23 +324,23 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showT
   const dragRef = useRef(null);
   const [view, setView] = useState({ cx: 100, cy: 100, z: 1 });
 
-  // Fester Extent über die gesamte scrubbare Historie — kein Jiggle bei Animation
-  const baseExt = ext;
-
-  const half = baseExt / view.z;
-  const X = v => PADL + ((v - (view.cx - half)) / (2 * half)) * plotW;
-  const Y = v => PADT + (1 - (v - (view.cy - half)) / (2 * half)) * plotH;
+  // Feste, getrennte Extents je Achse über die gesamte scrubbare Historie
+  const halfX = ext.x / view.z;
+  const halfY = ext.y / view.z;
+  const X = v => PADL + ((v - (view.cx - halfX)) / (2 * halfX)) * plotW;
+  const Y = v => PADT + (1 - (v - (view.cy - halfY)) / (2 * halfY)) * plotH;
 
   const zoomAt = useCallback((factor, px, py) => {
     setView(v => {
       const z = Math.min(8, Math.max(1, v.z * factor));
       if (z === 1) return { cx: 100, cy: 100, z: 1 };
-      const h0 = baseExt / v.z, h1 = baseExt / z;
-      const dx = px != null ? (v.cx - h0 + ((px - PADL) / plotW) * 2 * h0) : v.cx;
-      const dy = py != null ? (v.cy - h0 + (1 - (py - PADT) / plotH) * 2 * h0) : v.cy;
-      return { z, cx: dx - (dx - v.cx) * (h1 / h0), cy: dy - (dy - v.cy) * (h1 / h0) };
+      const hx0 = ext.x / v.z, hx1 = ext.x / z;
+      const hy0 = ext.y / v.z, hy1 = ext.y / z;
+      const dx = px != null ? (v.cx - hx0 + ((px - PADL) / plotW) * 2 * hx0) : v.cx;
+      const dy = py != null ? (v.cy - hy0 + (1 - (py - PADT) / plotH) * 2 * hy0) : v.cy;
+      return { z, cx: dx - (dx - v.cx) * (hx1 / hx0), cy: dy - (dy - v.cy) * (hy1 / hy0) };
     });
-  }, [baseExt, plotW, plotH]);
+  }, [ext.x, ext.y, plotW, plotH]);
 
   useEffect(() => {
     const el = svgRef.current;
@@ -364,8 +365,8 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showT
     const d = dragRef.current;
     if (!d) return;
     const r = svgRef.current.getBoundingClientRect();
-    const sx = (2 * half) / (plotW * (r.width / W));
-    const sy = (2 * half) / (plotH * (r.height / H));
+    const sx = (2 * halfX) / (plotW * (r.width / W));
+    const sy = (2 * halfY) / (plotH * (r.height / H));
     setView(v => ({ ...v, cx: d.cx - (e.clientX - d.x) * sx, cy: d.cy + (e.clientY - d.y) * sy }));
   };
   const onPointerUp = () => { dragRef.current = null; };
@@ -378,12 +379,13 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showT
     display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.2s",
   };
 
-  const gridStep = half >= 4 ? 2 : half >= 2 ? 1 : 0.5;
+  const stepFor = h => h >= 8 ? 4 : h >= 4 ? 2 : h >= 2 ? 1 : 0.5;
+  const gsX = stepFor(halfX), gsY = stepFor(halfY);
   const gridLines = [];
-  for (let g = Math.ceil((view.cx - half) / gridStep) * gridStep; g <= view.cx + half; g += gridStep) {
+  for (let g = Math.ceil((view.cx - halfX) / gsX) * gsX; g <= view.cx + halfX; g += gsX) {
     if (Math.abs(g - 100) > 1e-9) gridLines.push({ o: "v", v: g });
   }
-  for (let g = Math.ceil((view.cy - half) / gridStep) * gridStep; g <= view.cy + half; g += gridStep) {
+  for (let g = Math.ceil((view.cy - halfY) / gsY) * gsY; g <= view.cy + halfY; g += gsY) {
     if (Math.abs(g - 100) > 1e-9) gridLines.push({ o: "h", v: g });
   }
 
@@ -731,17 +733,18 @@ export default function RRG() {
     }).filter(Boolean),
   [fullItems, offset, tailLen]);
 
-  // Fester Chart-Extent über die komplette scrubbare Range (stoppt Skalen-Jiggle)
+  // Feste, getrennte X/Y-Extents über die komplette scrubbare Range (kein Jiggle)
   const chartExt = useMemo(() => {
-    let m = 2;
+    let mx = 1.5, my = 1.5;
     fullItems.forEach(it => {
       const len = it.full.xs.length;
       const start = Math.max(0, len - MAX_OFFSET - tailLen);
       for (let i = start; i < len; i++) {
-        m = Math.max(m, Math.abs(it.full.xs[i] - 100), Math.abs(it.full.ys[i] - 100));
+        mx = Math.max(mx, Math.abs(it.full.xs[i] - 100));
+        my = Math.max(my, Math.abs(it.full.ys[i] - 100));
       }
     });
-    return m * 1.08;
+    return { x: mx * 1.08, y: my * 1.08 };
   }, [fullItems, tailLen]);
 
   const sorted = useMemo(() => {

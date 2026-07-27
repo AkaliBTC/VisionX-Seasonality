@@ -140,9 +140,9 @@ const loadStage = () => {
 const CYCLE_ETFS = [...new Set(STAGES.flatMap(s => [...s.best, ...s.worst].map(x => x.t)))];
 
 const CYCLE_TFS = {
-  daily:   { label: "DAILY CYCLE",   sub: "126D lookback · HL 21D",  lookback: 126, halflife: 21, resample: "d" },
-  weekly:  { label: "WEEKLY CYCLE",  sub: "52W lookback · HL 13W",   lookback: 52,  halflife: 13, resample: "w" },
-  monthly: { label: "MONTHLY CYCLE", sub: "24M lookback · HL 6M",    lookback: 24,  halflife: 6,  resample: "m" },
+  daily:   { label: "DAILY CYCLE",   sub: "252D lookback · HL 63D",  lookback: 252, halflife: 63, resample: "d" },
+  weekly:  { label: "WEEKLY CYCLE",  sub: "104W lookback · HL 26W",  lookback: 104, halflife: 26, resample: "w" },
+  monthly: { label: "MONTHLY CYCLE", sub: "36M lookback · HL 12M",   lookback: 36,  halflife: 12, resample: "m" },
 };
 
 const resampleSeries = (series, mode) => {
@@ -268,7 +268,7 @@ export default function Cycle() {
 
   useEffect(() => {
     let alive = true;
-    fetch(`/api/history?symbols=${[...new Set(["SPY", ...CYCLE_ETFS, ...SPDRS])].join(",")}&interval=1d&range=5y`)
+    fetch(`/api/history?symbols=${[...new Set(["SPY", ...CYCLE_ETFS, ...SPDRS])].join(",")}&interval=1d&range=10y`)
       .then(r => { if (!r.ok) throw new Error(`API ${r.status}`); return r.json(); })
       .then(json => { if (alive) setRawData(json.data || {}); })
       .catch(e => alive && setScoreError(e.message))
