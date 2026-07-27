@@ -205,6 +205,18 @@ const computeFull = (series, bench, { window: W }) => {
     mom[i] = m != null && m > 1e-9 ? (100 * ratio[i]) / m : null;
   }
 
+  // Auf valide Punkte trimmen
+  const xs = [], ys = [], tts = [], pxs = [];
+  for (let i = 0; i < rs.length; i++) {
+    if (ratio[i] != null && mom[i] != null) { xs.push(ratio[i]); ys.push(mom[i]); tts.push(ts[i]); pxs.push(px[i]); }
+  }
+  return xs.length >= 4 ? { xs, ys, ts: tts, px: pxs } : null;
+};
+
+const tailOf = (full, offset, tailLen) => {
+  const end = full.xs.length - 1 - offset;
+  const start = end - tailLen + 1;
+  if (start < 0 || end < 1) return null;
   const tail = [];
   for (let i = Math.max(0, start); i <= end; i++) tail.push({ x: full.xs[i], y: full.ys[i], t: full.ts[i] });
   return tail.length >= 2 ? tail : null;
