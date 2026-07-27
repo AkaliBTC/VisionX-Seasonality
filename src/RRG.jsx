@@ -168,7 +168,7 @@ const toWeekly = (series) => {
 };
 
 // Volle RS-Ratio/-Momentum-Serien (für Animate/History-Scrub)
-const computeFull = (series, bench, { window: W, momP, normW }) => {
+const computeFull = (series, bench, { window: W }) => {
   const bMap = new Map(bench.map(([t, c]) => [new Date(t).toISOString().slice(0, 10), c]));
   const sMap = new Map(series.map(([t, c]) => [new Date(t).toISOString().slice(0, 10), c]));
   const rs = []; const ts = []; const px = [];
@@ -180,44 +180,31 @@ const computeFull = (series, bench, { window: W, momP, normW }) => {
     if (sMap.has(key)) lastS = sMap.get(key);
     if (b != null && s != null) { rs.push(100 * s / b); ts.push(t); px.push(s); }
   }
-  if (rs.length < W + momP + (normW || momP * 6) + 4) return null;
+  if (rs.length < 2 * W + 4) return null;
 
-  // JdK-Approximation im StockCharts-Stil:
-  // RS-Ratio = 100 · RS / SMA(RS, W) → Level relativ zum 1y-Trend (Platzierung
-  // wie StockCharts, persistente Outperformer bleiben dauerhaft >100).
-  // RS-Momentum = 100 + z(ROC_p(Ratio), WN) · 2.5 → kurzperiodige, volatilitäts-
-  // normalisierte Drehgeschwindigkeit. Der kurze ROC führt die Ratio (Derivat),
-  // dadurch entstehen die typischen Kurven/Loops statt reiner Diagonalen.
-  const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+  // ── JdK-Approximation (StockCharts-Logik) ────────────────────────────────
+  // RS        = 100 · Preis / Benchmark          → reine Relative Stärke
+  // RS-Ratio  = 100 · RS / SMA(RS, W)            → RS relativ zum eigenen Trend
+  // RS-Mom    = 100 · Ratio / SMA(Ratio, W)      → Ratio relativ zu IHREM Trend
+  // Beide Achsen nutzen dasselbe lange Fenster W. Das entkoppelt Momentum von
+  // der Ratio-Steigung (kein Diagonal-Artefakt) und erzeugt die echten Loops:
+  // ein Wert kann rechts stehen (Ratio > 100) und trotzdem fallen (Mom < 100).
+  const smaAt = (arr, i, n) => {
+    let s = 0;
+    for (let k = i - n + 1; k <= i; k++) { if (arr[k] == null) return null; s += arr[k]; }
+    return s / n;
+  };
   const ratio = new Array(rs.length).fill(null);
   for (let i = W - 1; i < rs.length; i++) {
-    const m = mean(rs.slice(i - W + 1, i + 1));
+    const m = smaAt(rs, i, W);
     ratio[i] = m > 1e-9 ? (100 * rs[i]) / m : null;
   }
-  const NW = normW || momP * 6;
-  const roc = new Array(rs.length).fill(null);
-  for (let i = W - 1 + momP; i < rs.length; i++) {
-    if (ratio[i] != null && ratio[i - momP] != null) roc[i] = ratio[i] - ratio[i - momP];
-  }
   const mom = new Array(rs.length).fill(null);
-  for (let i = W - 1 + momP + NW - 1; i < rs.length; i++) {
-    const win = roc.slice(i - NW + 1, i + 1).filter(v => v != null);
-    if (win.length < NW) continue;
-    const [m, sd] = meanStd(win);
-    mom[i] = sd > 1e-9 ? 100 + (((roc[i] - m) / sd) * 2.5) : 100;
+  for (let i = 2 * W - 2; i < rs.length; i++) {
+    const m = smaAt(ratio, i, W);
+    mom[i] = m != null && m > 1e-9 ? (100 * ratio[i]) / m : null;
   }
-  // Auf valide Punkte trimmen
-  const xs = [], ys = [], tts = [], pxs = [];
-  for (let i = 0; i < rs.length; i++) {
-    if (ratio[i] != null && mom[i] != null) { xs.push(ratio[i]); ys.push(mom[i]); tts.push(ts[i]); pxs.push(px[i]); }
-  }
-  return xs.length >= 4 ? { xs, ys, ts: tts, px: pxs } : null;
-};
 
-const tailOf = (full, offset, tailLen) => {
-  const end = full.xs.length - 1 - offset;
-  const start = end - tailLen + 1;
-  if (start < 0 || end < 1) return null;
   const tail = [];
   for (let i = Math.max(0, start); i <= end; i++) tail.push({ x: full.xs[i], y: full.ys[i], t: full.ts[i] });
   return tail.length >= 2 ? tail : null;
@@ -243,7 +230,7 @@ const fetchHistories = async (symbols) => {
   const out = {}; const failed = [];
   for (let i = 0; i < symbols.length; i += 25) {
     const chunk = symbols.slice(i, i + 25);
-    const res = await fetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=5y`);
+    const res = await fetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=10y`);
     if (!res.ok) throw new Error(`API ${res.status} — läuft die Seite auf Vercel / \`vercel dev\`?`);
     const json = await res.json();
     Object.assign(out, json.data);
@@ -709,8 +696,8 @@ export default function RRG() {
   }, [neededSymbols]);
 
   const params = interval_ === "1wk"
-    ? { window: 52, momP: 4, normW: 26 }
-    : { window: 252, momP: 10, normW: 63 };
+    ? { window: 52 }     // 1 Jahr Trendbasis (StockCharts-Default)
+    : { window: 252 };
 
   const benchSeries = useMemo(() => {
     const s = raw[benchSym];
@@ -729,7 +716,7 @@ export default function RRG() {
       const color = u.vsx ? GOLD : (SECTOR_COLORS[u.symbol] || PALETTE[i % PALETTE.length]);
       return { ...u, color, full };
     }).filter(Boolean);
-  }, [raw, universe, interval_, benchSeries, params.window, params.momP, params.normW]);
+  }, [raw, universe, interval_, benchSeries, params.window]);
 
   // Anzeige-Tails am aktuellen (float-)Offset — interpoliert für smooth Animation
   const items = useMemo(() =>
@@ -1078,7 +1065,7 @@ export default function RRG() {
         )}
 
         <div style={{ marginTop: 16, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
-          JdK-style approximation: RS-Ratio = 100 · RS / SMA(RS, {params.window}{interval_ === "1wk" ? "W" : "D"}) · RS-Momentum = 100 + z-scored {params.momP}-period ROC of the ratio (norm window {params.normW}). Not an exact JdK replica — quadrants and rotation shape match StockCharts, absolute values may differ. Not investment advice.
+          JdK-style approximation · RS = 100 · price / benchmark · RS-Ratio = 100 · RS / SMA(RS, {params.window}{interval_ === "1wk" ? "W" : "D"}) · RS-Momentum = 100 · Ratio / SMA(Ratio, {params.window}). JdK is proprietary — quadrants and rotation shape align with StockCharts, absolute values may differ slightly. Not investment advice.
         </div>
       </div>
 
