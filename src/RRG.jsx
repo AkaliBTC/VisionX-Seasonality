@@ -335,7 +335,7 @@ function BenchChart({ series, label, offset, tailLen, onScrub, maxOffset }) {
 }
 
 // ── RRG-CHART (breites Rechteck · zoombar) ───────────────────────────────────
-function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showTails }) {
+function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showTails, xLabel, yLabel }) {
   const W = 1480, H = 560, PADL = 52, PADR = 18, PADT = 14, PADB = 38;
   const plotW = W - PADL - PADR, plotH = H - PADT - PADB;
   const svgRef = useRef(null);
@@ -484,8 +484,8 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showT
             <text key={label} x={x} y={y} textAnchor={anchor} fill={col} opacity={0.6}
               style={{ font: "700 11px Montserrat, sans-serif", letterSpacing: "0.26em" }}>{label}</text>
           ))}
-        <text x={PADL + plotW / 2} y={H - 9} textAnchor="middle" fill="#4a4a4a" style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>RS vs BASIS · 1 YEAR →</text>
-        <text x={16} y={PADT + plotH / 2} textAnchor="middle" fill="#4a4a4a" transform={`rotate(-90 16 ${PADT + plotH / 2})`} style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>RS vs BASIS · 1 QUARTER →</text>
+        <text x={PADL + plotW / 2} y={H - 9} textAnchor="middle" fill="#4a4a4a" style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>{xLabel}</text>
+        <text x={16} y={PADT + plotH / 2} textAnchor="middle" fill="#4a4a4a" transform={`rotate(-90 16 ${PADT + plotH / 2})`} style={{ font: "500 9.5px 'DM Mono', monospace", letterSpacing: "0.18em" }}>{yLabel}</text>
       </svg>
 
       <div style={{ position: "absolute", top: 10, right: 10, display: "flex", gap: 7 }}>
@@ -625,6 +625,7 @@ export default function RRG() {
   const [interval_, setInterval_] = useState("1d");
   const [tailLen, setTailLen] = useState(5);
   const [showTails, setShowTails] = useState(true);
+  const [scaleMode, setScaleMode] = useState("norm");   // "norm" = gruppen-normiert, "abs" = rohe RS
   const [benchMode, setBenchMode] = useState("SECTOR");
   const [vsxPack, setVsxPack] = useState(true);
   const [pack, setPack] = useState(loadPack);
@@ -743,18 +744,54 @@ export default function RRG() {
     }).filter(Boolean);
   }, [raw, universe, interval_, benchSeries, params.window, params.momWindow]);
 
+  // ── SKALIERUNG ───────────────────────────────────────────────────────────
+  // "abs":  rohe RS-Performance (100 = Basiswert geschlagen) — nachrechenbar,
+  //         aber schwankungsarme Defensivsektoren kleben am Mittelpunkt.
+  // "norm": Querschnitts-Normierung je Zeitpunkt über alle Titel der Ansicht
+  //         (z-Score × 3). Jeder Titel wird an seiner Peer-Group gemessen,
+  //         dadurch spreizt sich das Feld und alle vier Quadranten werden
+  //         bespielt. 100 = Gruppendurchschnitt.
+  const scaledItems = useMemo(() => {
+    if (scaleMode !== "norm" || fullItems.length < 3) return fullItems;
+    const out = fullItems.map(it => ({
+      ...it,
+      full: { ...it.full, xs: it.full.xs.slice(), ys: it.full.ys.slice() },
+    }));
+    const buckets = new Map();
+    fullItems.forEach((it, k) => it.full.ts.forEach((t, i) => {
+      if (!buckets.has(t)) buckets.set(t, []);
+      buckets.get(t).push([k, i]);
+    }));
+    const stats = a => {
+      const m = a.reduce((p, q) => p + q, 0) / a.length;
+      const s = Math.sqrt(a.reduce((p, q) => p + (q - m) ** 2, 0) / a.length);
+      return [m, s];
+    };
+    buckets.forEach(arr => {
+      if (arr.length < 3) return;
+      const xs = arr.map(([k, i]) => fullItems[k].full.xs[i]);
+      const ys = arr.map(([k, i]) => fullItems[k].full.ys[i]);
+      const [mx, sx] = stats(xs), [my, sy] = stats(ys);
+      arr.forEach(([k, i], j) => {
+        out[k].full.xs[i] = sx > 1e-9 ? 100 + ((xs[j] - mx) / sx) * 3 : 100;
+        out[k].full.ys[i] = sy > 1e-9 ? 100 + ((ys[j] - my) / sy) * 3 : 100;
+      });
+    });
+    return out;
+  }, [fullItems, scaleMode]);
+
   // Anzeige-Tails am aktuellen (float-)Offset — interpoliert für smooth Animation
   const items = useMemo(() =>
-    fullItems.map(it => {
+    scaledItems.map(it => {
       const tail = tailAtFloat(it.full, offset, tailLen);
       return tail ? { ...it, tail } : null;
     }).filter(Boolean),
-  [fullItems, offset, tailLen]);
+  [scaledItems, offset, tailLen]);
 
   // Feste, getrennte X/Y-Extents über die komplette scrubbare Range (kein Jiggle)
   const chartExt = useMemo(() => {
     let mx = 1.5, my = 1.5;
-    fullItems.forEach(it => {
+    scaledItems.forEach(it => {
       const len = it.full.xs.length;
       const start = Math.max(0, len - MAX_OFFSET - tailLen);
       for (let i = start; i < len; i++) {
@@ -763,7 +800,7 @@ export default function RRG() {
       }
     });
     return { x: mx * 1.08, y: my * 1.08 };
-  }, [fullItems, tailLen]);
+  }, [scaledItems, tailLen]);
 
   const sorted = useMemo(() => {
     const arr = [...items];
@@ -905,6 +942,11 @@ export default function RRG() {
           <input type="range" min={3} max={10} value={tailLen} onChange={e => setTailLen(+e.target.value)}
             style={{ width: 100, accentColor: GOLD }} />
           <button style={pill(showTails)} onClick={() => setShowTails(v => !v)} title="Tails ein-/ausblenden">Tails</button>
+          <div style={divider} />
+          <button style={pill(scaleMode === "norm")} onClick={() => setScaleMode("norm")}
+            title="Querschnitts-Normierung: jeder Titel gegen seine Peer-Group — spreizt das Feld über alle Quadranten">Relativ</button>
+          <button style={pill(scaleMode === "abs")} onClick={() => setScaleMode("abs")}
+            title="Rohe RS-Performance gegen den Basiswert — 100 = Basis geschlagen, nachrechenbar">Absolut</button>
           {drill && (
             <>
               <div style={divider} />
@@ -963,6 +1005,8 @@ export default function RRG() {
             )}
             {items.length > 0 ? (
               <RRGChart key={viewKey + interval_} items={items} hovered={hovered} setHovered={setHovered} tailLen={tailLen} ext={chartExt} showTails={showTails}
+                xLabel={scaleMode === "norm" ? "RELATIVE STRENGTH · 1 YEAR (PEER-NORMALISED) →" : "RS vs BASIS · 1 YEAR →"}
+                yLabel={scaleMode === "norm" ? "RELATIVE STRENGTH · 1 QUARTER (PEER-NORMALISED) →" : "RS vs BASIS · 1 QUARTER →"}
                 onNodeClick={preset.drillable && !drill
                   ? (it) => { setDrill(it.symbol); setBenchMode("SECTOR"); setHovered(null); setOffset(0); setPlaying(false); }
                   : null} />
@@ -1090,7 +1134,7 @@ export default function RRG() {
         )}
 
         <div style={{ marginTop: 16, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
-          Direct relative strength vs benchmark · X = RS performance over {params.window} periods, Y = RS performance over {params.momWindow} periods, both indexed to 100. Above 100 = outperformed the benchmark over that period. Not investment advice.
+          Direct relative strength vs benchmark · X = RS performance over {params.window} periods, Y = over {params.momWindow} periods. {scaleMode === "norm" ? "Relative mode: cross-sectionally normalised against the peer group each period (100 = group average), so low-volatility sectors stay readable." : "Absolute mode: 100 = matched the benchmark over that period — values are directly verifiable."} Not investment advice.
         </div>
       </div>
 
