@@ -10,11 +10,42 @@ import { useState, useEffect, useMemo, useRef } from "react";
 const GOLD = "#d4af37";
 const STORAGE_KEY = "vsx_bottom_list_v1";
 
+// Alle 11 SPDR-Sektoren mit ihren Top-Holdings — Basis für die Sektor-Filter
+const SECTORS = {
+  XLK:  { name: "Technology",    members: ["MSFT","AAPL","NVDA","AVGO","CRM","ORCL","AMD","ADBE","CSCO","ACN","INTC","TXN","QCOM","NOW","INTU"] },
+  XLF:  { name: "Financials",    members: ["BRK-B","JPM","V","MA","BAC","WFC","GS","MS","SPGI","AXP","BLK","C","SCHW","CB","PGR"] },
+  XLV:  { name: "Health Care",   members: ["LLY","UNH","JNJ","ABBV","MRK","TMO","ABT","AMGN","ISRG","PFE","DHR","BMY","GILD","CVS","MDT"] },
+  XLY:  { name: "Cons. Discr.",  members: ["AMZN","TSLA","HD","MCD","BKNG","LOW","TJX","NKE","SBUX","CMG","ORLY","MAR","GM","F","DHI"] },
+  XLP:  { name: "Cons. Staples", members: ["PG","COST","WMT","KO","PEP","PM","MDLZ","MO","CL","TGT","KMB","GIS","STZ","SYY","KHC"] },
+  XLE:  { name: "Energy",        members: ["XOM","CVX","COP","WMB","EOG","SLB","PSX","MPC","KMI","OKE","VLO","HAL","BKR","OXY","DVN"] },
+  XLI:  { name: "Industrials",   members: ["GE","CAT","UBER","RTX","HON","UNP","ETN","BA","DE","LMT","ADP","UPS","CSX","NOC","EMR"] },
+  XLB:  { name: "Materials",     members: ["LIN","SHW","APD","ECL","FCX","NEM","CTVA","DD","DOW","PPG","NUE","VMC","MLM","ALB","IFF"] },
+  XLRE: { name: "Real Estate",   members: ["PLD","AMT","EQIX","WELL","SPG","PSA","O","CCI","DLR","VICI","EXR","AVB","IRM","SBAC","EQR"] },
+  XLU:  { name: "Utilities",     members: ["NEE","SO","DUK","CEG","SRE","AEP","D","PCG","EXC","XEL","ED","PEG","WEC","ES","AWK"] },
+  XLC:  { name: "Comm. Serv.",   members: ["META","GOOGL","NFLX","DIS","CMCSA","T","VZ","TMUS","EA","WBD","OMC","TTWO","LYV","MTCH","NWSA"] },
+};
+const ALL_SECTOR_ETFS = Object.keys(SECTORS);
+const ALL_HOLDINGS = [...new Set(Object.values(SECTORS).flatMap(s => s.members))];
+
 const PRESETS = {
-  "SPDR SECTORS": ["XLK","XLF","XLV","XLY","XLP","XLE","XLI","XLB","XLRE","XLU","XLC"],
+  "SECTOR ETFS": ALL_SECTOR_ETFS,
+  "ALL SPDR": [...ALL_SECTOR_ETFS, ...ALL_HOLDINGS],
   "VSX EQUITIES": ["NVDA","AMD","MSFT","META","AMZN","TSLA","PLTR","HIMS","MRNA","ILMN","BABA","LULU","INTC","RGTI","QBTS","ASTS"],
   "CRYPTO": ["BTC-USD","ETH-USD","SOL-USD","LINK-USD","XRP-USD","DOGE-USD","AVAX-USD","DOT-USD"],
   "COMMODITIES": ["GLD","SLV","GDX","USO","UNG","DBA","CPER","URA","LIT","WEAT","CORN","SGG"],
+};
+
+// Symbol → Sektor (für Filter und Anzeige)
+const SECTOR_OF = {};
+Object.entries(SECTORS).forEach(([etf, s]) => {
+  SECTOR_OF[etf] = etf;
+  s.members.forEach(m => { if (!SECTOR_OF[m]) SECTOR_OF[m] = etf; });
+});
+
+const SECTOR_COLORS = {
+  XLK: "#63b6ff", XLF: "#22c55e", XLV: "#f472b6", XLY: "#a855f7",
+  XLP: "#facc15", XLE: "#fb923c", XLI: "#94a3b8", XLB: "#2dd4bf",
+  XLRE: "#e879f9", XLU: "#38bdf8", XLC: "#fb7185",
 };
 
 const loadList = () => {
@@ -22,7 +53,7 @@ const loadList = () => {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) { const a = JSON.parse(raw); if (Array.isArray(a) && a.length) return a; }
   } catch { /* default */ }
-  return [...PRESETS["SPDR SECTORS"]];
+  return [...ALL_SECTOR_ETFS];
 };
 
 // ── INDIKATOREN ──────────────────────────────────────────────────────────────
@@ -58,48 +89,59 @@ const band = (v, none, full) => {
   return Math.max(0, Math.min(100, t * 100));
 };
 
-// ── ANALYSE JE TITEL ─────────────────────────────────────────────────────────
-function analyse(candles) {
-  if (!candles || candles.length < 220) return null;
+// 1D-Kerzen → N-Tages-Kerzen (4D = von AK als signifikantester TF identifiziert)
+const aggregate = (candles, n) => {
+  if (n <= 1) return candles;
+  const out = [];
+  // Von hinten gruppieren, damit die letzte Kerze immer aktuell schließt
+  for (let end = candles.length; end > 0; end -= n) {
+    const chunk = candles.slice(Math.max(0, end - n), end);
+    if (!chunk.length) break;
+    out.unshift([
+      chunk[0][0], chunk[0][1],
+      Math.max(...chunk.map(c => c[2])),
+      Math.min(...chunk.map(c => c[3])),
+      chunk[chunk.length - 1][4],
+      chunk.reduce((a, c) => a + (c[5] || 0), 0),
+    ]);
+  }
+  return out;
+};
+
+// ── SIGNALE AUF EINEM TIMEFRAME ──────────────────────────────────────────────
+function signalsFor(candles, barsPerYear) {
+  if (!candles || candles.length < Math.min(60, barsPerYear * 0.6)) return null;
   const closes = candles.map(c => c[4]);
   const lows = candles.map(c => c[3]);
   const highs = candles.map(c => c[2]);
   const vols = candles.map(c => c[5] || 0);
   const px = closes[closes.length - 1];
 
-  // 1) Drawdown vom 52-Wochen-Hoch
-  const win252 = closes.slice(-252);
-  const high52 = Math.max(...highs.slice(-252));
-  const low52 = Math.min(...lows.slice(-252));
+  const look = Math.min(barsPerYear, candles.length);
+  const high52 = Math.max(...highs.slice(-look));
+  const low52 = Math.min(...lows.slice(-look));
   const drawdown = high52 > 0 ? px / high52 - 1 : null;
 
-  // 2) RSI-9 (täglich) — VisionX-Signatur
-  const r9 = rsi(closes.slice(-120), 9);
+  const r9 = rsi(closes.slice(-Math.min(closes.length, 120)), 9);
 
-  // 3) Abstand zur 200-Tage-Linie
-  const ma200 = sma(closes, 200);
-  const distMa = ma200 ? px / ma200 - 1 : null;
+  const maLen = Math.min(200, Math.floor(candles.length * 0.8));
+  const maRef = sma(closes, maLen);
+  const distMa = maRef ? px / maRef - 1 : null;
 
-  // 4) Volumen-Klimax: aktuelles Volumen vs. 20-Tage-Schnitt
   const v20 = sma(vols.slice(-21, -1), 20);
   const volSpike = v20 > 0 ? vols[vols.length - 1] / v20 : null;
 
-  // 5) Statistische Überdehnung: z-Score des Kurses zum 20-Tage-Mittel
-  const c20 = closes.slice(-20);
-  const m20 = sma(closes, 20), sd20 = stdev(c20);
+  const m20 = sma(closes, 20), sd20 = stdev(closes.slice(-20));
   const zScore = sd20 > 0 ? (px - m20) / sd20 : null;
 
-  // 6) Position in der 52-Wochen-Spanne (0 = Jahrestief)
   const range = high52 - low52;
   const rangePos = range > 0 ? (px - low52) / range : null;
 
-  // Rote Kerzen in Folge
   let streak = 0;
   for (let i = closes.length - 1; i > 0; i--) {
     if (closes[i] < closes[i - 1]) streak++; else break;
   }
 
-  // Signal-Scores (100 = maximaler Washout)
   const sig = {
     drawdown: band(drawdown, -0.05, -0.45),
     rsi:      band(r9, 45, 18),
@@ -108,19 +150,47 @@ function analyse(candles) {
     zScore:   band(zScore, -0.5, -2.6),
     range:    band(rangePos, 0.5, 0.03),
   };
-
   const vals = Object.values(sig).filter(v => v != null);
   const score = vals.length >= 4 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
 
-  // 5-Tage-Trend des Scores wäre teuer — stattdessen Stabilisierungs-Hinweis:
-  // Kurs über dem Tief der letzten 5 Tage und RSI dreht aus dem Extrem.
-  const last5Low = Math.min(...lows.slice(-5));
-  const turning = r9 != null && r9 > 25 && px > last5Low * 1.01 && sig.drawdown > 40;
+  return { px, drawdown, rsi9: r9, distMa, volSpike, zScore, rangePos, streak, high52, low52, sig, score };
+}
 
-  return {
-    px, drawdown, rsi9: r9, distMa, volSpike, zScore, rangePos, streak,
-    high52, low52, sig, score, turning,
-  };
+// ── ANALYSE JE TITEL · 1D + 4D kombiniert ────────────────────────────────────
+// Gewichtung 4D:1D = 60:40 — der 4-Tage-Chart filtert Tagesrauschen und hat sich
+// in der VSX-Praxis als der aussagekräftigere Timeframe erwiesen.
+const W_D4 = 0.6, W_D1 = 0.4;
+
+function analyse(candles) {
+  if (!candles || candles.length < 220) return null;
+  const d1 = signalsFor(candles, 252);
+  const d4 = signalsFor(aggregate(candles, 4), 63);
+  if (!d1 && !d4) return null;
+
+  let score = null;
+  if (d1?.score != null && d4?.score != null) score = Math.round(d4.score * W_D4 + d1.score * W_D1);
+  else score = d4?.score ?? d1?.score ?? null;
+
+  // Kombinierte Einzelsignale (gleiche Gewichtung) für die Detailansicht
+  const sig = {};
+  for (const k of ["drawdown", "rsi", "distMa", "volume", "zScore", "range"]) {
+    const a = d4?.sig?.[k], b = d1?.sig?.[k];
+    sig[k] = a != null && b != null ? a * W_D4 + b * W_D1 : (a ?? b ?? null);
+  }
+
+  // Confluence: stimmen beide Timeframes überein?
+  const align = d1?.score != null && d4?.score != null
+    ? 100 - Math.min(100, Math.abs(d1.score - d4.score) * 2)
+    : null;
+
+  const base = d1 || d4;
+  const closes = candles.map(c => c[4]);
+  const lows = candles.map(c => c[3]);
+  const last5Low = Math.min(...lows.slice(-5));
+  const turning = base.rsi9 != null && base.rsi9 > 25
+    && closes[closes.length - 1] > last5Low * 1.01 && sig.drawdown > 40;
+
+  return { ...base, sig, score, d1, d4, align, turning };
 }
 
 // ── PHASEN ───────────────────────────────────────────────────────────────────
@@ -147,26 +217,34 @@ const phaseFor = (s) => s == null ? null : PHASES.find(p => s >= p.min) || PHASE
 // ── ÜBERSETZUNGEN ────────────────────────────────────────────────────────────
 const T = {
   de: {
-    title: "BOTTOM RADAR", sub: "Kapitulations-Screening · RSI-9 · Drawdown · Volumenklimax · MA-Abstand",
+    title: "BOTTOM RADAR", sub: "Kapitulations-Screening auf 1D und 4D · RSI-9 · Drawdown · Volumenklimax · MA-Abstand",
     add: "+ HINZU", clear: "Leeren", researching: "LADE", symbols: "TITEL",
     score: "Score", phase: "Phase", price: "Kurs", dd: "Drawdown", rsi: "RSI-9",
     ma: "vs MA200", vol: "Vol-Spike", z: "Z-Score", pos: "52W-Pos", streak: "Rote Tage",
     signals: "SIGNALE", summary: "RESÜMEE", turning: "STABILISIERT",
+    sector: "Sektor", allSectors: "ALLE", filter: "SEKTOR-FILTER", tf: "TIMEFRAME",
+    d1: "1D", d4: "4D", combined: "KOMB.", align: "Confluence",
+    alignHint: "Übereinstimmung zwischen 1D und 4D — hohe Werte heißen: beide Zeitebenen zeigen dasselbe Bild",
+    weights: "Gewichtung 4D 60 % · 1D 40 %", onlyTurning: "NUR STABILISIERT",
     sigNames: { drawdown: "Drawdown vom Hoch", rsi: "RSI-9 überverkauft", distMa: "Abstand zur MA200",
       volume: "Volumen-Klimax", zScore: "Statistische Überdehnung", range: "Position 52W-Spanne" },
     notFound: "NICHT GEFUNDEN", hint: "Yahoo-Schreibweise prüfen (z.B. BAS.DE, BTC-USD)",
-    footer: "Capitulation Score = Mittel aus sechs unabhängigen Washout-Signalen (0–100). Kein Kaufsignal, sondern eine Rangfolge der Erschöpfung. Ein tiefer Score ersetzt weder Struktur- noch Fundamentalanalyse.",
+    footer: "Capitulation Score = sechs Washout-Signale, berechnet auf 1D und 4D, gewichtet 40/60 (0–100). Kein Kaufsignal, sondern eine Rangfolge der Erschöpfung. Ein tiefer Score ersetzt weder Struktur- noch Fundamentalanalyse.",
   },
   en: {
-    title: "BOTTOM RADAR", sub: "Capitulation screening · RSI-9 · Drawdown · Volume climax · MA distance",
+    title: "BOTTOM RADAR", sub: "Capitulation screening on 1D and 4D · RSI-9 · Drawdown · Volume climax · MA distance",
     add: "+ ADD", clear: "Clear", researching: "LOADING", symbols: "SYMBOLS",
     score: "Score", phase: "Phase", price: "Price", dd: "Drawdown", rsi: "RSI-9",
     ma: "vs MA200", vol: "Vol Spike", z: "Z-Score", pos: "52W Pos", streak: "Down Days",
     signals: "SIGNALS", summary: "SUMMARY", turning: "STABILISING",
+    sector: "Sector", allSectors: "ALL", filter: "SECTOR FILTER", tf: "TIMEFRAME",
+    d1: "1D", d4: "4D", combined: "COMB.", align: "Confluence",
+    alignHint: "Agreement between 1D and 4D — high values mean both timeframes show the same picture",
+    weights: "Weighting 4D 60% · 1D 40%", onlyTurning: "TURNING ONLY",
     sigNames: { drawdown: "Drawdown from high", rsi: "RSI-9 oversold", distMa: "Distance to MA200",
       volume: "Volume climax", zScore: "Statistical stretch", range: "Position in 52W range" },
     notFound: "NOT FOUND", hint: "Check Yahoo notation (e.g. BAS.DE, BTC-USD)",
-    footer: "Capitulation Score = mean of six independent washout signals (0–100). Not a buy signal but a ranking of exhaustion. A deep score replaces neither structural nor fundamental analysis.",
+    footer: "Capitulation Score = six washout signals computed on 1D and 4D, weighted 40/60 (0–100). Not a buy signal but a ranking of exhaustion. A deep score replaces neither structural nor fundamental analysis.",
   },
 };
 
@@ -184,6 +262,9 @@ export default function Bottom({ lang = "de" }) {
   const [error, setError] = useState("");
   const [sort, setSort] = useState({ key: "score", dir: "desc" });
   const [detail, setDetail] = useState(null);
+  const [secFilter, setSecFilter] = useState(null);      // null = alle
+  const [tfView, setTfView] = useState("combined");      // "combined" | "d4" | "d1"
+  const [onlyTurning, setOnlyTurning] = useState(false);
   const cacheRef = useRef({});
 
   useEffect(() => {
@@ -219,18 +300,32 @@ export default function Bottom({ lang = "de" }) {
 
   const rows = useMemo(() => list.map(s => {
     const a = analyse(raw[s]);
-    return a ? { symbol: s, ...a, phase: phaseFor(a.score) } : null;
-  }).filter(Boolean), [list, raw]);
+    if (!a) return null;
+    // Anzeige folgt der gewählten Zeitebene
+    const view = tfView === "combined" ? a : (a[tfView] || a);
+    const score = tfView === "combined" ? a.score : (view.score ?? a.score);
+    return { symbol: s, ...a, ...view, score, phase: phaseFor(score), sector: SECTOR_OF[s] || null };
+  }).filter(Boolean), [list, raw, tfView]);
+
+  const filtered = useMemo(() => rows.filter(r =>
+    (!secFilter || r.sector === secFilter) && (!onlyTurning || r.turning)
+  ), [rows, secFilter, onlyTurning]);
+
+  // Sektoren, die in der aktuellen Liste vorkommen
+  const presentSectors = useMemo(
+    () => ALL_SECTOR_ETFS.filter(e => rows.some(r => r.sector === e)),
+    [rows]
+  );
 
   const summary = useMemo(() => {
     const c = {};
     PHASES.forEach(p => c[p.id] = 0);
-    rows.forEach(r => { if (r.phase) c[r.phase.id]++; });
+    filtered.forEach(r => { if (r.phase) c[r.phase.id]++; });
     return c;
-  }, [rows]);
+  }, [filtered]);
 
   const sorted = useMemo(() => {
-    const arr = [...rows];
+    const arr = [...filtered];
     const get = d => d[sort.key];
     arr.sort((a, b) => {
       const x = get(a), y = get(b);
@@ -241,7 +336,7 @@ export default function Bottom({ lang = "de" }) {
     });
     if (sort.dir === "desc") arr.reverse();
     return arr;
-  }, [rows, sort]);
+  }, [filtered, sort]);
 
   const setSortKey = k => setSort(s => s.key === k ? { key: k, dir: s.dir === "desc" ? "asc" : "desc" } : { key: k, dir: k === "symbol" ? "asc" : "desc" });
 
@@ -328,6 +423,32 @@ export default function Bottom({ lang = "de" }) {
           </div>
         </div>
 
+        {/* FILTER */}
+        {rows.length > 0 && (
+          <div style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 9, padding: "12px 18px", marginBottom: 14 }}>
+            <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#777" }}>{t.tf}</span>
+            {[["combined", t.combined], ["d4", t.d4], ["d1", t.d1]].map(([id, lbl]) => (
+              <button key={id} style={pill(tfView === id)} onClick={() => setTfView(id)}
+                title={id === "combined" ? t.weights : ""}>{lbl}</button>
+            ))}
+            <div style={{ width: 1, height: 22, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)" }} />
+            <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#777" }}>{t.filter}</span>
+            <button style={{ ...pill(!secFilter), padding: "6px 12px", fontSize: 8.5 }} onClick={() => setSecFilter(null)}>{t.allSectors}</button>
+            {presentSectors.map(e => (
+              <button key={e} onClick={() => setSecFilter(s => s === e ? null : e)}
+                title={SECTORS[e]?.name}
+                style={{ ...pill(secFilter === e), padding: "6px 11px", fontSize: 8.5, letterSpacing: "0.1em",
+                  color: secFilter === e ? "#f8e49b" : `${SECTOR_COLORS[e]}aa` }}>{e}</button>
+            ))}
+            <div style={{ width: 1, height: 22, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)" }} />
+            <button style={{ ...pill(onlyTurning), color: onlyTurning ? "#22c55e" : "#777" }}
+              onClick={() => setOnlyTurning(v => !v)}>▲ {t.onlyTurning}</button>
+            <span style={{ marginLeft: "auto", fontFamily: "'DM Mono', monospace", fontSize: 9.5, color: "#5a5a5a", letterSpacing: "0.08em" }}>
+              {filtered.length} / {rows.length}
+            </span>
+          </div>
+        )}
+
         {error && (
           <div style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "13px 18px", marginBottom: 12, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#f87171" }}>{error}</div>
         )}
@@ -363,6 +484,7 @@ export default function Bottom({ lang = "de" }) {
               <thead>
                 <tr style={{ fontSize: 8.5, letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, textTransform: "uppercase" }}>
                   {th("symbol", "Symbol", "left")}
+                  {th("sector", t.sector, "left")}
                   {th("score", t.score)}
                   <th style={{ padding: "7px 10px", textAlign: "left", color: "#555" }}>{t.phase}</th>
                   {th("px", t.price)}
@@ -373,6 +495,7 @@ export default function Bottom({ lang = "de" }) {
                   {th("zScore", t.z)}
                   {th("rangePos", t.pos)}
                   {th("streak", t.streak)}
+                  {tfView === "combined" && th("align", t.align)}
                   <th style={{ width: 26 }} />
                 </tr>
               </thead>
@@ -382,6 +505,13 @@ export default function Bottom({ lang = "de" }) {
                     <td style={{ padding: "9px 10px", color: "#f8e49b", fontWeight: 700, whiteSpace: "nowrap" }}>
                       {d.symbol.replace("-USD", "")}
                       {d.turning && <span title={t.turning} style={{ marginLeft: 7, fontSize: 8, color: "#22c55e" }}>▲</span>}
+                    </td>
+                    <td style={{ padding: "9px 10px" }}>
+                      {d.sector ? (
+                        <span style={{ fontSize: 8, letterSpacing: "0.1em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700,
+                          color: SECTOR_COLORS[d.sector], background: `${SECTOR_COLORS[d.sector]}12`,
+                          border: `1px solid ${SECTOR_COLORS[d.sector]}30`, padding: "2.5px 8px", borderRadius: 20 }}>{d.sector}</span>
+                      ) : <span style={{ color: "#3a3a3a" }}>—</span>}
                     </td>
                     <td style={{ padding: "9px 10px", textAlign: "right" }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 7, justifyContent: "flex-end" }}>
@@ -405,6 +535,12 @@ export default function Bottom({ lang = "de" }) {
                     <td style={{ padding: "9px 10px", textAlign: "right", color: d.zScore < -1.5 ? "#22c55e" : "#9a9a9a" }}>{fmtNum(d.zScore, 2)}</td>
                     <td style={{ padding: "9px 10px", textAlign: "right", color: d.rangePos < 0.15 ? "#22c55e" : "#9a9a9a" }}>{fmtPct(d.rangePos, 0)}</td>
                     <td style={{ padding: "9px 10px", textAlign: "right", color: d.streak >= 4 ? "#22c55e" : "#9a9a9a" }}>{d.streak}</td>
+                    {tfView === "combined" && (
+                      <td style={{ padding: "9px 10px", textAlign: "right", color: d.align == null ? "#3a3a3a" : d.align >= 75 ? "#22c55e" : d.align >= 50 ? "#facc15" : "#6b7280" }}
+                        title={t.alignHint}>
+                        {d.align == null ? "—" : Math.round(d.align)}
+                      </td>
+                    )}
                     <td style={{ padding: "9px 4px", textAlign: "center" }}>
                       <button onClick={e => { e.stopPropagation(); setList(l => l.filter(x => x !== d.symbol)); }}
                         style={{ background: "none", border: "none", color: "#3a3a3a", cursor: "pointer", fontSize: 11 }}
@@ -431,6 +567,41 @@ export default function Bottom({ lang = "de" }) {
             <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11.5, color: "#9a9a9a", lineHeight: 1.7, marginBottom: 18 }}>
               {detail.phase?.[lang].desc}
             </div>
+            {(detail.d1 || detail.d4) && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
+                {[["d4", t.d4, W_D4], ["d1", t.d1, W_D1]].map(([k, lbl, w]) => {
+                  const v = detail[k];
+                  const ph = v?.score != null ? phaseFor(v.score) : null;
+                  return (
+                    <div key={k} style={{ flex: "1 1 180px", padding: "12px 15px", borderRadius: 12,
+                      background: "rgba(255,255,255,0.025)", border: `1px solid ${ph?.color || "#333"}33` }}>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.16em", color: "#e8e8e8" }}>{lbl}</span>
+                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7.5, letterSpacing: "0.14em", color: "#4a4a4a" }}>{Math.round(w * 100)}%</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 9 }}>
+                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 20, fontWeight: 700, color: ph?.color || "#555" }}>{v?.score ?? "—"}</span>
+                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", color: ph?.color || "#4a4a4a" }}>{ph?.[lang].label || ""}</span>
+                      </div>
+                      <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#6a6a6a", marginTop: 7 }}>
+                        RSI {fmtNum(v?.rsi9)} · DD {fmtPct(v?.drawdown, 0)}
+                      </div>
+                    </div>
+                  );
+                })}
+                {detail.align != null && (
+                  <div style={{ flex: "1 1 150px", padding: "12px 15px", borderRadius: 12, background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                    <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, letterSpacing: "0.14em", color: "#777", marginBottom: 8 }}>{t.align}</div>
+                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 20, fontWeight: 700,
+                      color: detail.align >= 75 ? "#22c55e" : detail.align >= 50 ? "#facc15" : "#6b7280" }}>{Math.round(detail.align)}</span>
+                    <div style={{ height: 4, borderRadius: 2, background: "rgba(255,255,255,0.06)", marginTop: 9, overflow: "hidden" }}>
+                      <div style={{ width: `${detail.align}%`, height: "100%", background: detail.align >= 75 ? "#22c55e" : "#facc15", opacity: 0.8 }} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.2em", color: "#b99c64", marginBottom: 10 }}>{t.signals}</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12 }}>
               {Object.entries(detail.sig).map(([k, v]) => (

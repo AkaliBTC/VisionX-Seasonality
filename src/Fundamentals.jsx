@@ -111,16 +111,53 @@ const colorFor = (m, v) => {
 };
 
 const DE = {
-  sub: "Bewertung · Profitabilität · Wachstum · Bilanz · Short Interest — Zeile anklicken für das volle Profil",
-  resume: "RESÜMEE", sectorRel: "{L.sectorRel}", notFound: "NICHT GEFUNDEN",
-  hint: "{L.hint}",
+  sub: "Bewertung · Profitabilität · Wachstum · Bilanz · Short Interest · Zeile anklicken für das volle Profil",
+  resume: "RESÜMEE", sectorRel: "SEKTOR-RELATIVE BEWERTUNG", notFound: "NICHT GEFUNDEN",
+  hint: "Yahoo-Schreibweise prüfen (z.B. BAS.DE, 0700.HK, BRK-B)",
   researching: "RECHERCHIERE", symbols: "SYMBOLE", benchmark: "BENCHMARK",
+  explain: "Kennzahl anklicken für die Erklärung",
 };
 const EN = {
-  sub: "{L.sub}",
+  sub: "Valuation · Profitability · Growth · Balance Sheet · Short Interest · click a row for the full profile",
   resume: "SUMMARY", sectorRel: "SECTOR-RELATIVE RATING", notFound: "NOT FOUND",
   hint: "Check Yahoo notation (e.g. BAS.DE, 0700.HK, BRK-B)",
   researching: "RESEARCHING", symbols: "SYMBOLS", benchmark: "BENCHMARK",
+  explain: "Click a metric for the explanation",
+};
+
+// ── KENNZAHL-ERKLÄRUNGEN (DE / EN) ───────────────────────────────────────────
+const GLOSSARY = {
+  peTrailing:      { de: ["Kurs-Gewinn-Verhältnis (letzte 12 Monate)", "Wie viele Jahresgewinne im Kurs stecken. Niedrig wirkt günstig, kann aber auch bedeuten, dass der Markt fallende Gewinne erwartet."], en: ["Price/Earnings (trailing 12 months)", "How many annual profits are priced in. Low looks cheap but can also mean the market expects earnings to fall."] },
+  peForward:       { de: ["Erwartetes KGV (nächste 12 Monate)", "Basiert auf Analystenschätzungen. Liegt es klar unter dem aktuellen KGV, wird Gewinnwachstum erwartet."], en: ["Forward P/E (next 12 months)", "Based on analyst estimates. Clearly below the trailing P/E means earnings growth is expected."] },
+  pegRatio:        { de: ["KGV im Verhältnis zum Wachstum", "Setzt die Bewertung ins Verhältnis zum Gewinnwachstum. Unter 1 gilt klassisch als günstig bewachsen."], en: ["P/E relative to growth", "Puts valuation in relation to earnings growth. Below 1 is classically considered cheap for the growth."] },
+  priceToSales:    { de: ["Kurs-Umsatz-Verhältnis", "Marktkapitalisierung geteilt durch Jahresumsatz. Nützlich bei Firmen ohne Gewinn."], en: ["Price/Sales", "Market cap divided by annual revenue. Useful for companies without profits."] },
+  priceToBook:     { de: ["Kurs-Buchwert-Verhältnis", "Kurs im Verhältnis zum bilanziellen Eigenkapital. Bei Banken und Industrie aussagekräftig, bei Software kaum."], en: ["Price/Book", "Price relative to book equity. Meaningful for banks and industrials, barely for software."] },
+  evEbitda:        { de: ["Unternehmenswert zu EBITDA", "Kaufpreis inklusive Schulden im Verhältnis zum operativen Ergebnis. Vergleichbarer als das KGV, weil kapitalstrukturneutral."], en: ["Enterprise Value/EBITDA", "Purchase price including debt relative to operating earnings. More comparable than P/E because it ignores capital structure."] },
+  grossMargin:     { de: ["Bruttomarge", "Was vom Umsatz nach direkten Herstellkosten bleibt. Zeigt die Preissetzungsmacht."], en: ["Gross margin", "What remains of revenue after direct costs. Shows pricing power."] },
+  operatingMargin: { de: ["Operative Marge", "Ergebnis aus dem Kerngeschäft vor Zinsen und Steuern, in Prozent vom Umsatz."], en: ["Operating margin", "Core-business result before interest and tax, as a share of revenue."] },
+  profitMargin:    { de: ["Nettomarge", "Was am Ende als Gewinn übrig bleibt. Der wichtigste Effizienz-Indikator."], en: ["Net margin", "What is left as profit at the end. The key efficiency indicator."] },
+  roe:             { de: ["Eigenkapitalrendite", "Gewinn im Verhältnis zum Eigenkapital. Hohe Werte können auch aus hoher Verschuldung stammen — immer mit D/E zusammen lesen."], en: ["Return on equity", "Profit relative to equity. High values can also come from high leverage — always read together with D/E."] },
+  roa:             { de: ["Gesamtkapitalrendite", "Gewinn im Verhältnis zur Bilanzsumme. Weniger von Verschuldung verzerrt als ROE."], en: ["Return on assets", "Profit relative to total assets. Less distorted by leverage than ROE."] },
+  revenueGrowth:   { de: ["Umsatzwachstum", "Veränderung des Umsatzes gegenüber dem Vorjahresquartal."], en: ["Revenue growth", "Change in revenue versus the same quarter last year."] },
+  earningsGrowth:  { de: ["Gewinnwachstum", "Veränderung des Gewinns gegenüber dem Vorjahresquartal. Volatiler als Umsatzwachstum."], en: ["Earnings growth", "Change in earnings versus the same quarter last year. More volatile than revenue growth."] },
+  epsTrailing:     { de: ["Gewinn je Aktie (12 Monate)", "Nettogewinn geteilt durch die Aktienanzahl."], en: ["Earnings per share (trailing)", "Net profit divided by share count."] },
+  epsForward:      { de: ["Erwarteter Gewinn je Aktie", "Analystenschätzung für die nächsten 12 Monate."], en: ["Forward earnings per share", "Analyst estimate for the next 12 months."] },
+  debtToEquity:    { de: ["Verschuldungsgrad", "Fremdkapital im Verhältnis zum Eigenkapital. Über 150 wird es in den meisten Branchen sportlich, Versorger liegen strukturell höher."], en: ["Debt/Equity", "Debt relative to equity. Above 150 gets sporty in most industries; utilities sit structurally higher."] },
+  currentRatio:    { de: ["Liquidität 3. Grades", "Kurzfristige Vermögenswerte geteilt durch kurzfristige Verbindlichkeiten. Unter 1 heißt: laufende Rechnungen sind nicht durch liquide Mittel gedeckt."], en: ["Current ratio", "Current assets divided by current liabilities. Below 1 means short-term bills are not covered by liquid assets."] },
+  totalCash:       { de: ["Liquide Mittel", "Cash und kurzfristige Anlagen in der Bilanz."], en: ["Total cash", "Cash and short-term investments on the balance sheet."] },
+  totalDebt:       { de: ["Gesamtverschuldung", "Summe der zinstragenden Verbindlichkeiten."], en: ["Total debt", "Sum of interest-bearing liabilities."] },
+  freeCashflow:    { de: ["Freier Cashflow", "Operativer Cashflow minus Investitionen. Das Geld, das wirklich für Dividenden, Rückkäufe und Schuldentilgung übrig ist."], en: ["Free cash flow", "Operating cash flow minus capex. The money actually available for dividends, buybacks and debt repayment."] },
+  shortPctFloat:   { de: ["Leerverkaufsquote (Float)", "Anteil der frei handelbaren Aktien, der leerverkauft ist. Über 10 % gilt als erhöht, über 20 % als Squeeze-Kandidat — aber auch als Warnsignal."], en: ["Short interest (% of float)", "Share of freely tradable stock sold short. Above 10% is elevated, above 20% a squeeze candidate — but also a warning sign."] },
+  shortRatio:      { de: ["Days to Cover", "Wie viele Handelstage die Shorts bräuchten, um sich beim aktuellen Volumen einzudecken."], en: ["Days to cover", "How many trading days shorts would need to close out at current volume."] },
+  sharesShort:     { de: ["Leerverkaufte Aktien", "Absolute Anzahl der leerverkauften Aktien."], en: ["Shares short", "Absolute number of shares sold short."] },
+  floatShares:     { de: ["Streubesitz", "Frei handelbare Aktien ohne fest gebundene Pakete. Kleiner Float bedeutet größere Kursausschläge."], en: ["Float", "Freely tradable shares excluding locked-up blocks. A small float means larger price swings."] },
+  beta:            { de: ["Beta", "Schwankung relativ zum Gesamtmarkt. 1 = wie der Markt, über 1 = stärker, unter 1 = defensiver."], en: ["Beta", "Volatility relative to the broad market. 1 = like the market, above 1 = stronger, below 1 = more defensive."] },
+  marketCap:       { de: ["Marktkapitalisierung", "Aktienkurs mal Aktienanzahl — der Börsenwert des Unternehmens."], en: ["Market cap", "Share price times share count — the company's market value."] },
+  dividendYield:   { de: ["Dividendenrendite", "Jahresdividende im Verhältnis zum Kurs."], en: ["Dividend yield", "Annual dividend relative to the share price."] },
+  payoutRatio:     { de: ["Ausschüttungsquote", "Anteil des Gewinns, der als Dividende ausgeschüttet wird. Über 100 % heißt: aus der Substanz gezahlt."], en: ["Payout ratio", "Share of profit paid out as dividend. Above 100% means it is paid from substance."] },
+  targetMean:      { de: ["Mittleres Kursziel", "Durchschnitt der Analystenziele. Historisch systematisch zu optimistisch."], en: ["Mean price target", "Average of analyst targets. Historically systematically too optimistic."] },
+  upside:          { de: ["Potenzial zum Kursziel", "Abstand des aktuellen Kurses zum mittleren Analystenziel."], en: ["Upside to target", "Distance from the current price to the mean analyst target."] },
+  from52High:      { de: ["Abstand zum 52-Wochen-Hoch", "Wie weit der Kurs unter dem Jahreshoch steht — der Drawdown."], en: ["Distance to 52-week high", "How far the price sits below the yearly high — the drawdown."] },
 };
 
 // ── HAUPT-MODUL ──────────────────────────────────────────────────────────────
@@ -136,6 +173,7 @@ export default function Fundamentals({ lang = "de" }) {
   const [group, setGroup] = useState("rating");
   const [sort, setSort] = useState({ key: "score", dir: "desc" });
   const [detail, setDetail] = useState(null);
+  const [explain, setExplain] = useState(null);
   const cacheRef = useRef({});
 
   useEffect(() => {
@@ -297,6 +335,7 @@ export default function Fundamentals({ lang = "de" }) {
         </div>
         <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11, color: "#b99c64", letterSpacing: "0.04em", marginBottom: 16 }}>
           {L.sub}
+          <span style={{ marginLeft: 10, color: "#4a4a4a", fontSize: 9.5 }}>ⓘ {L.explain}</span>
         </div>
 
         {/* EINGABE */}
@@ -430,7 +469,20 @@ export default function Fundamentals({ lang = "de" }) {
                   {th("score", ratingView ? "Score" : "VSX")}
                   {ratingView
                     ? CATEGORY_LIST.map(c => th("cat:" + c.id, c.label))
-                    : activeGroup.metrics.map(m => th(m.key, m.label))}
+                    : activeGroup.metrics.map(m => (
+                        <th key={m.key}
+                          onClick={() => GLOSSARY[m.key] ? setExplain(m.key) : setSortKey(m.key)}
+                          title={GLOSSARY[m.key] ? GLOSSARY[m.key][lang][0] : ""}
+                          style={{ padding: "7px 10px", textAlign: "right", cursor: "pointer", userSelect: "none",
+                            color: sort.key === m.key ? "#f8e49b" : "#555", whiteSpace: "nowrap", transition: "color 0.2s" }}>
+                          {m.label}
+                          {GLOSSARY[m.key] && <span style={{ color: "#4a4a4a", marginLeft: 4, fontSize: 8 }}>ⓘ</span>}
+                          <span onClick={e => { e.stopPropagation(); setSortKey(m.key); }}
+                            style={{ marginLeft: 4, color: sort.key === m.key ? "#f8e49b" : "#3a3a3a" }}>
+                            {sort.key === m.key ? (sort.dir === "desc" ? "▾" : "▴") : "⇅"}
+                          </span>
+                        </th>
+                      ))}
                   {ratingView && <th style={{ padding: "7px 10px", textAlign: "center", color: "#555" }}>Ampel</th>}
                   <th style={{ width: 26 }} />
                 </tr>
@@ -577,14 +629,54 @@ export default function Fundamentals({ lang = "de" }) {
                   {g.metrics.map(m => {
                     const v = valueOf(detail, m);
                     return (
-                      <div key={m.key} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderTop: "1px solid rgba(255,255,255,0.05)", fontSize: 10.5, fontFamily: "'DM Mono', monospace" }}>
-                        <span style={{ color: "#777" }}>{m.label}</span>
+                      <div key={m.key} onClick={() => GLOSSARY[m.key] && setExplain(m.key)}
+                        title={GLOSSARY[m.key] ? GLOSSARY[m.key][lang][0] : ""}
+                        style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderTop: "1px solid rgba(255,255,255,0.05)", fontSize: 10.5, fontFamily: "'DM Mono', monospace", cursor: GLOSSARY[m.key] ? "pointer" : "default", borderRadius: 5, transition: "background 0.15s" }}
+                        onMouseEnter={e => { if (GLOSSARY[m.key]) e.currentTarget.style.background = "rgba(212,175,55,0.06)"; }}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <span style={{ color: "#777" }}>
+                          {m.label}{GLOSSARY[m.key] && <span style={{ color: "#3a3a3a", marginLeft: 5, fontSize: 8 }}>ⓘ</span>}
+                        </span>
                         <span style={{ color: colorFor(m, v) }}>{m.fmt(v)}</span>
                       </div>
                     );
                   })}
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {explain && GLOSSARY[explain] && (
+          <div onClick={() => setExplain(null)}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
+            <div onClick={e => e.stopPropagation()}
+              style={{ ...glass, maxWidth: 520, width: "90vw", padding: "24px 28px 22px", background: "rgba(17,17,17,0.97)" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.22em", color: "#b99c64", marginBottom: 6 }}>
+                    {(GROUPS.flatMap(g => g.metrics).find(m => m.key === explain) || {}).label}
+                  </div>
+                  <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 21, letterSpacing: "0.12em", color: "#fdfdfd" }}>
+                    {GLOSSARY[explain][lang][0]}
+                  </div>
+                </div>
+                <button onClick={() => setExplain(null)}
+                  style={{ marginLeft: "auto", background: "none", border: "none", color: "#444", cursor: "pointer", fontSize: 17 }}>✕</button>
+              </div>
+              <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 12, color: "#a8a8a8", lineHeight: 1.75 }}>
+                {GLOSSARY[explain][lang][1]}
+              </div>
+              {detail && (() => {
+                const m = GROUPS.flatMap(g => g.metrics).find(x => x.key === explain);
+                const v = m ? valueOf(detail, m) : null;
+                return m ? (
+                  <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "baseline", gap: 10, fontFamily: "'DM Mono', monospace", fontSize: 12 }}>
+                    <span style={{ color: "#f8e49b", fontWeight: 700 }}>{detail.symbol}</span>
+                    <span style={{ color: colorFor(m, v), fontSize: 15 }}>{m.fmt(v)}</span>
+                  </div>
+                ) : null;
+              })()}
             </div>
           </div>
         )}
