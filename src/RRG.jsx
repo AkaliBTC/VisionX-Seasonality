@@ -49,6 +49,14 @@ const PRESETS = [
     ].map(([s, l]) => ({ symbol: s, label: l })),
   },
   {
+    id: "cmc25", label: "CMC TOP 25", bench: "BTC-USD", drillable: false, cryptoSuffix: true,
+    packKey: "CRYPTO", cmcLimit: 25, members: [],
+  },
+  {
+    id: "cmc100", label: "CMC TOP 100", bench: "BTC-USD", drillable: false, cryptoSuffix: true,
+    packKey: "CRYPTO", cmcLimit: 100, members: [],
+  },
+  {
     id: "crypto", label: "CRYPTO", bench: "BTC-USD", drillable: false, cryptoSuffix: true, packKey: "CRYPTO",
     members: ["ETH","SOL","LINK","TRX","XRP","XLM","DOGE"].map(c => ({ symbol: `${c}-USD`, label: c })),
   },
@@ -642,7 +650,33 @@ export default function RRG() {
   const [hovered, setHovered] = useState(null);
   const [offset, setOffset] = useState(0);          // History-Scrub: 0 = aktuell
   const [playing, setPlaying] = useState(false);
+  const [cmcUniverse, setCmcUniverse] = useState({});   // presetId → [{symbol,label,rank}]
+  const [cmcMeta, setCmcMeta] = useState({});           // SYMBOL → CMC-Kennzahlen
+  const [cmcError, setCmcError] = useState("");
   const cacheRef = useRef({});
+
+  // Universum von CoinMarketCap laden, sobald ein CMC-Preset gewählt wird
+  useEffect(() => {
+    const p = PRESETS.find(x => x.id === presetId);
+    if (!p?.cmcLimit || cmcUniverse[presetId]) return;
+    let alive = true;
+    fetch(`/api/cmc?action=listings&limit=${p.cmcLimit}`)
+      .then(r => r.json())
+      .then(json => {
+        if (!alive) return;
+        if (json.error) { setCmcError(json.error); return; }
+        setCmcError("");
+        const meta = {};
+        const members = (json.data || []).map(c => {
+          meta[`${c.symbol}-USD`] = c;
+          return { symbol: `${c.symbol}-USD`, label: c.symbol, rank: c.rank };
+        });
+        setCmcMeta(m => ({ ...m, ...meta }));
+        setCmcUniverse(u => ({ ...u, [presetId]: members }));
+      })
+      .catch(e => alive && setCmcError(String(e.message)));
+    return () => { alive = false; };
+  }, [presetId]);
 
   const MAX_OFFSET = 60;
 
@@ -685,6 +719,15 @@ export default function RRG() {
         ...drillSector.holdings.filter(h => !packTitles.includes(h)).map(h => ({ symbol: h, label: h, vsx: false })),
         ...packTitles.map(w => ({ symbol: w, label: w.replace(/\.[A-Z]+$|-USD$/, ""), vsx: true })),
       ];
+    } else if (preset.cmcLimit) {
+      const packKey = preset.packKey;
+      const packTitles = packKey && vsxPack ? (pack[packKey] || []) : [];
+      const cmcMembers = cmcUniverse[preset.id] || [];
+      const known = new Set(cmcMembers.map(m => m.symbol));
+      base = [
+        ...cmcMembers.map(m => ({ ...m, vsx: false })),
+        ...packTitles.filter(w => !known.has(w)).map(w => ({ symbol: w, label: w.replace(/-USD$/, ""), vsx: true })),
+      ];
     } else {
       const packKey = preset.packKey;
       const packTitles = packKey && vsxPack ? (pack[packKey] || []) : [];
@@ -697,7 +740,7 @@ export default function RRG() {
     const known = new Set(base.map(b => b.symbol));
     custom.forEach(c => { if (!known.has(c)) base.push({ symbol: c, label: c.replace("-USD", ""), vsx: false, custom: true }); });
     return base.filter(b => !rm.has(b.symbol) && b.symbol !== benchSym);
-  }, [preset, drill, drillSector, viewKey, customAdd, removed, benchSym, vsxPack, pack]);
+  }, [preset, drill, drillSector, viewKey, customAdd, removed, benchSym, vsxPack, pack, cmcUniverse]);
 
   const neededSymbols = useMemo(
     () => [...new Set([benchSym, ...universe.map(u => u.symbol)])],
@@ -985,6 +1028,16 @@ export default function RRG() {
         {error && (
           <div style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "14px 18px", marginBottom: 14, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#f87171" }}>
             {error}
+          </div>
+        )}
+        {cmcError && (
+          <div style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12,
+            display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+            <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#facc15" }}>COINMARKETCAP</span>
+            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#8f8f8f" }}>{cmcError}</span>
+            <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, color: "#5a5a5a" }}>
+              CMC_KEY in den Vercel Environment Variables setzen
+            </span>
           </div>
         )}
         {failed.length > 0 && !error && (

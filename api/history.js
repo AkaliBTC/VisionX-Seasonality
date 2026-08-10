@@ -57,6 +57,27 @@ const fetchBinance = async (symbol, interval, ohlc = false) => {
   } catch { return null; }
 };
 
+// Letzter Fallback für Krypto ohne Binance-Paar: CoinMarketCap (nur mit bezahltem Plan)
+const fetchCmc = async (symbol, ohlc) => {
+  const key = process.env.CMC_KEY;
+  if (!key || !/-USD$/.test(symbol)) return null;
+  try {
+    const base = symbol.replace(/-USD$/, "");
+    const url = `https://pro-api.coinmarketcap.com/v2/cryptocurrency/ohlcv/historical`
+      + `?symbol=${encodeURIComponent(base)}&count=500&interval=daily&convert=USD`;
+    const res = await fetch(url, { headers: { "X-CMC_PRO_API_KEY": key, Accept: "application/json" } });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const raw = json?.data?.quotes || json?.data?.[base]?.[0]?.quotes || [];
+    const out = raw.map(q => {
+      const t = new Date(q.time_open).getTime();
+      const u = q.quote?.USD || {};
+      return ohlc ? [t, u.open, u.high, u.low, u.close, u.volume ?? 0] : [t, u.close];
+    }).filter(r => r.slice(1).every(Number.isFinite));
+    return out.length > 30 ? out : null;
+  } catch { return null; }
+};
+
 const fetchTwelveData = async (symbol, interval, ohlc = false) => {
   if (!TD_KEY) return null;
   try {
@@ -93,6 +114,7 @@ export default async function handler(req, res) {
       if (/-USD$/.test(sym)) series = await fetchBinance(sym, interval, ohlc);
       if (!series) series = await fetchYahoo(sym, range, interval, ohlc);
       if (!series) series = await fetchTwelveData(sym, interval, ohlc);
+      if (!series) series = await fetchCmc(sym, ohlc);
       if (series) data[sym] = series; else failed.push(sym);
     }));
   }

@@ -5,6 +5,9 @@
     },
     "api/fundamentals.js": {
       "maxDuration": 30
+    },
+    "api/cmc.js": {
+      "maxDuration": 30
     }
   }
 }

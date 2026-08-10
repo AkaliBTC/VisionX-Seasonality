@@ -35,6 +35,9 @@ const PRESETS = {
   "COMMODITIES": ["GLD","SLV","GDX","USO","UNG","DBA","CPER","URA","LIT","WEAT","CORN","SGG"],
 };
 
+// Von CoinMarketCap geladene Universen (Top N nach Marktkapitalisierung)
+const CMC_PRESETS = { "CMC TOP 25": 25, "CMC TOP 50": 50, "CMC TOP 100": 100 };
+
 // Symbol → Sektor (für Filter und Anzeige)
 const SECTOR_OF = {};
 Object.entries(SECTORS).forEach(([etf, s]) => {
@@ -265,7 +268,30 @@ export default function Bottom({ lang = "de" }) {
   const [secFilter, setSecFilter] = useState(null);      // null = alle
   const [tfView, setTfView] = useState("combined");      // "combined" | "d4" | "d1"
   const [onlyTurning, setOnlyTurning] = useState(false);
+  const [cmcMeta, setCmcMeta] = useState({});
+  const [cmcError, setCmcError] = useState("");
+  const [cmcLoading, setCmcLoading] = useState(false);
   const cacheRef = useRef({});
+
+  // Universum von CoinMarketCap ziehen und als Liste setzen
+  const loadCmc = (limit) => {
+    setCmcLoading(true); setCmcError("");
+    fetch(`/api/cmc?action=listings&limit=${limit}`)
+      .then(r => r.json())
+      .then(json => {
+        if (json.error) { setCmcError(json.error); return; }
+        const meta = {};
+        const syms = (json.data || []).map(c => {
+          meta[`${c.symbol}-USD`] = c;
+          return `${c.symbol}-USD`;
+        });
+        setCmcMeta(m => ({ ...m, ...meta }));
+        setFailed([]);
+        setList(syms);
+      })
+      .catch(e => setCmcError(String(e.message)))
+      .finally(() => setCmcLoading(false));
+  };
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch { /* private */ }
@@ -304,8 +330,8 @@ export default function Bottom({ lang = "de" }) {
     // Anzeige folgt der gewählten Zeitebene
     const view = tfView === "combined" ? a : (a[tfView] || a);
     const score = tfView === "combined" ? a.score : (view.score ?? a.score);
-    return { symbol: s, ...a, ...view, score, phase: phaseFor(score), sector: SECTOR_OF[s] || null };
-  }).filter(Boolean), [list, raw, tfView]);
+    return { symbol: s, ...a, ...view, score, phase: phaseFor(score), sector: SECTOR_OF[s] || null, cmc: cmcMeta[s] || null };
+  }).filter(Boolean), [list, raw, tfView, cmcMeta]);
 
   const filtered = useMemo(() => rows.filter(r =>
     (!secFilter || r.sector === secFilter) && (!onlyTurning || r.turning)
@@ -391,7 +417,7 @@ export default function Bottom({ lang = "de" }) {
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 16, marginBottom: 6 }}>
           <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 30, letterSpacing: "0.18em", color: "#fdfdfd" }}>{t.title}</div>
           <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#555", letterSpacing: "0.1em" }}>{rows.length} {t.symbols}</div>
-          {loading && (
+          {(loading || cmcLoading) && (
             <span style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "'DM Mono', monospace", fontSize: 9.5, color: GOLD, letterSpacing: "0.14em" }}>
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: GOLD, boxShadow: `0 0 8px ${GOLD}`, animation: "vsxpulse 1s ease-in-out infinite" }} />
               {t.researching}…
@@ -418,6 +444,10 @@ export default function Bottom({ lang = "de" }) {
             <div style={{ width: 1, height: 22, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)" }} />
             {Object.entries(PRESETS).map(([name, syms]) => (
               <button key={name} style={pill(false)} onClick={() => { setFailed([]); setList([...syms]); }}>{name}</button>
+            ))}
+            {Object.entries(CMC_PRESETS).map(([name, lim]) => (
+              <button key={name} style={{ ...pill(false), borderColor: "rgba(212,175,55,0.25)", color: "#b99c64" }}
+                onClick={() => loadCmc(lim)} title="Universum live von CoinMarketCap">◆ {name}</button>
             ))}
             <button style={pill(false)} onClick={() => { setList([]); setFailed([]); setDetail(null); }}>{t.clear}</button>
           </div>
@@ -451,6 +481,15 @@ export default function Bottom({ lang = "de" }) {
 
         {error && (
           <div style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "13px 18px", marginBottom: 12, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#f87171" }}>{error}</div>
+        )}
+        {cmcError && (
+          <div style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12,
+            display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+            <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#facc15" }}>COINMARKETCAP</span>
+            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#8f8f8f" }}>{cmcError}</span>
+            <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, color: "#5a5a5a" }}>CMC_KEY in Vercel setzen</span>
+            <button onClick={() => setCmcError("")} style={{ marginLeft: "auto", background: "none", border: "none", color: "#4a4a4a", cursor: "pointer", fontSize: 12 }}>✕</button>
+          </div>
         )}
         {failed.length > 0 && (
           <div style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
@@ -507,7 +546,12 @@ export default function Bottom({ lang = "de" }) {
                       {d.turning && <span title={t.turning} style={{ marginLeft: 7, fontSize: 8, color: "#22c55e" }}>▲</span>}
                     </td>
                     <td style={{ padding: "9px 10px" }}>
-                      {d.sector ? (
+                      {d.cmc ? (
+                        <span title={d.cmc.name} style={{ fontSize: 8, letterSpacing: "0.1em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700,
+                          color: GOLD, background: "rgba(212,175,55,0.1)", border: "1px solid rgba(212,175,55,0.3)", padding: "2.5px 8px", borderRadius: 20 }}>
+                          #{d.cmc.rank}
+                        </span>
+                      ) : d.sector ? (
                         <span style={{ fontSize: 8, letterSpacing: "0.1em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700,
                           color: SECTOR_COLORS[d.sector], background: `${SECTOR_COLORS[d.sector]}12`,
                           border: `1px solid ${SECTOR_COLORS[d.sector]}30`, padding: "2.5px 8px", borderRadius: 20 }}>{d.sector}</span>
