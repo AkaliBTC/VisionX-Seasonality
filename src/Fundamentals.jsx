@@ -117,6 +117,7 @@ export default function Fundamentals() {
   const [data, setData] = useState({});
   const [failed, setFailed] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [pending, setPending] = useState([]);
   const [error, setError] = useState("");
   const [group, setGroup] = useState("rating");
   const [sort, setSort] = useState({ key: "score", dir: "desc" });
@@ -138,10 +139,13 @@ export default function Fundamentals() {
         if (!alive) return;
         Object.assign(cacheRef.current, json.data || {});
         setData({ ...cacheRef.current });
-        setFailed(f => [...new Set([...f, ...(json.failed || [])])]);
+        const bad = json.failed || [];
+        if (bad.length) setFailed(f => [...new Set([...f, ...bad])]);
+        // Symbole ohne Treffer wieder aus der Liste nehmen, damit nichts leer hängt
+        if (bad.length) setList(l => l.filter(s => !bad.includes(s)));
       })
       .catch(e => alive && setError(e.message))
-      .finally(() => alive && setLoading(false));
+      .finally(() => { if (alive) { setLoading(false); setPending([]); } });
     return () => { alive = false; };
   }, [list]);
 
@@ -190,9 +194,16 @@ export default function Fundamentals() {
     : { key, dir: key === "symbol" ? "asc" : "desc" });
 
   const addTickers = () => {
-    const parts = input.split(/[\s,;]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+    const parts = input.split(/[\s,;]+/)
+      .map(s => s.trim().toUpperCase().replace(/[^A-Z0-9.\-^]/g, ""))
+      .filter(Boolean);
     if (!parts.length) return;
-    setList(l => [...new Set([...l, ...parts])]);
+    const fresh = parts.filter(p => !list.includes(p));
+    if (fresh.length) {
+      setFailed(f => f.filter(x => !fresh.includes(x)));   // Retry erlauben
+      setPending(p => [...new Set([...p, ...fresh])]);
+      setList(l => [...new Set([...l, ...fresh])]);
+    }
     setInput("");
   };
   const removeTicker = s => setList(l => l.filter(x => x !== s));
@@ -248,6 +259,14 @@ export default function Fundamentals() {
         <div style={{ position: "absolute", bottom: -320, left: "-10%", width: 880, height: 880, borderRadius: "50%", background: "radial-gradient(circle, rgba(99,182,255,0.035), transparent 62%)", filter: "blur(60px)" }} />
       </div>
 
+      <style>{`
+        @keyframes vsxpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+        .vsx-fund-table tbody tr { transition: background 0.15s, box-shadow 0.15s; }
+        .vsx-fund-table tbody tr:hover { background: rgba(212,175,55,0.06) !important; }
+        .vsx-fund-scroll::-webkit-scrollbar { height: 7px; }
+        .vsx-fund-scroll::-webkit-scrollbar-thumb { background: rgba(212,175,55,0.25); border-radius: 4px; }
+        .vsx-fund-scroll::-webkit-scrollbar-track { background: transparent; }
+      `}</style>
       <div style={{ position: "relative", zIndex: 1, maxWidth: 1840, margin: "0 auto", padding: "22px 30px 50px" }}>
         {/* KOPF */}
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 16, marginBottom: 6 }}>
@@ -267,24 +286,81 @@ export default function Fundamentals() {
         </div>
 
         {/* EINGABE */}
-        <div style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, padding: "12px 16px", marginBottom: 14 }}>
-          <input value={input} onChange={e => setInput(e.target.value.toUpperCase())}
-            onKeyDown={e => e.key === "Enter" && addTickers()}
-            placeholder="NVDA, MSFT, BAS.DE …"
-            style={{ flex: "1 1 260px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)", color: "#f8e49b", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.1em", padding: "9px 15px", borderRadius: 10, outline: "none", textTransform: "uppercase" }}
-            onFocus={e => e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"}
-            onBlur={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.09)"} />
-          <button style={pill(true)} onClick={addTickers}>+ ADD</button>
-          <button style={pill(false)} onClick={() => { setList([]); setFailed([]); }}>CLEAR ALL</button>
-          <button style={pill(false)} onClick={() => setList([...DEFAULT_LIST])}>↺ DEFAULTS</button>
+        <div style={{ ...glass, padding: "14px 18px 12px", marginBottom: 14 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+            <div style={{ position: "relative", flex: "1 1 300px" }}>
+              <input value={input} onChange={e => setInput(e.target.value.toUpperCase())}
+                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addTickers(); } }}
+                placeholder="NVDA  MSFT  BAS.DE …"
+                style={{ width: "100%", boxSizing: "border-box",
+                  background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)",
+                  color: "#f8e49b", fontFamily: "'Bebas Neue', sans-serif", fontSize: 18,
+                  letterSpacing: "0.12em", padding: "11px 46px 11px 16px", borderRadius: 12,
+                  outline: "none", textTransform: "uppercase", transition: "all 0.25s" }}
+                onFocus={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.55)"; e.currentTarget.style.background = "rgba(212,175,55,0.05)"; }}
+                onBlur={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.09)"; e.currentTarget.style.background = "rgba(255,255,255,0.035)"; }} />
+              <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)",
+                fontFamily: "'Montserrat', sans-serif", fontSize: 7.5, fontWeight: 700, letterSpacing: "0.16em",
+                color: "#4a4a4a", pointerEvents: "none" }}>↵ ENTER</span>
+            </div>
+            <button style={pill(true)} onClick={addTickers}>+ ADD</button>
+            <div style={{ width: 1, height: 22, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)" }} />
+            <button style={pill(false)} onClick={() => setList([...DEFAULT_LIST])}>↺ Defaults</button>
+            <button style={pill(false)} onClick={() => { setList([]); setFailed([]); setDetail(null); }}>Clear</button>
+            {loading && (
+              <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8,
+                fontFamily: "'DM Mono', monospace", fontSize: 9.5, color: GOLD, letterSpacing: "0.14em" }}>
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: GOLD,
+                  boxShadow: `0 0 8px ${GOLD}`, animation: "vsxpulse 1s ease-in-out infinite" }} />
+                RESEARCHING{pending.length ? ` ${pending.join(" · ")}` : "…"}
+              </span>
+            )}
+          </div>
+
+          {/* Aktive Ticker als Chips */}
+          {list.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12,
+              paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+              {list.map(s => {
+                const d = data[s];
+                const col = d ? evaluate(d).light.color : "#4a4a4a";
+                return (
+                  <span key={s} onClick={() => d && setDetail(d)}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "5px 8px 5px 11px",
+                      borderRadius: 9, cursor: d ? "pointer" : "default",
+                      background: "rgba(255,255,255,0.03)", border: `1px solid ${col}44`,
+                      fontFamily: "'DM Mono', monospace", fontSize: 10, color: d ? "#e8e8e8" : "#5a5a5a",
+                      letterSpacing: "0.05em", transition: "all 0.2s" }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: col,
+                      boxShadow: d ? `0 0 6px ${col}` : "none" }} />
+                    {s}
+                    <button onClick={e => { e.stopPropagation(); removeTicker(s); }}
+                      style={{ background: "none", border: "none", color: "#4a4a4a", cursor: "pointer", fontSize: 9, padding: 0 }}
+                      onMouseEnter={e => e.currentTarget.style.color = "#ef4444"}
+                      onMouseLeave={e => e.currentTarget.style.color = "#4a4a4a"}>✕</button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {error && (
           <div style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "14px 18px", marginBottom: 14, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#f87171" }}>{error}</div>
         )}
         {failed.length > 0 && (
-          <div style={{ fontSize: 10, color: "#666", fontFamily: "'DM Mono', monospace", marginBottom: 10 }}>
-            Keine Daten: {failed.join(", ")}
+          <div style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12,
+            display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+            <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700,
+              letterSpacing: "0.18em", color: "#facc15" }}>NICHT GEFUNDEN</span>
+            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#8f8f8f" }}>
+              {failed.join(" · ")}
+            </span>
+            <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, color: "#5a5a5a" }}>
+              Yahoo-Schreibweise prüfen (z.B. BAS.DE, 0700.HK, BRK-B)
+            </span>
+            <button onClick={() => setFailed([])}
+              style={{ marginLeft: "auto", background: "none", border: "none", color: "#4a4a4a", cursor: "pointer", fontSize: 12 }}>✕</button>
           </div>
         )}
 
@@ -325,13 +401,13 @@ export default function Fundamentals() {
         </div>
 
         {/* TABELLE */}
-        <div style={{ ...glass, padding: "16px 18px 14px", overflowX: "auto" }}>
+        <div className="vsx-fund-scroll" style={{ ...glass, padding: "16px 18px 14px", overflowX: "auto" }}>
           {rows.length === 0 && !loading ? (
             <div style={{ padding: 80, textAlign: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.3em", color: "#262626" }}>
               TICKER EINGEBEN
             </div>
           ) : (
-            <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
+            <table className="vsx-fund-table" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
               <thead>
                 <tr style={{ fontSize: 8.5, letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, textTransform: "uppercase" }}>
                   {th("symbol", "Symbol", "left")}
@@ -349,8 +425,7 @@ export default function Fundamentals() {
                 {sorted.map(d => (
                   <tr key={d.symbol} onClick={() => setDetail(d)}
                     style={{ borderTop: "1px solid rgba(255,255,255,0.05)", cursor: "pointer", transition: "background 0.15s" }}
-                    onMouseEnter={e => e.currentTarget.style.background = "rgba(212,175,55,0.06)"}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+>
                     <td style={{ padding: "9px 10px", color: "#f8e49b", fontWeight: 700, whiteSpace: "nowrap" }}>
                       {d.symbol}
                       {d.changePct != null && (
