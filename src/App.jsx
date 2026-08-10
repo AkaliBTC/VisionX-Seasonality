@@ -3,6 +3,7 @@ import Seasonality from "./Charts";
 import RRG from "./RRG";
 import VIX from "./VIX";
 import Cycle from "./Cycle";
+import Fundamentals from "./Fundamentals";
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · MODULE HUB
@@ -15,9 +16,10 @@ const MODULES = [
   { id: "rrg",         label: "RRG" },
   { id: "vix",         label: "VIX ANALYSIS" },
   { id: "cycle",       label: "SPX CYCLE" },
+  { id: "fundamentals", label: "FUNDAMENTALS" },
 ];
 
-const COMPONENTS = { rrg: RRG, vix: VIX, cycle: Cycle };
+const COMPONENTS = { rrg: RRG, vix: VIX, cycle: Cycle, fundamentals: Fundamentals };
 
 // Subline-Tabs im Stil der alten .logo-sub (7px, letterspaced, gold)
 function ModuleNav({ active, setActive }) {
