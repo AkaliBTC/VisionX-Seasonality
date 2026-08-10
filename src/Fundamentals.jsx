@@ -110,8 +110,22 @@ const colorFor = (m, v) => {
   return score > 0.66 ? "#22c55e" : score > 0.33 ? "#c9c9c9" : "#ef4444";
 };
 
+const DE = {
+  sub: "Bewertung · Profitabilität · Wachstum · Bilanz · Short Interest — Zeile anklicken für das volle Profil",
+  resume: "RESÜMEE", sectorRel: "{L.sectorRel}", notFound: "NICHT GEFUNDEN",
+  hint: "{L.hint}",
+  researching: "RECHERCHIERE", symbols: "SYMBOLE", benchmark: "BENCHMARK",
+};
+const EN = {
+  sub: "{L.sub}",
+  resume: "SUMMARY", sectorRel: "SECTOR-RELATIVE RATING", notFound: "NOT FOUND",
+  hint: "Check Yahoo notation (e.g. BAS.DE, 0700.HK, BRK-B)",
+  researching: "RESEARCHING", symbols: "SYMBOLS", benchmark: "BENCHMARK",
+};
+
 // ── HAUPT-MODUL ──────────────────────────────────────────────────────────────
-export default function Fundamentals() {
+export default function Fundamentals({ lang = "de" }) {
+  const L = lang === "en" ? EN : DE;
   const [list, setList] = useState(loadList);
   const [input, setInput] = useState("");
   const [data, setData] = useState({});
@@ -274,7 +288,7 @@ export default function Fundamentals() {
             FUNDAMENTAL CHECK
           </div>
           <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#555", letterSpacing: "0.1em" }}>
-            {rows.length} SYMBOLS
+            {rows.length} {L.symbols}
           </div>
           {loading && <span style={{ fontSize: 10, color: GOLD, fontFamily: "'DM Mono', monospace", letterSpacing: "0.14em" }}>LOADING…</span>}
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
@@ -282,7 +296,7 @@ export default function Fundamentals() {
           </div>
         </div>
         <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11, color: "#b99c64", letterSpacing: "0.04em", marginBottom: 16 }}>
-          Valuation · Profitability · Growth · Balance Sheet · Short Interest — click a row for the full profile
+          {L.sub}
         </div>
 
         {/* EINGABE */}
@@ -312,7 +326,7 @@ export default function Fundamentals() {
                 fontFamily: "'DM Mono', monospace", fontSize: 9.5, color: GOLD, letterSpacing: "0.14em" }}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: GOLD,
                   boxShadow: `0 0 8px ${GOLD}`, animation: "vsxpulse 1s ease-in-out infinite" }} />
-                RESEARCHING{pending.length ? ` ${pending.join(" · ")}` : "…"}
+                {L.researching}{pending.length ? ` ${pending.join(" · ")}` : "…"}
               </span>
             )}
           </div>
@@ -352,12 +366,12 @@ export default function Fundamentals() {
           <div style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12,
             display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
             <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700,
-              letterSpacing: "0.18em", color: "#facc15" }}>NICHT GEFUNDEN</span>
+              letterSpacing: "0.18em", color: "#facc15" }}>{L.notFound}</span>
             <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#8f8f8f" }}>
               {failed.join(" · ")}
             </span>
             <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, color: "#5a5a5a" }}>
-              Yahoo-Schreibweise prüfen (z.B. BAS.DE, 0700.HK, BRK-B)
+              {L.hint}
             </span>
             <button onClick={() => setFailed([])}
               style={{ marginLeft: "auto", background: "none", border: "none", color: "#4a4a4a", cursor: "pointer", fontSize: 12 }}>✕</button>
@@ -367,7 +381,7 @@ export default function Fundamentals() {
         {/* AMPEL-RESÜMEE */}
         {rows.length > 0 && (
           <div style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 18, padding: "14px 20px", marginBottom: 14 }}>
-            <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.2em", color: "#fdfdfd" }}>RESÜMEE</span>
+            <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.2em", color: "#fdfdfd" }}>{L.resume}</span>
             {[LIGHTS.green, LIGHTS.yellow, LIGHTS.red, LIGHTS.grey].map(l => {
               const n = summary[l.id];
               return (
@@ -386,7 +400,7 @@ export default function Fundamentals() {
               ))}
             </div>
             <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, color: "#5a5a5a", letterSpacing: "0.1em" }}>
-              SEKTOR-RELATIVE BEWERTUNG
+              {L.sectorRel}
             </span>
           </div>
         )}
@@ -470,7 +484,7 @@ export default function Fundamentals() {
                         })}
                     {ratingView && (
                       <td style={{ padding: "9px 10px", textAlign: "center" }}>
-                        <span title={d.ev.light.verdict} style={{ display: "inline-block", width: 13, height: 13, borderRadius: "50%", background: d.ev.light.color, boxShadow: `0 0 9px ${d.ev.light.color}88` }} />
+                        <span title={lang === "en" && d.ev.light.verdictEn ? d.ev.light.verdictEn : d.ev.light.verdict} style={{ display: "inline-block", width: 13, height: 13, borderRadius: "50%", background: d.ev.light.color, boxShadow: `0 0 9px ${d.ev.light.color}88` }} />
                       </td>
                     )}
                     <td style={{ padding: "9px 4px", textAlign: "center" }}>
@@ -512,9 +526,9 @@ export default function Fundamentals() {
                     <span style={{ width: 16, height: 16, borderRadius: "50%", background: ev.light.color, boxShadow: `0 0 12px ${ev.light.color}` }} />
                     <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 20, letterSpacing: "0.16em", color: ev.light.color }}>{ev.light.label}</span>
                     <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 13, color: "#e8e8e8" }}>{ev.overall ?? "—"}<span style={{ color: "#555", fontSize: 10 }}>/100</span></span>
-                    <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 10.5, color: "#9a9a9a" }}>{ev.light.verdict}</span>
+                    <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 10.5, color: "#9a9a9a" }}>{lang === "en" && ev.light.verdictEn ? ev.light.verdictEn : ev.light.verdict}</span>
                     <span style={{ marginLeft: "auto", fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, color: "#5a5a5a", letterSpacing: "0.12em" }}>
-                      BENCHMARK: {ev.benchSource.toUpperCase()}
+                      {L.benchmark}: {ev.benchSource.toUpperCase()}
                     </span>
                   </div>
 

@@ -29,7 +29,7 @@ const fetchYahoo = async (symbol, range, interval, ohlc = false) => {
         if (q.close[i] == null) continue;
         if (ohlc) {
           if (q.open[i] == null || q.high[i] == null || q.low[i] == null) continue;
-          out.push([ts[i] * 1000, +q.open[i].toFixed(4), +q.high[i].toFixed(4), +q.low[i].toFixed(4), +q.close[i].toFixed(4)]);
+          out.push([ts[i] * 1000, +q.open[i].toFixed(4), +q.high[i].toFixed(4), +q.low[i].toFixed(4), +q.close[i].toFixed(4), q.volume?.[i] ?? 0]);
         } else {
           out.push([ts[i] * 1000, +q.close[i].toFixed(6)]);
         }
@@ -52,7 +52,7 @@ const fetchBinance = async (symbol, interval, ohlc = false) => {
     const rows = await res.json();
     if (!Array.isArray(rows) || rows.length < 30) return null;
     return ohlc
-      ? rows.map(r => [r[0], parseFloat(r[1]), parseFloat(r[2]), parseFloat(r[3]), parseFloat(r[4])]).filter(r => r.every(Number.isFinite))
+      ? rows.map(r => [r[0], parseFloat(r[1]), parseFloat(r[2]), parseFloat(r[3]), parseFloat(r[4]), parseFloat(r[5]) || 0]).filter(r => r.slice(0,5).every(Number.isFinite))
       : rows.map(r => [r[0], parseFloat(r[4])]).filter(([, c]) => Number.isFinite(c));
   } catch { return null; }
 };

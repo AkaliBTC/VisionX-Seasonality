@@ -95,10 +95,10 @@ const riskScore = (d) => {
 
 // ── AMPEL ────────────────────────────────────────────────────────────────────
 export const LIGHTS = {
-  green:  { id: "green",  label: "GREEN",  color: "#22c55e", verdict: "Solide Fundamentaldaten über Sektorschnitt" },
-  yellow: { id: "yellow", label: "YELLOW", color: "#facc15", verdict: "Gemischtes Bild — Stärken und Schwächen halten sich die Waage" },
-  red:    { id: "red",    label: "RED",    color: "#ef4444", verdict: "Fundamental unter Sektorschnitt" },
-  grey:   { id: "grey",   label: "N/A",    color: "#6b7280", verdict: "Zu wenige Daten für eine Bewertung" },
+  green:  { id: "green",  label: "GREEN",  color: "#22c55e", verdict: "Solide Fundamentaldaten über Sektorschnitt", verdictEn: "Solid fundamentals above sector average" },
+  yellow: { id: "yellow", label: "YELLOW", color: "#facc15", verdict: "Gemischtes Bild — Stärken und Schwächen halten sich die Waage", verdictEn: "Mixed picture — strengths and weaknesses balance out" },
+  red:    { id: "red",    label: "RED",    color: "#ef4444", verdict: "Fundamental unter Sektorschnitt", verdictEn: "Fundamentals below sector average" },
+  grey:   { id: "grey",   label: "N/A",    color: "#6b7280", verdict: "Zu wenige Daten für eine Bewertung", verdictEn: "Not enough data to rate" },
 };
 
 export const lightFor = (score) => {

@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Seasonality from "./Charts";
 import RRG from "./RRG";
 import VIX from "./VIX";
 import Cycle from "./Cycle";
 import Fundamentals from "./Fundamentals";
+import Bottom from "./Bottom";
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · MODULE HUB
@@ -17,9 +18,13 @@ const MODULES = [
   { id: "vix",         label: "VIX ANALYSIS" },
   { id: "cycle",       label: "SPX CYCLE" },
   { id: "fundamentals", label: "FUNDAMENTALS" },
+  { id: "bottom",      label: "BOTTOM RADAR" },
 ];
 
-const COMPONENTS = { rrg: RRG, vix: VIX, cycle: Cycle, fundamentals: Fundamentals };
+const COMPONENTS = { rrg: RRG, vix: VIX, cycle: Cycle, fundamentals: Fundamentals, bottom: Bottom };
+
+const LANG_KEY = "vsx_lang_v1";
+const loadLang = () => { try { const l = localStorage.getItem(LANG_KEY); if (l === "de" || l === "en") return l; } catch { /* default */ } return "de"; };
 
 // Subline-Tabs im Stil der alten .logo-sub (7px, letterspaced, gold)
 function ModuleNav({ active, setActive }) {
@@ -47,8 +52,27 @@ function ModuleNav({ active, setActive }) {
   );
 }
 
+// DE/EN-Umschalter — für Posts, die in beiden Sprachen rausgehen
+function LangToggle({ lang, setLang }) {
+  return (
+    <div style={{ display: "flex", gap: 3, padding: 3, borderRadius: 10,
+      background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+      {["de", "en"].map(l => (
+        <button key={l} onClick={() => setLang(l)}
+          style={{ padding: "5px 11px", borderRadius: 7, cursor: "pointer", border: "none",
+            background: lang === l ? "linear-gradient(135deg, rgba(212,175,55,0.2), rgba(212,175,55,0.08))" : "transparent",
+            color: lang === l ? "#f8e49b" : "#5a5a5a",
+            fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em",
+            transition: "all 0.25s cubic-bezier(0.22,1,0.36,1)" }}>
+          {l.toUpperCase()}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // Header-Replikat für Nicht-Seasonality-Module (identisch zum Charts.jsx-Header)
-function HubHeader({ nav }) {
+function HubHeader({ nav, lang, setLang }) {
   return (
     <div style={{ height: 76, padding: "0 48px", display: "flex", alignItems: "center", background: "rgba(18,18,18,0.55)", backdropFilter: "blur(28px) saturate(160%)", WebkitBackdropFilter: "blur(28px) saturate(160%)", borderBottom: "1px solid rgba(255,255,255,0.06)", position: "sticky", top: 0, zIndex: 100 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -61,12 +85,15 @@ function HubHeader({ nav }) {
           {nav}
         </div>
       </div>
+      <div style={{ marginLeft: "auto" }}><LangToggle lang={lang} setLang={setLang} /></div>
     </div>
   );
 }
 
 export default function App() {
   const [active, setActive] = useState("seasonality");
+  const [lang, setLang] = useState(loadLang);
+  useEffect(() => { try { localStorage.setItem(LANG_KEY, lang); } catch { /* private */ } }, [lang]);
   const nav = <ModuleNav active={active} setActive={setActive} />;
 
   if (active === "seasonality") return <Seasonality nav={nav} />;
@@ -77,8 +104,8 @@ export default function App() {
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Bebas+Neue&family=DM+Mono:wght@400;500&display=swap');
         body { margin: 0; background: #121212; }
       `}</style>
-      <HubHeader nav={nav} />
-      {(() => { const M = COMPONENTS[active]; return <M />; })()}
+      <HubHeader nav={nav} lang={lang} setLang={setLang} />
+      {(() => { const M = COMPONENTS[active]; return <M lang={lang} />; })()}
     </div>
   );
 }
