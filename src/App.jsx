@@ -5,6 +5,7 @@ import VIX from "./VIX";
 import Cycle from "./Cycle";
 import Fundamentals from "./Fundamentals";
 import Bottom from "./Bottom";
+import Breadth from "./Breadth";
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · MODULE HUB
@@ -19,9 +20,10 @@ const MODULES = [
   { id: "cycle",       label: "SPX CYCLE" },
   { id: "fundamentals", label: "FUNDAMENTALS" },
   { id: "bottom",      label: "BOTTOM RADAR" },
+  { id: "breadth",     label: "BREADTH" },
 ];
 
-const COMPONENTS = { rrg: RRG, vix: VIX, cycle: Cycle, fundamentals: Fundamentals, bottom: Bottom };
+const COMPONENTS = { rrg: RRG, vix: VIX, cycle: Cycle, fundamentals: Fundamentals, bottom: Bottom, breadth: Breadth };
 
 const LANG_KEY = "vsx_lang_v1";
 const loadLang = () => { try { const l = localStorage.getItem(LANG_KEY); if (l === "de" || l === "en") return l; } catch { /* default */ } return "de"; };

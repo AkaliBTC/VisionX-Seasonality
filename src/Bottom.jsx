@@ -1,4 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import {
+  VSX_STOCKS, VSX_STOCK_SECTOR, VSX_CRYPTO,
+  VSX_COMMODITY_SYMBOLS, VSX_FOREX_SYMBOLS, VSX_INDEX_SYMBOLS, VSX_ETFS, VSX_LABELS,
+} from "./vsxTickers";
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · BOTTOM RADAR
@@ -30,9 +34,12 @@ const ALL_HOLDINGS = [...new Set(Object.values(SECTORS).flatMap(s => s.members))
 const PRESETS = {
   "SECTOR ETFS": ALL_SECTOR_ETFS,
   "ALL SPDR": [...ALL_SECTOR_ETFS, ...ALL_HOLDINGS],
-  "VSX EQUITIES": ["NVDA","AMD","MSFT","META","AMZN","TSLA","PLTR","HIMS","MRNA","ILMN","BABA","LULU","INTC","RGTI","QBTS","ASTS"],
-  "CRYPTO": ["BTC-USD","ETH-USD","SOL-USD","LINK-USD","XRP-USD","DOGE-USD","AVAX-USD","DOT-USD"],
-  "COMMODITIES": ["GLD","SLV","GDX","USO","UNG","DBA","CPER","URA","LIT","WEAT","CORN","SGG"],
+  "VSX STOCKS": VSX_STOCKS,
+  "VSX CRYPTO": VSX_CRYPTO,
+  "VSX COMMODITIES": VSX_COMMODITY_SYMBOLS,
+  "VSX FOREX": VSX_FOREX_SYMBOLS,
+  "VSX INDICES": VSX_INDEX_SYMBOLS,
+  "VSX ETFS": VSX_ETFS,
 };
 
 // Von CoinMarketCap geladene Universen (Top N nach Marktkapitalisierung)
@@ -44,6 +51,7 @@ Object.entries(SECTORS).forEach(([etf, s]) => {
   SECTOR_OF[etf] = etf;
   s.members.forEach(m => { if (!SECTOR_OF[m]) SECTOR_OF[m] = etf; });
 });
+Object.entries(VSX_STOCK_SECTOR).forEach(([sym, sec]) => { if (!SECTOR_OF[sym]) SECTOR_OF[sym] = sec; });
 
 const SECTOR_COLORS = {
   XLK: "#63b6ff", XLF: "#22c55e", XLV: "#f472b6", XLY: "#a855f7",
@@ -111,6 +119,71 @@ const aggregate = (candles, n) => {
   return out;
 };
 
+// ── VSX-ADX · Wilder DMI, identisch zu ta.dmi(diLen, adxSmo) im Pine ─────────
+// Codex-Regel: +DI/-DI geben die Richtung, ADX gibt die ERLAUBNIS.
+// Regime: <20 Range · 20–25 Building · 25–40 Trend · >40 Climax.
+const ADX_REGIMES = [
+  { min: 40, id: "climax",   color: "#F0506E", de: "CLIMAX",   en: "CLIMAX" },
+  { min: 25, id: "trend",    color: "#E8C97A", de: "TREND",    en: "TREND" },
+  { min: 20, id: "building", color: "#8A6E2F", de: "AUFBAU",   en: "BUILDING" },
+  { min: 0,  id: "range",    color: "#7C7A70", de: "RANGE",    en: "RANGE" },
+];
+const adxRegimeOf = v => v == null ? null : ADX_REGIMES.find(r => v >= r.min) || ADX_REGIMES[3];
+
+function vsxAdx(candles, diLen = 14, adxSmo = 14) {
+  if (!candles || candles.length < diLen + adxSmo + 5) return null;
+  const n = candles.length;
+  // Wilder-Glättung (RMA): erste Werte als Summe, danach rollierend
+  let trS = 0, pS = 0, mS = 0;
+  const dxArr = [];
+  let plusDI = null, minusDI = null;
+  const adxSeries = [];
+
+  for (let i = 1; i < n; i++) {
+    const [, , h, l, c] = candles[i];
+    const [, , hp, lp, cp] = candles[i - 1];
+    const tr = Math.max(h - l, Math.abs(h - cp), Math.abs(l - cp));
+    const upMove = h - hp, downMove = lp - l;
+    const pDM = upMove > downMove && upMove > 0 ? upMove : 0;
+    const mDM = downMove > upMove && downMove > 0 ? downMove : 0;
+
+    if (i <= diLen) { trS += tr; pS += pDM; mS += mDM; }
+    else {
+      trS = trS - trS / diLen + tr;
+      pS = pS - pS / diLen + pDM;
+      mS = mS - mS / diLen + mDM;
+    }
+    if (i >= diLen) {
+      plusDI = trS > 0 ? (100 * pS) / trS : 0;
+      minusDI = trS > 0 ? (100 * mS) / trS : 0;
+      const sum = plusDI + minusDI;
+      dxArr.push(sum > 0 ? (100 * Math.abs(plusDI - minusDI)) / sum : 0);
+    }
+  }
+  if (dxArr.length < adxSmo) return null;
+
+  let adx = dxArr.slice(0, adxSmo).reduce((a, b) => a + b, 0) / adxSmo;
+  adxSeries.push(adx);
+  for (let i = adxSmo; i < dxArr.length; i++) {
+    adx = (adx * (adxSmo - 1) + dxArr[i]) / adxSmo;
+    adxSeries.push(adx);
+  }
+
+  const k = adxSeries.length;
+  // Climax-Rollover exakt wie im Pine: ADX > 40, fällt, und vorher stieg er
+  const rollover = k >= 3 && adxSeries[k - 1] > 40
+    && adxSeries[k - 1] < adxSeries[k - 2] && adxSeries[k - 2] >= adxSeries[k - 3];
+
+  return {
+    adx: adxSeries[k - 1],
+    plusDI, minusDI,
+    bearish: minusDI > plusDI,
+    rollover,
+    regime: adxRegimeOf(adxSeries[k - 1]),
+    series: adxSeries,
+  };
+}
+
 // ── SIGNALE AUF EINEM TIMEFRAME ──────────────────────────────────────────────
 function signalsFor(candles, barsPerYear) {
   if (!candles || candles.length < Math.min(60, barsPerYear * 0.6)) return null;
@@ -145,6 +218,16 @@ function signalsFor(candles, barsPerYear) {
     if (closes[i] < closes[i - 1]) streak++; else break;
   }
 
+  // VSX-ADX: ein Boden braucht einen Abwärtstrend, der sich erschöpft.
+  // Hohe Punktzahl = starker Bärentrend (ADX hoch, -DI dominant), der kippt.
+  const a = vsxAdx(candles);
+  let exhaustion = null;
+  if (a) {
+    const strength = band(a.adx, 18, 45);              // wie stark ist der Trend
+    const dirBear = a.bearish ? 1 : 0.25;              // nur Abwärtstrends zählen voll
+    exhaustion = Math.min(100, strength * dirBear + (a.rollover ? 30 : 0));
+  }
+
   const sig = {
     drawdown: band(drawdown, -0.05, -0.45),
     rsi:      band(r9, 45, 18),
@@ -152,11 +235,12 @@ function signalsFor(candles, barsPerYear) {
     volume:   band(volSpike, 1.1, 3.0),
     zScore:   band(zScore, -0.5, -2.6),
     range:    band(rangePos, 0.5, 0.03),
+    adx:      exhaustion,
   };
   const vals = Object.values(sig).filter(v => v != null);
   const score = vals.length >= 4 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
 
-  return { px, drawdown, rsi9: r9, distMa, volSpike, zScore, rangePos, streak, high52, low52, sig, score };
+  return { px, drawdown, rsi9: r9, distMa, volSpike, zScore, rangePos, streak, high52, low52, sig, score, adx: a };
 }
 
 // ── ANALYSE JE TITEL · 1D + 4D kombiniert ────────────────────────────────────
@@ -176,7 +260,7 @@ function analyse(candles) {
 
   // Kombinierte Einzelsignale (gleiche Gewichtung) für die Detailansicht
   const sig = {};
-  for (const k of ["drawdown", "rsi", "distMa", "volume", "zScore", "range"]) {
+  for (const k of ["drawdown", "rsi", "distMa", "volume", "zScore", "range", "adx"]) {
     const a = d4?.sig?.[k], b = d1?.sig?.[k];
     sig[k] = a != null && b != null ? a * W_D4 + b * W_D1 : (a ?? b ?? null);
   }
@@ -230,7 +314,10 @@ const T = {
     alignHint: "Übereinstimmung zwischen 1D und 4D — hohe Werte heißen: beide Zeitebenen zeigen dasselbe Bild",
     weights: "Gewichtung 4D 60 % · 1D 40 %", onlyTurning: "NUR STABILISIERT",
     sigNames: { drawdown: "Drawdown vom Hoch", rsi: "RSI-9 überverkauft", distMa: "Abstand zur MA200",
-      volume: "Volumen-Klimax", zScore: "Statistische Überdehnung", range: "Position 52W-Spanne" },
+      volume: "Volumen-Klimax", zScore: "Statistische Überdehnung", range: "Position 52W-Spanne",
+      adx: "Trend-Erschöpfung (VSX-ADX)" },
+    adxCol: "ADX", diCol: "DI", regimeCol: "ADX-Regime", rollover: "CLIMAX-ROLLOVER",
+    adxHint: "ADX misst die Trendstärke, +DI/-DI die Richtung. Hoher ADX mit dominantem -DI, der abdreht, ist die klassische Erschöpfung eines Abwärtstrends.",
     notFound: "NICHT GEFUNDEN", hint: "Yahoo-Schreibweise prüfen (z.B. BAS.DE, BTC-USD)",
     footer: "Capitulation Score = sechs Washout-Signale, berechnet auf 1D und 4D, gewichtet 40/60 (0–100). Kein Kaufsignal, sondern eine Rangfolge der Erschöpfung. Ein tiefer Score ersetzt weder Struktur- noch Fundamentalanalyse.",
   },
@@ -245,7 +332,10 @@ const T = {
     alignHint: "Agreement between 1D and 4D — high values mean both timeframes show the same picture",
     weights: "Weighting 4D 60% · 1D 40%", onlyTurning: "TURNING ONLY",
     sigNames: { drawdown: "Drawdown from high", rsi: "RSI-9 oversold", distMa: "Distance to MA200",
-      volume: "Volume climax", zScore: "Statistical stretch", range: "Position in 52W range" },
+      volume: "Volume climax", zScore: "Statistical stretch", range: "Position in 52W range",
+      adx: "Trend exhaustion (VSX-ADX)" },
+    adxCol: "ADX", diCol: "DI", regimeCol: "ADX regime", rollover: "CLIMAX ROLLOVER",
+    adxHint: "ADX measures trend strength, +DI/-DI the direction. A high ADX with dominant -DI that rolls over is the classic exhaustion of a downtrend.",
     notFound: "NOT FOUND", hint: "Check Yahoo notation (e.g. BAS.DE, BTC-USD)",
     footer: "Capitulation Score = six washout signals computed on 1D and 4D, weighted 40/60 (0–100). Not a buy signal but a ranking of exhaustion. A deep score replaces neither structural nor fundamental analysis.",
   },
@@ -330,7 +420,7 @@ export default function Bottom({ lang = "de" }) {
     // Anzeige folgt der gewählten Zeitebene
     const view = tfView === "combined" ? a : (a[tfView] || a);
     const score = tfView === "combined" ? a.score : (view.score ?? a.score);
-    return { symbol: s, ...a, ...view, score, phase: phaseFor(score), sector: SECTOR_OF[s] || null, cmc: cmcMeta[s] || null };
+    return { symbol: s, ...a, ...view, score, phase: phaseFor(score), sector: SECTOR_OF[s] || null, cmc: cmcMeta[s] || null, adxVal: view.adx?.adx ?? null };
   }).filter(Boolean), [list, raw, tfView, cmcMeta]);
 
   const filtered = useMemo(() => rows.filter(r =>
@@ -534,6 +624,12 @@ export default function Bottom({ lang = "de" }) {
                   {th("zScore", t.z)}
                   {th("rangePos", t.pos)}
                   {th("streak", t.streak)}
+                  <th onClick={() => setSortKey("adxVal")} title={t.adxHint}
+                    style={{ padding: "7px 10px", textAlign: "right", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap",
+                      color: sort.key === "adxVal" ? "#f8e49b" : "#555" }}>
+                    {t.adxCol}{sort.key === "adxVal" ? (sort.dir === "desc" ? " ▾" : " ▴") : ""}
+                  </th>
+                  <th style={{ padding: "7px 10px", textAlign: "left", color: "#555" }}>{t.regimeCol}</th>
                   {tfView === "combined" && th("align", t.align)}
                   <th style={{ width: 26 }} />
                 </tr>
@@ -543,6 +639,7 @@ export default function Bottom({ lang = "de" }) {
                   <tr key={d.symbol} onClick={() => setDetail(d)} style={{ borderTop: "1px solid rgba(255,255,255,0.05)", cursor: "pointer" }}>
                     <td style={{ padding: "9px 10px", color: "#f8e49b", fontWeight: 700, whiteSpace: "nowrap" }}>
                       {d.symbol.replace("-USD", "")}
+                      {VSX_LABELS[d.symbol] && <span style={{ marginLeft: 7, fontSize: 8.5, color: "#5a5a5a", fontFamily: "'Montserrat', sans-serif", fontWeight: 400 }}>{VSX_LABELS[d.symbol]}</span>}
                       {d.turning && <span title={t.turning} style={{ marginLeft: 7, fontSize: 8, color: "#22c55e" }}>▲</span>}
                     </td>
                     <td style={{ padding: "9px 10px" }}>
@@ -579,6 +676,28 @@ export default function Bottom({ lang = "de" }) {
                     <td style={{ padding: "9px 10px", textAlign: "right", color: d.zScore < -1.5 ? "#22c55e" : "#9a9a9a" }}>{fmtNum(d.zScore, 2)}</td>
                     <td style={{ padding: "9px 10px", textAlign: "right", color: d.rangePos < 0.15 ? "#22c55e" : "#9a9a9a" }}>{fmtPct(d.rangePos, 0)}</td>
                     <td style={{ padding: "9px 10px", textAlign: "right", color: d.streak >= 4 ? "#22c55e" : "#9a9a9a" }}>{d.streak}</td>
+                    <td style={{ padding: "9px 10px", textAlign: "right", whiteSpace: "nowrap" }}>
+                      {d.adx ? (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+                          <span style={{ color: d.adx.bearish ? "#F0506E" : "#2DD4A7", fontSize: 9 }} title={d.adx.bearish ? "-DI > +DI" : "+DI > -DI"}>
+                            {d.adx.bearish ? "▼" : "▲"}
+                          </span>
+                          <span style={{ color: d.adx.regime.color, fontWeight: 700 }}>{d.adx.adx.toFixed(0)}</span>
+                        </span>
+                      ) : <span style={{ color: "#3a3a3a" }}>—</span>}
+                    </td>
+                    <td style={{ padding: "9px 10px", whiteSpace: "nowrap" }}>
+                      {d.adx ? (
+                        <span style={{ fontSize: 8, letterSpacing: "0.1em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700,
+                          color: d.adx.regime.color, background: `${d.adx.regime.color}14`,
+                          border: `1px solid ${d.adx.regime.color}30`, padding: "2.5px 8px", borderRadius: 20 }}>
+                          {d.adx.regime[lang]}
+                        </span>
+                      ) : <span style={{ color: "#3a3a3a" }}>—</span>}
+                      {d.adx?.rollover && (
+                        <span title={t.rollover} style={{ marginLeft: 6, color: "#F0506E", fontSize: 9 }}>▽</span>
+                      )}
+                    </td>
                     {tfView === "combined" && (
                       <td style={{ padding: "9px 10px", textAlign: "right", color: d.align == null ? "#3a3a3a" : d.align >= 75 ? "#22c55e" : d.align >= 50 ? "#facc15" : "#6b7280" }}
                         title={t.alignHint}>
@@ -643,6 +762,26 @@ export default function Bottom({ lang = "de" }) {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {detail.adx && (
+              <div style={{ marginBottom: 18, padding: "14px 16px", borderRadius: 12,
+                background: "rgba(255,255,255,0.025)", border: `1px solid ${detail.adx.regime.color}33` }}>
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14, marginBottom: 8 }}>
+                  <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.2em", color: "#b99c64" }}>VSX-ADX</span>
+                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 19, fontWeight: 700, color: detail.adx.regime.color }}>{detail.adx.adx.toFixed(1)}</span>
+                  <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.14em", color: detail.adx.regime.color }}>{detail.adx.regime[lang]}</span>
+                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#2DD4A7" }}>+DI {detail.adx.plusDI.toFixed(1)}</span>
+                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#F0506E" }}>−DI {detail.adx.minusDI.toFixed(1)}</span>
+                  {detail.adx.rollover && (
+                    <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.14em",
+                      color: "#F0506E", background: "rgba(240,80,110,0.12)", border: "1px solid rgba(240,80,110,0.35)", padding: "3px 9px", borderRadius: 20 }}>
+                      ▽ {t.rollover}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, color: "#6a6a6a", lineHeight: 1.6 }}>{t.adxHint}</div>
               </div>
             )}
 

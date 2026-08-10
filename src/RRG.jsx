@@ -64,19 +64,19 @@ const PRESETS = [
 
 // ── VSX PACK DEFAULTS · im Pack Manager editierbar (Sektoren + Crypto + Countries)
 const VSX_PACK_DEFAULTS = {
-  XLK:  ["ADBE","AMD","AAPL","INTC","MSFT","NVDA","PLTR","QBTS","RGTI","SNDK","WDAY","1810.HK"],
+  XLK:  ["ADBE","AMD","AAPL","INTC","MSFT","NVDA","PLTR","QBTS","RGTI","SNDK","WDAY","TSM","1810.HK"],
   XLF:  ["AXP","BRK-B","CRCL","COIN","FIS","FI","GS","JPM"],
-  XLV:  ["BAYN.DE","HIMS","ILMN","JNJ","MRNA","MOH","NOVO-B.CO","PFE","REGN","UNH"],
+  XLV:  ["BAYN.DE","HIMS","ILMN","JNJ","MRNA","MOH","NOVO-B.CO","UNH"],
   XLY:  ["ADS.DE","BABA","AMZN","BMW.DE","RACE.MI","LULU","MC.PA","MBG.DE","P911.DE","PHM","TSLA","TSCO","VSCO"],
   XLP:  ["EL","LISN.SW","OR.PA","NESN.SW","RI.PA"],
-  XLE:  ["CVX","OXY"],
+  XLE:  ["CVX","OXY","MPC","PSX"],
   XLI:  ["GE","RHM.DE"],
-  XLB:  ["AEM","ALB","B","BAS.DE","DOW","AG","FCX","FRES.L","LAC","NEM","PAAS","SCCO"],
+  XLB:  ["AEM","ALB","B","BAS.DE","DOW","AG","FRES.L","LAC","NEM","PAAS","SCCO"],
   XLRE: ["IRM"],
   XLU:  [],
   XLC:  ["ASTS","GOOGL","META","NFLX","RDDT","TMUS","0700.HK","TME"],
   CRYPTO:    ["SUI-USD","TAO-USD","HYPE-USD","FET-USD","PEPE-USD","AKT-USD","ZEC-USD"],
-  COUNTRIES: ["VNM","EPHE","ENZL","EDEN","EFNL","EWO","PGAL","GREK","QAT","ECH","EPU","GXG","ARGT","NGE"],
+  COUNTRIES: [],
 };
 
 const PACK_TABS = [
