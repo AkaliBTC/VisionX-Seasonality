@@ -343,7 +343,7 @@ function BenchChart({ series, label, offset, tailLen, onScrub, maxOffset }) {
 }
 
 // ── RRG-CHART (breites Rechteck · zoombar) ───────────────────────────────────
-function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showTails, xLabel, yLabel }) {
+function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showTails, xLabel, yLabel, T }) {
   const W = 1480, H = 560, PADL = 52, PADR = 18, PADT = 14, PADB = 38;
   const plotW = W - PADL - PADR, plotH = H - PADT - PADB;
   const svgRef = useRef(null);
@@ -1095,7 +1095,7 @@ export default function RRG({ lang = "de" }) {
               </div>
             )}
             {items.length > 0 ? (
-              <RRGChart key={viewKey + interval_} items={items} hovered={hovered} setHovered={setHovered} tailLen={tailLen} ext={chartExt} showTails={showTails}
+              <RRGChart key={viewKey + interval_} items={items} hovered={hovered} setHovered={setHovered} tailLen={tailLen} ext={chartExt} showTails={showTails} T={T}
                 xLabel={scaleMode === "norm" ? "RELATIVE STRENGTH · 1 YEAR (PEER-NORMALISED) →" : "RS vs BASIS · 1 YEAR →"}
                 yLabel={scaleMode === "norm" ? "RELATIVE STRENGTH · 1 QUARTER (PEER-NORMALISED) →" : "RS vs BASIS · 1 QUARTER →"}
                 onNodeClick={preset.drillable && !drill
