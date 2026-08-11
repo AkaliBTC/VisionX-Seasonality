@@ -40,7 +40,7 @@ const scoreRatio = (value, bench, higherBetter, tol = 0.6) => {
 // Kategorie-Definitionen: welche Kennzahl gegen welche Benchmark, mit Gewicht
 const CATEGORIES = [
   {
-    id: "valuation", label: "VALUATION",
+    id: "valuation", label: "VALUATION", labelDe: "BEWERTUNG",
     parts: [
       { key: "peForward", bench: "pfwd", hb: false, w: 3 },
       { key: "peTrailing", bench: "pe", hb: false, w: 2 },
@@ -50,7 +50,7 @@ const CATEGORIES = [
     ],
   },
   {
-    id: "profitability", label: "PROFITABILITY",
+    id: "profitability", label: "PROFITABILITY", labelDe: "PROFITABILITÄT",
     parts: [
       { key: "profitMargin", bench: "nm", hb: true, w: 3 },
       { key: "operatingMargin", bench: "om", hb: true, w: 2 },
@@ -59,14 +59,14 @@ const CATEGORIES = [
     ],
   },
   {
-    id: "growth", label: "GROWTH",
+    id: "growth", label: "GROWTH", labelDe: "WACHSTUM",
     parts: [
       { key: "revenueGrowth", bench: "rg", hb: true, w: 3, tol: 1.5 },
       { key: "earningsGrowth", bench: "eg", hb: true, w: 3, tol: 1.5 },
     ],
   },
   {
-    id: "balance", label: "BALANCE",
+    id: "balance", label: "BALANCE", labelDe: "BILANZ",
     parts: [
       { key: "debtToEquity", bench: "de", hb: false, w: 3 },
       { key: "currentRatio", bench: "cr", hb: true, w: 2 },
@@ -138,22 +138,37 @@ export function evaluate(d) {
     overall = Math.round(avail.reduce((a, [k, v]) => a + v * (CAT_WEIGHTS[k] || 1), 0) / wsum);
   }
 
-  // Auffälligkeiten für das Resümee
+  // Auffälligkeiten für das Resümee — zweisprachig (m = DE, mEn = EN)
   const flags = [];
-  if (d.shortPctFloat != null && d.shortPctFloat >= 0.15) flags.push({ t: "warn", m: `Short Interest ${(d.shortPctFloat * 100).toFixed(0)}% des Float` });
-  else if (d.shortPctFloat != null && d.shortPctFloat >= 0.08) flags.push({ t: "info", m: `Erhöhter Short Interest (${(d.shortPctFloat * 100).toFixed(0)}%)` });
-  if (d.debtToEquity != null && d.debtToEquity > b.de * 2) flags.push({ t: "warn", m: `Verschuldung weit über Sektorschnitt (${d.debtToEquity.toFixed(0)} vs ${b.de})` });
-  if (d.currentRatio != null && d.currentRatio < 1) flags.push({ t: "warn", m: `Current Ratio unter 1 (${d.currentRatio.toFixed(2)})` });
-  if (d.freeCashflow != null && d.freeCashflow < 0) flags.push({ t: "warn", m: "Negativer Free Cashflow" });
-  if (d.profitMargin != null && d.profitMargin < 0) flags.push({ t: "warn", m: "Verlust in der letzten Periode" });
-  if (d.revenueGrowth != null && d.revenueGrowth > b.rg * 2.5) flags.push({ t: "good", m: `Umsatzwachstum weit über Sektor (${(d.revenueGrowth * 100).toFixed(0)}%)` });
-  if (d.roe != null && d.roe > b.roe * 1.8) flags.push({ t: "good", m: `ROE deutlich über Sektor (${(d.roe * 100).toFixed(0)}%)` });
-  if (cats.valuation != null && cats.valuation >= 70) flags.push({ t: "good", m: "Bewertung günstig relativ zum Sektor" });
-  if (cats.valuation != null && cats.valuation <= 25) flags.push({ t: "info", m: "Bewertung ambitioniert relativ zum Sektor" });
+  const push = (t, m, mEn) => flags.push({ t, m, mEn });
+  const pct = v => `${(v * 100).toFixed(0)}%`;
+
+  if (d.shortPctFloat != null && d.shortPctFloat >= 0.15)
+    push("warn", `Short Interest ${pct(d.shortPctFloat)} des Float`, `Short interest ${pct(d.shortPctFloat)} of float`);
+  else if (d.shortPctFloat != null && d.shortPctFloat >= 0.08)
+    push("info", `Erhöhter Short Interest (${pct(d.shortPctFloat)})`, `Elevated short interest (${pct(d.shortPctFloat)})`);
+
+  if (d.debtToEquity != null && d.debtToEquity > b.de * 2)
+    push("warn", `Verschuldung weit über Sektorschnitt (${d.debtToEquity.toFixed(0)} vs ${b.de})`,
+                 `Leverage far above sector average (${d.debtToEquity.toFixed(0)} vs ${b.de})`);
+  if (d.currentRatio != null && d.currentRatio < 1)
+    push("warn", `Current Ratio unter 1 (${d.currentRatio.toFixed(2)})`, `Current ratio below 1 (${d.currentRatio.toFixed(2)})`);
+  if (d.freeCashflow != null && d.freeCashflow < 0)
+    push("warn", "Negativer Free Cashflow", "Negative free cash flow");
+  if (d.profitMargin != null && d.profitMargin < 0)
+    push("warn", "Verlust in der letzten Periode", "Loss in the latest period");
+  if (d.revenueGrowth != null && d.revenueGrowth > b.rg * 2.5)
+    push("good", `Umsatzwachstum weit über Sektor (${pct(d.revenueGrowth)})`, `Revenue growth far above sector (${pct(d.revenueGrowth)})`);
+  if (d.roe != null && d.roe > b.roe * 1.8)
+    push("good", `ROE deutlich über Sektor (${pct(d.roe)})`, `ROE clearly above sector (${pct(d.roe)})`);
+  if (cats.valuation != null && cats.valuation >= 70)
+    push("good", "Bewertung günstig relativ zum Sektor", "Valuation cheap relative to sector");
+  if (cats.valuation != null && cats.valuation <= 25)
+    push("info", "Bewertung ambitioniert relativ zum Sektor", "Valuation demanding relative to sector");
   if (d.targetMean && d.price) {
     const up = d.targetMean / d.price - 1;
-    if (up > 0.25) flags.push({ t: "good", m: `Analysten-Kursziel ${(up * 100).toFixed(0)}% über Kurs` });
-    if (up < -0.05) flags.push({ t: "info", m: "Kurs über dem mittleren Analystenziel" });
+    if (up > 0.25) push("good", `Analysten-Kursziel ${pct(up)} über Kurs`, `Analyst target ${pct(up)} above price`);
+    if (up < -0.05) push("info", "Kurs über dem mittleren Analystenziel", "Price above the mean analyst target");
   }
 
   return {
@@ -168,4 +183,4 @@ export function evaluate(d) {
   };
 }
 
-export const CATEGORY_LIST = [...CATEGORIES.map(c => ({ id: c.id, label: c.label })), { id: "risk", label: "RISK" }];
+export const CATEGORY_LIST = [...CATEGORIES.map(c => ({ id: c.id, label: c.label, labelDe: c.labelDe })), { id: "risk", label: "RISK", labelDe: "RISIKO" }];

@@ -36,7 +36,7 @@ const fmtCap = (v) => {
 // good: höher ist besser (true) / niedriger ist besser (false) / neutral (null)
 const GROUPS = [
   {
-    id: "valuation", label: "VALUATION",
+    id: "valuation", label: "VALUATION", labelDe: "BEWERTUNG",
     metrics: [
       { key: "peTrailing", label: "P/E", fmt: v => fmtNum(v, 1), good: false, lo: 10, hi: 40 },
       { key: "peForward", label: "Fwd P/E", fmt: v => fmtNum(v, 1), good: false, lo: 10, hi: 35 },
@@ -47,7 +47,7 @@ const GROUPS = [
     ],
   },
   {
-    id: "profitability", label: "PROFITABILITY",
+    id: "profitability", label: "PROFITABILITY", labelDe: "PROFITABILITÄT",
     metrics: [
       { key: "grossMargin", label: "Gross M.", fmt: fmtPct, good: true, lo: 0.2, hi: 0.7 },
       { key: "operatingMargin", label: "Op. M.", fmt: fmtPct, good: true, lo: 0.05, hi: 0.35 },
@@ -57,7 +57,7 @@ const GROUPS = [
     ],
   },
   {
-    id: "growth", label: "GROWTH",
+    id: "growth", label: "GROWTH", labelDe: "WACHSTUM",
     metrics: [
       { key: "revenueGrowth", label: "Rev. Growth", fmt: fmtPct, good: true, lo: 0, hi: 0.35 },
       { key: "earningsGrowth", label: "EPS Growth", fmt: fmtPct, good: true, lo: 0, hi: 0.4 },
@@ -66,7 +66,7 @@ const GROUPS = [
     ],
   },
   {
-    id: "balance", label: "BALANCE SHEET",
+    id: "balance", label: "BALANCE SHEET", labelDe: "BILANZ",
     metrics: [
       { key: "debtToEquity", label: "D/E", fmt: v => fmtNum(v, 1), good: false, lo: 30, hi: 150 },
       { key: "currentRatio", label: "Current R.", fmt: v => fmtNum(v, 2), good: true, lo: 1, hi: 2.5 },
@@ -76,7 +76,7 @@ const GROUPS = [
     ],
   },
   {
-    id: "short", label: "SHORT INTEREST",
+    id: "short", label: "SHORT INTEREST", labelDe: "LEERVERKÄUFE",
     metrics: [
       { key: "shortPctFloat", label: "Short % Float", fmt: fmtPct, good: null, lo: 0.02, hi: 0.15, warn: 0.1 },
       { key: "shortRatio", label: "Short Ratio", fmt: v => fmtNum(v, 1), good: null, lo: 1, hi: 8, warn: 5 },
@@ -86,7 +86,7 @@ const GROUPS = [
     ],
   },
   {
-    id: "market", label: "MARKET & ANALYSTS",
+    id: "market", label: "MARKET & ANALYSTS", labelDe: "MARKT & ANALYSTEN",
     metrics: [
       { key: "marketCap", label: "Mkt Cap", fmt: fmtCap, good: null },
       { key: "dividendYield", label: "Div. Yield", fmt: fmtPct, good: true, lo: 0, hi: 0.05 },
@@ -115,14 +115,16 @@ const DE = {
   resume: "RESÜMEE", sectorRel: "SEKTOR-RELATIVE BEWERTUNG", notFound: "NICHT GEFUNDEN",
   hint: "Yahoo-Schreibweise prüfen (z.B. BAS.DE, 0700.HK, BRK-B)",
   researching: "RECHERCHIERE", symbols: "SYMBOLE", benchmark: "BENCHMARK",
-  explain: "Kennzahl anklicken für die Erklärung",
+  explain: "Kennzahl anklicken für die Erklärung", light: "Ampel", name: "Name",
+  sectorInd: "Sektor / Branche", score: "Score", csv: "↓ CSV", clearAll: "Leeren", defaults: "↺ Standard",
 };
 const EN = {
   sub: "Valuation · Profitability · Growth · Balance Sheet · Short Interest · click a row for the full profile",
   resume: "SUMMARY", sectorRel: "SECTOR-RELATIVE RATING", notFound: "NOT FOUND",
   hint: "Check Yahoo notation (e.g. BAS.DE, 0700.HK, BRK-B)",
   researching: "RESEARCHING", symbols: "SYMBOLS", benchmark: "BENCHMARK",
-  explain: "Click a metric for the explanation",
+  explain: "Click a metric for the explanation", light: "Signal", name: "Name",
+  sectorInd: "Sector / Industry", score: "Score", csv: "↓ CSV", clearAll: "Clear", defaults: "↺ Defaults",
 };
 
 // ── KENNZAHL-ERKLÄRUNGEN (DE / EN) ───────────────────────────────────────────
@@ -163,6 +165,7 @@ const GLOSSARY = {
 // ── HAUPT-MODUL ──────────────────────────────────────────────────────────────
 export default function Fundamentals({ lang = "de" }) {
   const L = lang === "en" ? EN : DE;
+  const catLabel = c => (lang === "de" && c.labelDe) ? c.labelDe : c.label;
   const [list, setList] = useState(loadList);
   const [input, setInput] = useState("");
   const [data, setData] = useState({});
@@ -330,7 +333,7 @@ export default function Fundamentals({ lang = "de" }) {
           </div>
           {loading && <span style={{ fontSize: 10, color: GOLD, fontFamily: "'DM Mono', monospace", letterSpacing: "0.14em" }}>LOADING…</span>}
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            <button style={pill(false)} onClick={exportCsv}>↓ CSV</button>
+            <button style={pill(false)} onClick={exportCsv}>{L.csv}</button>
           </div>
         </div>
         <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11, color: "#b99c64", letterSpacing: "0.04em", marginBottom: 16 }}>
@@ -358,8 +361,8 @@ export default function Fundamentals({ lang = "de" }) {
             </div>
             <button style={pill(true)} onClick={addTickers}>+ ADD</button>
             <div style={{ width: 1, height: 22, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)" }} />
-            <button style={pill(false)} onClick={() => setList([...DEFAULT_LIST])}>↺ Defaults</button>
-            <button style={pill(false)} onClick={() => { setList([]); setFailed([]); setDetail(null); }}>Clear</button>
+            <button style={pill(false)} onClick={() => setList([...DEFAULT_LIST])}>{L.defaults}</button>
+            <button style={pill(false)} onClick={() => { setList([]); setFailed([]); setDetail(null); }}>{L.clearAll}</button>
             {loading && (
               <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8,
                 fontFamily: "'DM Mono', monospace", fontSize: 9.5, color: GOLD, letterSpacing: "0.14em" }}>
@@ -449,7 +452,7 @@ export default function Fundamentals({ lang = "de" }) {
           <button style={pill(group === "rating")} onClick={() => setGroup("rating")}>◆ RATING</button>
           <div style={{ width: 1, height: 22, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)", margin: "0 3px" }} />
           {GROUPS.map(g => (
-            <button key={g.id} style={pill(group === g.id)} onClick={() => setGroup(g.id)}>{g.label}</button>
+            <button key={g.id} style={pill(group === g.id)} onClick={() => setGroup(g.id)}>{catLabel(g)}</button>
           ))}
         </div>
 
@@ -464,9 +467,9 @@ export default function Fundamentals({ lang = "de" }) {
               <thead>
                 <tr style={{ fontSize: 8.5, letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, textTransform: "uppercase" }}>
                   {th("symbol", "Symbol", "left")}
-                  <th style={{ padding: "7px 10px", textAlign: "left", color: "#555" }}>Name</th>
+                  <th style={{ padding: "7px 10px", textAlign: "left", color: "#555" }}>{L.name}</th>
                   {ratingView && th("sector", "Sector / Industry", "left")}
-                  {th("score", ratingView ? "Score" : "VSX")}
+                  {th("score", ratingView ? L.score : "VSX")}
                   {ratingView
                     ? CATEGORY_LIST.map(c => th("cat:" + c.id, c.label))
                     : activeGroup.metrics.map(m => (
@@ -483,7 +486,7 @@ export default function Fundamentals({ lang = "de" }) {
                           </span>
                         </th>
                       ))}
-                  {ratingView && <th style={{ padding: "7px 10px", textAlign: "center", color: "#555" }}>Ampel</th>}
+                  {ratingView && <th style={{ padding: "7px 10px", textAlign: "center", color: "#555" }}>{L.light}</th>}
                   <th style={{ width: 26 }} />
                 </tr>
               </thead>
@@ -591,7 +594,7 @@ export default function Fundamentals({ lang = "de" }) {
                       return (
                         <div key={c.id} style={{ flex: "1 1 150px", padding: "11px 14px", borderRadius: 12,
                           background: "rgba(255,255,255,0.025)", border: `1px solid ${col}33` }}>
-                          <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#777", marginBottom: 7 }}>{c.label}</div>
+                          <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#777", marginBottom: 7 }}>{catLabel(c)}</div>
                           <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
                             <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 17, color: col, fontWeight: 700 }}>{v ?? "—"}</span>
                             <span style={{ fontSize: 8, color: "#4a4a4a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.1em" }}>{v == null ? "" : lightFor(v).label}</span>
@@ -612,7 +615,7 @@ export default function Fundamentals({ lang = "de" }) {
                           <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "5px 12px", borderRadius: 9,
                             background: `${col}0f`, border: `1px solid ${col}33`, fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, color: "#c9c9c9" }}>
                             <span style={{ color: col, fontWeight: 700 }}>{f.t === "warn" ? "!" : f.t === "good" ? "+" : "i"}</span>
-                            {f.m}
+                            {lang === "en" && f.mEn ? f.mEn : f.m}
                           </span>
                         );
                       })}
@@ -625,7 +628,7 @@ export default function Fundamentals({ lang = "de" }) {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 18 }}>
               {GROUPS.map(g => (
                 <div key={g.id}>
-                  <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.2em", color: "#b99c64", marginBottom: 8 }}>{g.label}</div>
+                  <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.2em", color: "#b99c64", marginBottom: 8 }}>{catLabel(g)}</div>
                   {g.metrics.map(m => {
                     const v = valueOf(detail, m);
                     return (
