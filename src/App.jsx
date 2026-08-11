@@ -98,7 +98,7 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem(LANG_KEY, lang); } catch { /* private */ } }, [lang]);
   const nav = <ModuleNav active={active} setActive={setActive} />;
 
-  if (active === "seasonality") return <Seasonality nav={nav} />;
+  if (active === "seasonality") return <Seasonality nav={nav} lang={lang} />;
 
   return (
     <div style={{ minHeight: "100vh", background: "#121212" }}>

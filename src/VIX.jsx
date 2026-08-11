@@ -12,23 +12,28 @@ const GOLD = "#d4af37";
 const ZONES = [
   { id: "danger", label: "DANGER", range: "0–15", lo: 0, hi: 15, color: "#ef4444",
     band: "rgba(160,45,45,0.22)",
-    desc: ["Consensus feels safe — tops form here.", "Protection is cheapest when no one wants it."],
+    desc: ["Der Konsens fühlt sich sicher — hier bilden sich Hochs.", "Absicherung ist am günstigsten, wenn sie niemand will."],
+    descEn: ["Consensus feels safe — tops form here.", "Protection is cheapest when no one wants it."],
     buy: "XLP · XLU · XLV", sell: "XLK · XLY · XLC" },
   { id: "neutral", label: "NEUTRAL", range: "15–25", lo: 15, hi: 25, color: "#fb923c",
     band: "rgba(150,85,40,0.16)",
-    desc: ["Normal market regime.", "Broad participation, no extremes."],
+    desc: ["Normales Marktregime.", "Breite Beteiligung, keine Extreme."],
+    descEn: ["Normal market regime.", "Broad participation, no extremes."],
     buy: "XLF · XLI · XLB", sell: "None — stay balanced" },
   { id: "watch", label: "WATCH", range: "25–35", lo: 25, hi: 35, color: "#facc15",
     band: "rgba(160,130,35,0.15)",
-    desc: ["Stress is building. Reduce size,", "prepare the quality watchlist."],
+    desc: ["Stress baut sich auf. Größe reduzieren,", "Qualitäts-Watchlist scharf stellen."],
+    descEn: ["Stress is building. Reduce size,", "prepare the quality watchlist."],
     buy: "XLV · XLP", sell: "XLK · XLY · XLB" },
   { id: "accumulate", label: "ACCUMULATE", range: "35–50", lo: 35, hi: 50, color: "#d5dd4a",
     band: "rgba(130,145,45,0.16)",
-    desc: ["Panic begins — retail is selling.", "Scale in with tranches, start small."],
+    desc: ["Panik beginnt — Retail verkauft.", "In Tranchen einsteigen, klein anfangen."],
+    descEn: ["Panic begins — retail is selling.", "Scale in with tranches, start small."],
     buy: "XLK · XLY · XLF", sell: "XLU · XLP — first trim" },
   { id: "strike", label: "STRIKE ZONE", range: "50–100", lo: 50, hi: 100, color: "#22c55e",
     band: "rgba(35,120,70,0.2)",
-    desc: ["Maximum fear, maximum opportunity.", "Best forward returns in history (2008, 2020)."],
+    desc: ["Maximale Angst, maximale Chance.", "Historisch beste Forward-Renditen (2008, 2020)."],
+    descEn: ["Maximum fear, maximum opportunity.", "Best forward returns in history (2008, 2020)."],
     buy: "XLK · XLY · XLC · XLRE", sell: "XLP · XLU · XLV" },
 ];
 
@@ -55,7 +60,7 @@ const fmtDate = t => new Date(t).toLocaleDateString("en-US", { month: "short", d
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 // ── INTERAKTIVER CANDLE-CHART ────────────────────────────────────────────────
-function VixChart({ candles }) {
+function VixChart({ candles, T }) {
   const W = 1560, H = 620, PADL = 46, PADR = 150, PADT = 14, PADB = 34;
   const plotW = W - PADL - PADR, plotH = H - PADT - PADB;
   const svgRef = useRef(null);
@@ -309,7 +314,7 @@ function VixChart({ candles }) {
 
       {/* Drawing-Toolbar */}
       <div style={{ position: "absolute", top: 10, left: 56, display: "flex", gap: 7 }}>
-        {[["pan", "✋", "Pan / Hover"], ["free", "✏", "Freihand zeichnen"], ["line", "╱", "Trendlinie ziehen"]].map(([id, icon, tip]) => (
+        {[["pan", "✋", T.tipPan], ["free", "✏", T.tipFree], ["line", "╱", T.tipLine]].map(([id, icon, tip]) => (
           <button key={id} title={tip} onClick={() => setTool(id)}
             style={{ ...zoomBtn, color: tool === id ? "#f8e49b" : "#c9c9c9",
               borderColor: tool === id ? "rgba(212,175,55,0.55)" : "rgba(255,255,255,0.1)",
@@ -318,27 +323,27 @@ function VixChart({ candles }) {
           </button>
         ))}
         {drawings.length > 0 && (
-          <button title="Zeichnungen löschen" onClick={() => { setDrawings([]); setDraft(null); }}
+          <button title={T.tipClear} onClick={() => { setDrawings([]); setDraft(null); }}
             style={{ ...zoomBtn, color: "#b06060", borderColor: "rgba(239,68,68,0.35)" }}>🗑</button>
         )}
       </div>
 
       {/* Zoom-Controls */}
       <div style={{ position: "absolute", top: 10, right: 160, display: "flex", gap: 7 }}>
-        <button style={zoomBtn} onClick={() => zoomAt(1.35, PADL + plotW / 2)} title="Zoom in"
+        <button style={zoomBtn} onClick={() => zoomAt(1.35, PADL + plotW / 2)} title={T.tipZoomIn}
           onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"; e.currentTarget.style.color = "#f8e49b"; }}
           onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "#c9c9c9"; }}>＋</button>
-        <button style={zoomBtn} onClick={() => zoomAt(1 / 1.35, PADL + plotW / 2)} title="Zoom out"
+        <button style={zoomBtn} onClick={() => zoomAt(1 / 1.35, PADL + plotW / 2)} title={T.tipZoomOut}
           onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"; e.currentTarget.style.color = "#f8e49b"; }}
           onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "#c9c9c9"; }}>−</button>
         {zoomed && (
           <button style={{ ...zoomBtn, color: GOLD, borderColor: "rgba(212,175,55,0.4)" }}
-            onClick={() => setView({ a: 0, b: NMAX })} title="Range zurücksetzen">⟲</button>
+            onClick={() => setView({ a: 0, b: NMAX })} title={T.tipReset}>⟲</button>
         )}
       </div>
       {zoomed && (
         <div style={{ position: "absolute", bottom: 40, right: 160, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#666", letterSpacing: "0.14em", background: "rgba(18,18,18,0.7)", padding: "4px 9px", borderRadius: 7, backdropFilter: "blur(10px)" }}>
-          {Math.round(span)} CANDLES · DRAG TO PAN
+          {Math.round(span)} {T.candles} · {T.dragPan}
         </div>
       )}
     </div>
@@ -346,7 +351,31 @@ function VixChart({ candles }) {
 }
 
 // ── HAUPT-MODUL ──────────────────────────────────────────────────────────────
-export default function VIX() {
+const VIX_T = {
+  de: {
+    sub1: "CBOE Volatility Index ·", sub2: "Kerzen ·", sub3: "Angst kaufen, Sorglosigkeit verkaufen · Scrollen = Zoom · Ziehen = Verschieben",
+    daily: "Täglich", weekly: "Wöchentlich", noData: "KEINE DATEN", fetching: "LADE ^VIX…",
+    tipPan: "Verschieben / Hover", tipFree: "Freihand zeichnen", tipLine: "Trendlinie ziehen",
+    tipClear: "Zeichnungen löschen", tipZoomIn: "Vergrößern", tipZoomOut: "Verkleinern", tipReset: "Bereich zurücksetzen",
+    candles: "KERZEN", dragPan: "ZIEHEN ZUM VERSCHIEBEN", now: "● AKTUELL",
+    buy: "KAUFEN", sell: "VERKAUFEN", errNoData: "Keine VIX-Daten erhalten",
+    footer1: "SPDR SELECT SECTOR ETFS · XLE folgt dem Ölpreis, nicht der Volatilität — separat betrachten · XLRE ist zinsgetrieben",
+    footer2: "Keine Anlageberatung. Nur zu Bildungszwecken. Vergangene Wertentwicklung ist kein Indikator für die Zukunft.",
+  },
+  en: {
+    sub1: "CBOE Volatility Index ·", sub2: "Candles ·", sub3: "Buy fear, sell complacency · Scroll = zoom · Drag = pan",
+    daily: "Daily", weekly: "Weekly", noData: "NO DATA", fetching: "FETCHING ^VIX…",
+    tipPan: "Pan / hover", tipFree: "Freehand drawing", tipLine: "Draw trendline",
+    tipClear: "Clear drawings", tipZoomIn: "Zoom in", tipZoomOut: "Zoom out", tipReset: "Reset range",
+    candles: "CANDLES", dragPan: "DRAG TO PAN", now: "● NOW",
+    buy: "BUY", sell: "SELL", errNoData: "No VIX data received",
+    footer1: "SPDR SELECT SECTOR ETFS · XLE trades on crude, not volatility — treated separately · XLRE is rate-driven",
+    footer2: "Not investment advice. For educational purposes only. Past performance is not indicative of future results.",
+  },
+};
+
+export default function VIX({ lang = "de" }) {
+  const T = VIX_T[lang] || VIX_T.de;
   const [daily, setDaily] = useState(null);
   const [agg, setAgg] = useState(4);
   const [loading, setLoading] = useState(true);
@@ -359,7 +388,7 @@ export default function VIX() {
       .then(json => {
         if (!alive) return;
         const s = json.data?.["^VIX"];
-        if (!s || s.length < 50) throw new Error("Keine VIX-Daten erhalten");
+        if (!s || s.length < 50) throw new Error(lang === "en" ? "No VIX data received" : "Keine VIX-Daten erhalten");
         setDaily(s);
       })
       .catch(e => alive && setError(e.message))
@@ -415,7 +444,7 @@ export default function VIX() {
           </div>
         </div>
         <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11, color: "#b99c64", letterSpacing: "0.04em", marginBottom: 16 }}>
-          CBOE Volatility Index · {agg === 5 ? "Weekly" : `${agg}-Day`} Candles · {rangeLabel} · Buy fear, sell complacency · Scroll = Zoom · Drag = Pan
+          {T.sub1} {agg === 5 ? (lang === "en" ? "Weekly" : "Wöchentlich") : `${agg}-Day`} {T.sub2} {rangeLabel} · {T.sub3}
         </div>
 
         {error && (
@@ -426,11 +455,11 @@ export default function VIX() {
 
         <div style={{ ...glass, padding: "16px 14px 8px", marginBottom: 18 }}>
           {loading ? (
-            <div style={{ padding: 130, textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.22em", color: "#3d3d3d" }}>FETCHING ^VIX…</div>
+            <div style={{ padding: 130, textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.22em", color: "#3d3d3d" }}>{T.fetching}</div>
           ) : candles.length > 0 ? (
-            <VixChart key={agg} candles={candles} />
+            <VixChart key={agg} candles={candles} T={T} />
           ) : !error ? (
-            <div style={{ padding: 130, textAlign: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.3em", color: "#262626" }}>KEINE DATEN</div>
+            <div style={{ padding: 130, textAlign: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.3em", color: "#262626" }}>{T.noData}</div>
           ) : null}
         </div>
 
@@ -444,15 +473,15 @@ export default function VIX() {
                 boxShadow: active ? `0 0 26px ${z.color}22, inset 0 1px 0 rgba(255,255,255,0.06)` : glass.boxShadow,
               }}>
                 <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10.5, color: z.color, letterSpacing: "0.1em", marginBottom: 5 }}>
-                  VIX {z.range}{active && <span style={{ marginLeft: 8, fontSize: 8, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.18em", color: "#f8e49b" }}>● NOW</span>}
+                  VIX {z.range}{active && <span style={{ marginLeft: 8, fontSize: 8, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.18em", color: "#f8e49b" }}>{T.now}</span>}
                 </div>
                 <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 21, letterSpacing: "0.1em", color: "#fdfdfd", marginBottom: 9 }}>{z.label}</div>
                 <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 10, color: "#8f8f8f", lineHeight: 1.65, marginBottom: 13, minHeight: 34 }}>
-                  {z.desc.join(" ")}
+                  {(lang === "en" ? z.descEn : z.desc).join(" ")}
                 </div>
                 <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 11, display: "flex", flexDirection: "column", gap: 7, fontFamily: "'DM Mono', monospace", fontSize: 10 }}>
-                  <div><span style={{ color: "#22c55e", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: 8.5, letterSpacing: "0.16em", marginRight: 10 }}>BUY</span><span style={{ color: "#c9c9c9" }}>{z.buy}</span></div>
-                  <div><span style={{ color: "#ef4444", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: 8.5, letterSpacing: "0.16em", marginRight: 10 }}>SELL</span><span style={{ color: "#c9c9c9" }}>{z.sell}</span></div>
+                  <div><span style={{ color: "#22c55e", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: 8.5, letterSpacing: "0.16em", marginRight: 10 }}>{T.buy}</span><span style={{ color: "#c9c9c9" }}>{z.buy}</span></div>
+                  <div><span style={{ color: "#ef4444", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: 8.5, letterSpacing: "0.16em", marginRight: 10 }}>{T.sell}</span><span style={{ color: "#c9c9c9" }}>{z.sell}</span></div>
                 </div>
               </div>
             );
@@ -460,8 +489,8 @@ export default function VIX() {
         </div>
 
         <div style={{ marginTop: 16, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
-          <span>SPDR SELECT SECTOR ETFS · XLE trades on crude, not volatility — treated separately · XLRE is rate-driven</span>
-          <span>Not investment advice. For educational purposes only. Past performance is not indicative of future results.</span>
+          <span>{T.footer1}</span>
+          <span>{T.footer2}</span>
         </div>
       </div>
     </div>

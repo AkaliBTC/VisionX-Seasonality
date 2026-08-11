@@ -1736,7 +1736,7 @@ const YEAR_PRESETS = [
   { label: "₿ Halving",    test: y => y % 4 === 0 },
 ];
 
-export default function App({ nav }) {
+export default function App({ nav, lang = "de" }) {
   const [input, setInput] = useState("");
   const [ticker, setTicker] = useState("");
   const [interval, setInterval_] = useState("1d");

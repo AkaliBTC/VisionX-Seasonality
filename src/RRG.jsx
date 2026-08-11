@@ -497,20 +497,20 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showT
       </svg>
 
       <div style={{ position: "absolute", top: 10, right: 10, display: "flex", gap: 7 }}>
-        <button style={zoomBtn} onClick={() => zoomAt(1.35)} title="Zoom in"
+        <button style={zoomBtn} onClick={() => zoomAt(1.35)} title={T.tipZoomIn}
           onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"; e.currentTarget.style.color = "#f8e49b"; }}
           onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "#c9c9c9"; }}>＋</button>
-        <button style={zoomBtn} onClick={() => zoomAt(1 / 1.35)} title="Zoom out"
+        <button style={zoomBtn} onClick={() => zoomAt(1 / 1.35)} title={T.tipZoomOut}
           onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"; e.currentTarget.style.color = "#f8e49b"; }}
           onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "#c9c9c9"; }}>−</button>
         {view.z > 1 && (
           <button style={{ ...zoomBtn, color: GOLD, borderColor: "rgba(212,175,55,0.4)" }}
-            onClick={() => setView({ cx: 100, cy: 100, z: 1 })} title="Zoom zurücksetzen">⟲</button>
+            onClick={() => setView({ cx: 100, cy: 100, z: 1 })} title={T.tipZoomReset}>⟲</button>
         )}
       </div>
       {view.z > 1 && (
         <div style={{ position: "absolute", bottom: 12, right: 12, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#666", letterSpacing: "0.14em", background: "rgba(18,18,18,0.7)", padding: "4px 9px", borderRadius: 7, backdropFilter: "blur(10px)" }}>
-          {view.z.toFixed(1)}× · DRAG TO PAN
+          {view.z.toFixed(1)}× · {T.dragPan}
         </div>
       )}
     </div>
@@ -518,7 +518,7 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showT
 }
 
 // ── PACK MANAGER MODAL ───────────────────────────────────────────────────────
-function PackManager({ pack, setPack, names, setNames, onClose }) {
+function PackManager({ pack, setPack, names, setNames, onClose, T }) {
   const [sel, setSel] = useState("XLK");
   const [inp, setInp] = useState("");
   const [nameInp, setNameInp] = useState("");
@@ -547,9 +547,9 @@ function PackManager({ pack, setPack, names, setNames, onClose }) {
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 6 }}>
           <div>
             <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 24, letterSpacing: "0.2em", color: "#fdfdfd" }}>
-              <span style={{ color: GOLD }}>◆</span> VSX PACK MANAGER
+              <span style={{ color: GOLD }}>◆</span> {T.packTitle}
             </div>
-            <div style={{ fontSize: 8, letterSpacing: "0.3em", color: "#b99c64", textTransform: "uppercase", marginTop: 4 }}>Watchlist-Titel je Paket · lokal gespeichert</div>
+            <div style={{ fontSize: 8, letterSpacing: "0.3em", color: "#b99c64", textTransform: "uppercase", marginTop: 4 }}>{T.packSub}</div>
           </div>
           <button onClick={onClose}
             onMouseEnter={e => { e.currentTarget.style.color = GOLD; e.currentTarget.style.transform = "rotate(90deg)"; }}
@@ -578,7 +578,7 @@ function PackManager({ pack, setPack, names, setNames, onClose }) {
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 20, minHeight: 36 }}>
           {titles.length === 0 && (
-            <span style={{ fontSize: 10, color: "#3a3a3a", fontFamily: "'DM Mono', monospace", letterSpacing: "0.1em", padding: "8px 0" }}>— leer —</span>
+            <span style={{ fontSize: 10, color: "#3a3a3a", fontFamily: "'DM Mono', monospace", letterSpacing: "0.1em", padding: "8px 0" }}>{T.packEmpty}</span>
           )}
           {titles.map(t => (
             <span key={t} title={names[t] || NAME_DEFAULTS[t] || ""} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 8px 6px 12px", borderRadius: 9, background: "rgba(212,175,55,0.07)", border: "1px solid rgba(212,175,55,0.25)", fontFamily: "'DM Mono', monospace", fontSize: 10.5, color: "#f8e49b", letterSpacing: "0.06em" }}>
@@ -603,23 +603,23 @@ function PackManager({ pack, setPack, names, setNames, onClose }) {
             onBlur={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.09)"} />
           <input value={nameInp} onChange={e => setNameInp(e.target.value)}
             onKeyDown={e => e.key === "Enter" && add()}
-            placeholder="Voller Name · z.B. NVIDIA Corp. (optional)"
+            placeholder={T.packName}
             style={{ flex: "2 1 240px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)", color: "#c9c9c9", fontFamily: "'Montserrat', sans-serif", fontSize: 12, padding: "10px 15px", borderRadius: 11, outline: "none" }}
             onFocus={e => e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"}
             onBlur={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.09)"} />
           <button onClick={add}
-            style={{ padding: "10px 20px", borderRadius: 11, cursor: "pointer", background: "linear-gradient(135deg, rgba(212,175,55,0.18), rgba(212,175,55,0.08))", border: "1px solid rgba(212,175,55,0.5)", color: "#f8e49b", fontFamily: "'Montserrat', sans-serif", fontSize: 10, fontWeight: 700, letterSpacing: "0.16em" }}>+ ADD</button>
+            style={{ padding: "10px 20px", borderRadius: 11, cursor: "pointer", background: "linear-gradient(135deg, rgba(212,175,55,0.18), rgba(212,175,55,0.08))", border: "1px solid rgba(212,175,55,0.5)", color: "#f8e49b", fontFamily: "'Montserrat', sans-serif", fontSize: 10, fontWeight: 700, letterSpacing: "0.16em" }}>{T.add}</button>
         </div>
 
         <div style={{ display: "flex", gap: 9, justifyContent: "space-between", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 18 }}>
           <div style={{ display: "flex", gap: 9 }}>
             <button onClick={clearSector}
-              style={{ padding: "9px 16px", borderRadius: 9, cursor: "pointer", background: "transparent", border: "1px solid rgba(239,68,68,0.25)", color: "#b06060", fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em" }}>PAKET LEEREN</button>
+              style={{ padding: "9px 16px", borderRadius: 9, cursor: "pointer", background: "transparent", border: "1px solid rgba(239,68,68,0.25)", color: "#b06060", fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em" }}>{T.packClear}</button>
             <button onClick={resetAll}
-              style={{ padding: "9px 16px", borderRadius: 9, cursor: "pointer", background: "transparent", border: "1px solid rgba(255,255,255,0.1)", color: "#777", fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em" }}>↺ DEFAULTS</button>
+              style={{ padding: "9px 16px", borderRadius: 9, cursor: "pointer", background: "transparent", border: "1px solid rgba(255,255,255,0.1)", color: "#777", fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em" }}>{T.packDefaults}</button>
           </div>
           <button onClick={onClose}
-            style={{ padding: "9px 24px", borderRadius: 9, cursor: "pointer", background: "linear-gradient(135deg, #d4af37, #b8963c)", border: "none", color: "#0a0a0a", fontFamily: "'Montserrat', sans-serif", fontSize: 10, fontWeight: 700, letterSpacing: "0.16em" }}>FERTIG</button>
+            style={{ padding: "9px 24px", borderRadius: 9, cursor: "pointer", background: "linear-gradient(135deg, #d4af37, #b8963c)", border: "none", color: "#0a0a0a", fontFamily: "'Montserrat', sans-serif", fontSize: 10, fontWeight: 700, letterSpacing: "0.16em" }}>{T.packDone}</button>
         </div>
       </div>
     </div>
@@ -627,7 +627,45 @@ function PackManager({ pack, setPack, names, setNames, onClose }) {
 }
 
 // ── HAUPT-MODUL ──────────────────────────────────────────────────────────────
-export default function RRG() {
+const RRG_T = {
+  de: {
+    title: "RELATIVE ROTATION", basis: "BASIS", noData: "KEINE DATEN", fetching: "LADE",
+    symbols: "SYMBOLE", ranking: "ROTATION RANKING", titles: "TITEL",
+    daily: "Täglich", weekly: "Wöchentlich", tails: "Tails", relative: "Relativ", absolute: "Absolut",
+    packManager: "PACK MANAGER", reset: "Zurücksetzen", add: "+ HINZU",
+    drillHint: "Sektor anklicken → Drilldown mit Holdings +", scrollZoom: "Scrollen = Zoom",
+    tipTails: "Tails ein-/ausblenden", tipPack: "VisionX-Pack-Titel ein-/ausblenden",
+    tipRemove: "Titel entfernen", tipZoomIn: "Vergrößern", tipZoomOut: "Verkleinern", tipZoomReset: "Zoom zurücksetzen",
+    tipNorm: "Querschnitts-Normierung: jeder Titel gegen seine Peer-Group, spreizt das Feld über alle Quadranten",
+    tipAbs: "Rohe RS-Performance gegen den Basiswert, 100 = Basis geschlagen, nachrechenbar",
+    dragPan: "ZIEHEN ZUM VERSCHIEBEN", noDataFor: "Keine Daten",
+    history: "HISTORIE", animate: "▶ ABSPIELEN", pause: "⏸ PAUSE",
+    memberDetail: "MEMBER DETAIL", tail: "Tail", quadrant: "Quadrant", price: "Kurs", chg: "Änderung",
+    packTitle: "VSX PACK MANAGER", packSub: "Watchlist-Titel je Paket · lokal gespeichert",
+    packEmpty: "— leer —", packClear: "PAKET LEEREN", packDefaults: "↺ STANDARD", packDone: "FERTIG",
+    packName: "Voller Name · z.B. NVIDIA Corp. (optional)", periodsEnding: "PERIODEN BIS",
+  },
+  en: {
+    title: "RELATIVE ROTATION", basis: "BASIS", noData: "NO DATA", fetching: "FETCHING",
+    symbols: "SYMBOLS", ranking: "ROTATION RANKING", titles: "NAMES",
+    daily: "Daily", weekly: "Weekly", tails: "Tails", relative: "Relative", absolute: "Absolute",
+    packManager: "PACK MANAGER", reset: "Reset", add: "+ ADD",
+    drillHint: "Click a sector → drilldown with holdings +", scrollZoom: "Scroll = zoom",
+    tipTails: "Show/hide tails", tipPack: "Show/hide VisionX pack names",
+    tipRemove: "Remove name", tipZoomIn: "Zoom in", tipZoomOut: "Zoom out", tipZoomReset: "Reset zoom",
+    tipNorm: "Cross-sectional normalisation: each name against its peer group, spreads the field across all quadrants",
+    tipAbs: "Raw RS performance vs the benchmark, 100 = matched the benchmark, directly verifiable",
+    dragPan: "DRAG TO PAN", noDataFor: "No data",
+    history: "HISTORY", animate: "▶ ANIMATE", pause: "⏸ PAUSE",
+    memberDetail: "MEMBER DETAIL", tail: "Tail", quadrant: "Quadrant", price: "Price", chg: "% Chg",
+    packTitle: "VSX PACK MANAGER", packSub: "Watchlist names per pack · stored locally",
+    packEmpty: "— empty —", packClear: "CLEAR PACK", packDefaults: "↺ DEFAULTS", packDone: "DONE",
+    packName: "Full name · e.g. NVIDIA Corp. (optional)", periodsEnding: "PERIODS ENDING",
+  },
+};
+
+export default function RRG({ lang = "de" }) {
+  const T = RRG_T[lang] || RRG_T.de;
   const [presetId, setPresetId] = useState("sectors");
   const [drill, setDrill] = useState(null);
   const [interval_, setInterval_] = useState("1d");
@@ -929,7 +967,7 @@ export default function RRG() {
           )}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#555", letterSpacing: "0.1em" }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: GOLD, boxShadow: `0 0 8px ${GOLD}` }} />
-            BASIS <span style={{ color: "#f8e49b" }}>{benchLabel}</span>
+            {T.basis} <span style={{ color: "#f8e49b" }}>{benchLabel}</span>
           </div>
         </div>
 
@@ -946,7 +984,7 @@ export default function RRG() {
             style={{ ...pill(false), display: "flex", alignItems: "center", gap: 7, color: "#b99c64", borderColor: "rgba(212,175,55,0.25)" }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.55)"; e.currentTarget.style.color = "#f8e49b"; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.25)"; e.currentTarget.style.color = "#b99c64"; }}>
-            <span style={{ fontSize: 8 }}>◆</span> PACK MANAGER
+            <span style={{ fontSize: 8 }}>◆</span> {T.packManager}
           </button>
         </div>
         {presetId === "sectors" && (
@@ -966,9 +1004,9 @@ export default function RRG() {
         <div style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 11, padding: "11px 16px", marginBottom: 14 }}>
           <button onClick={() => { if (playing) { setPlaying(false); } else { setOffset(o => o > 0 ? o : MAX_OFFSET); setPlaying(true); } }}
             style={{ ...pill(playing), display: "flex", alignItems: "center", gap: 8, background: playing ? "linear-gradient(135deg, rgba(212,175,55,0.2), rgba(212,175,55,0.09))" : "linear-gradient(135deg, #d4af37, #b8963c)", color: playing ? "#f8e49b" : "#0a0a0a", border: "1px solid rgba(212,175,55,0.6)" }}>
-            {playing ? "⏸ PAUSE" : "▶ ANIMATE"}
+            {playing ? T.pause : T.animate}
           </button>
-          <span style={{ fontSize: 9, letterSpacing: "0.18em", color: "#888", fontFamily: "'Montserrat', sans-serif", fontWeight: 700 }}>HISTORY</span>
+          <span style={{ fontSize: 9, letterSpacing: "0.18em", color: "#888", fontFamily: "'Montserrat', sans-serif", fontWeight: 700 }}>{T.history}</span>
           <input type="range" min={0} max={MAX_OFFSET} value={MAX_OFFSET - Math.round(offset)}
             onChange={e => { setPlaying(false); setOffset(MAX_OFFSET - +e.target.value); }}
             style={{ width: 150, accentColor: GOLD }} />
@@ -976,20 +1014,20 @@ export default function RRG() {
             <span style={{ fontSize: 9.5, color: "#f8e49b", fontFamily: "'DM Mono', monospace", letterSpacing: "0.08em" }}>−{Math.round(offset)}{interval_ === "1wk" ? "W" : "D"}</span>
           )}
           <div style={divider} />
-          <button style={pill(interval_ === "1d")} onClick={() => { setInterval_("1d"); setOffset(0); setPlaying(false); }}>Daily</button>
-          <button style={pill(interval_ === "1wk")} onClick={() => { setInterval_("1wk"); setOffset(0); setPlaying(false); }}>Weekly</button>
+          <button style={pill(interval_ === "1d")} onClick={() => { setInterval_("1d"); setOffset(0); setPlaying(false); }}>{T.daily}</button>
+          <button style={pill(interval_ === "1wk")} onClick={() => { setInterval_("1wk"); setOffset(0); setPlaying(false); }}>{T.weekly}</button>
           <div style={divider} />
           <span style={{ fontSize: 9, letterSpacing: "0.2em", color: "#888", fontFamily: "'Montserrat', sans-serif", fontWeight: 700 }}>
             TAIL <span style={{ color: "#f8e49b" }}>{tailLen}</span>{interval_ === "1wk" ? "W" : "D"}
           </span>
           <input type="range" min={3} max={10} value={tailLen} onChange={e => setTailLen(+e.target.value)}
             style={{ width: 100, accentColor: GOLD }} />
-          <button style={pill(showTails)} onClick={() => setShowTails(v => !v)} title="Tails ein-/ausblenden">Tails</button>
+          <button style={pill(showTails)} onClick={() => setShowTails(v => !v)} title={T.tipTails}>{T.tails}</button>
           <div style={divider} />
           <button style={pill(scaleMode === "norm")} onClick={() => setScaleMode("norm")}
-            title="Querschnitts-Normierung: jeder Titel gegen seine Peer-Group — spreizt das Feld über alle Quadranten">Relativ</button>
+            title={T.tipNorm}>{T.relative}</button>
           <button style={pill(scaleMode === "abs")} onClick={() => setScaleMode("abs")}
-            title="Rohe RS-Performance gegen den Basiswert — 100 = Basis geschlagen, nachrechenbar">Absolut</button>
+            title={T.tipAbs}>{T.absolute}</button>
           {drill && (
             <>
               <div style={divider} />
@@ -1000,7 +1038,7 @@ export default function RRG() {
           {(drill || preset.packKey) && (
             <>
               <div style={divider} />
-              <button onClick={() => setVsxPack(v => !v)} title="VisionX-Pack-Titel ein-/ausblenden"
+              <button onClick={() => setVsxPack(v => !v)} title={T.tipPack}
                 style={{ ...pill(vsxPack), display: "flex", alignItems: "center", gap: 7,
                   color: vsxPack ? GOLD : "#777",
                   textShadow: vsxPack ? "0 0 10px rgba(212,175,55,0.5)" : "none" }}>
@@ -1018,9 +1056,9 @@ export default function RRG() {
             style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)", color: "#f8e49b", fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.12em", padding: "8px 14px", borderRadius: 10, outline: "none", width: 105, textTransform: "uppercase" }}
             onFocus={e => e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"}
             onBlur={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.09)"} />
-          <button style={{ ...pill(true), padding: "9px 15px" }} onClick={addSymbol}>+ ADD</button>
+          <button style={{ ...pill(true), padding: "9px 15px" }} onClick={addSymbol}>{T.add}</button>
           {hasEdits && (
-            <button style={{ ...pill(false), color: "#777" }} onClick={resetView}>↺ RESET</button>
+            <button style={{ ...pill(false), color: "#777" }} onClick={resetView}>↺ {T.reset}</button>
           )}
           {loading && <span style={{ marginLeft: "auto", fontSize: 10, color: GOLD, fontFamily: "'DM Mono', monospace", letterSpacing: "0.14em" }}>LOADING…</span>}
         </div>
@@ -1042,7 +1080,7 @@ export default function RRG() {
         )}
         {failed.length > 0 && !error && (
           <div style={{ fontSize: 10, color: "#666", fontFamily: "'DM Mono', monospace", marginBottom: 10 }}>
-            Keine Daten: {failed.join(", ")}
+            {T.noDataFor}: {failed.join(", ")}
           </div>
         )}
 
@@ -1064,13 +1102,13 @@ export default function RRG() {
                   ? (it) => { setDrill(it.symbol); setBenchMode("SECTOR"); setHovered(null); setOffset(0); setPlaying(false); }
                   : null} />
             ) : !loading && !error ? (
-              <div style={{ padding: 110, textAlign: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.3em", color: "#262626" }}>KEINE DATEN</div>
+              <div style={{ padding: 110, textAlign: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.3em", color: "#262626" }}>{T.noData}</div>
             ) : (
-              <div style={{ padding: 110, textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.22em", color: "#3d3d3d" }}>FETCHING {neededSymbols.length} SYMBOLS…</div>
+              <div style={{ padding: 110, textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.22em", color: "#3d3d3d" }}>{T.fetching} {neededSymbols.length} {T.symbols}…</div>
             )}
             {preset.drillable && !drill && items.length > 0 && (
               <div style={{ textAlign: "center", fontSize: 8.5, color: "#4d4d4d", letterSpacing: "0.2em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600, textTransform: "uppercase", padding: "4px 0 8px" }}>
-                Sektor anklicken → Drilldown mit Holdings + <span style={{ color: GOLD }}>VSX Pack</span> · Scroll = Zoom
+                {T.drillHint} <span style={{ color: GOLD }}>VSX Pack</span> · {T.scrollZoom}
               </div>
             )}
           </div>
@@ -1078,8 +1116,8 @@ export default function RRG() {
           {/* RANKING rechts */}
           <div style={{ ...glass, padding: "16px 16px 12px", flex: "1 1 360px", minWidth: 320, maxWidth: 480, maxHeight: 760, display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 11 }}>
-              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.2em", color: "#fdfdfd" }}>ROTATION RANKING</span>
-              <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.16em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>{items.length} TITEL</span>
+              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.2em", color: "#fdfdfd" }}>{T.ranking}</span>
+              <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.16em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>{items.length} {T.titles}</span>
             </div>
             <div style={{ overflowY: "auto", flex: 1, marginRight: -6, paddingRight: 6 }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 10.5 }}>
@@ -1112,7 +1150,7 @@ export default function RRG() {
                         <td style={{ padding: "7px 8px", textAlign: "right", color: h.x >= 100 ? "#22c55e" : "#ef4444" }}>{h.x.toFixed(2)}</td>
                         <td style={{ padding: "7px 8px", textAlign: "right", color: h.y >= 100 ? "#22c55e" : "#ef4444" }}>{h.y.toFixed(2)}</td>
                         <td style={{ padding: "7px 3px", textAlign: "center" }}>
-                          <button onClick={() => removeSymbol(it.symbol)} title="Titel entfernen"
+                          <button onClick={() => removeSymbol(it.symbol)} title={T.tipRemove}
                             style={{ background: "none", border: "none", color: "#3a3a3a", cursor: "pointer", fontSize: 10, padding: 2, transition: "color 0.15s" }}
                             onMouseEnter={e => e.currentTarget.style.color = "#ef4444"}
                             onMouseLeave={e => e.currentTarget.style.color = "#3a3a3a"}>✕</button>
@@ -1130,7 +1168,7 @@ export default function RRG() {
         {items.length > 0 && (
           <div style={{ ...glass, padding: "18px 20px 14px" }}>
             <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.2em", color: "#fdfdfd", marginBottom: 12 }}>
-              MEMBER DETAIL
+              {T.memberDetail}
             </div>
             <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
               <thead>
@@ -1191,7 +1229,7 @@ export default function RRG() {
         </div>
       </div>
 
-      {showManager && <PackManager pack={pack} setPack={setPack} names={names} setNames={setNames} onClose={() => setShowManager(false)} />}
+      {showManager && <PackManager pack={pack} setPack={setPack} names={names} setNames={setNames} onClose={() => setShowManager(false)} T={T} />}
     </div>
   );
 }

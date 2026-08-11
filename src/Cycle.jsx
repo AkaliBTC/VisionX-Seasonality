@@ -11,8 +11,9 @@ const STAGE_STORAGE_KEY = "vsx_spx_cycle_stage_v1";
 
 const STAGES = [
   {
-    n: 1, title: "CYCLE TROUGH",
+    n: 1, title: "CYCLE TROUGH", titleDe: "ZYKLUS-TIEF",
     desc: "The bottom is in — recovery begins. Rate-sensitive consumer groups lead first.",
+    descDe: "Der Boden ist drin — die Erholung beginnt. Zinssensitive Consumer-Gruppen führen zuerst.",
     best: [
       { name: "Home Building", t: "XHB" },
       { name: "Restaurants", t: "PEJ" },
@@ -25,8 +26,9 @@ const STAGES = [
     ],
   },
   {
-    n: 2, title: "EARLY BULL",
+    n: 2, title: "EARLY BULL", titleDe: "FRÜHER BULL",
     desc: "Financials and risk cyclicals accelerate — liquidity lifts the market broadly.",
+    descDe: "Financials und Risk-Zykliker beschleunigen — Liquidität hebt den Markt breit an.",
     best: [
       { name: "Brokers", t: "IAI" },
       { name: "Automobiles", t: "CARZ" },
@@ -39,8 +41,9 @@ const STAGES = [
     ],
   },
   {
-    n: 3, title: "MID BULL",
+    n: 3, title: "MID BULL", titleDe: "MITTLERER BULL",
     desc: "Tech, materials and energy take over leadership — the cycle runs hot.",
+    descDe: "Tech, Materials und Energy übernehmen die Führung — der Zyklus läuft heiß.",
     best: [
       { name: "Comm. Equipment", t: "XLC" },
       { name: "Diversified Metals", t: "XME" },
@@ -53,8 +56,9 @@ const STAGES = [
     ],
   },
   {
-    n: 4, title: "LATE BULL",
+    n: 4, title: "LATE BULL", titleDe: "SPÄTER BULL",
     desc: "Inflation trades peak — hardware and gold shine while early cyclicals roll over.",
+    descDe: "Inflations-Trades peaken — Hardware und Gold glänzen, Frühzykliker rollen ab.",
     best: [
       { name: "Oil Drillers", t: "OIH" },
       { name: "Computer Hardware", t: "IYW" },
@@ -67,8 +71,9 @@ const STAGES = [
     ],
   },
   {
-    n: 5, title: "TOP FORMS",
+    n: 5, title: "TOP FORMS", titleDe: "TOPBILDUNG",
     desc: "Breadth narrows — defensives outperform while the index still holds up.",
+    descDe: "Die Breite verengt sich — Defensives outperformt, während der Index noch hält.",
     best: [
       { name: "Health Care", t: "XLV" },
       { name: "Diversified Chemicals", t: "XLB" },
@@ -81,8 +86,9 @@ const STAGES = [
     ],
   },
   {
-    n: 6, title: "BEAR PHASE",
+    n: 6, title: "BEAR PHASE", titleDe: "BÄRENPHASE",
     desc: "Staples, insurance and food defend — deep cyclicals bleed into the low.",
+    descDe: "Staples, Insurance und Food verteidigen — tiefe Zykliker bluten in den Boden.",
     best: [
       { name: "Household Products", t: "XLP" },
       { name: "Life Insurance", t: "IAK" },
@@ -255,7 +261,39 @@ function CycleWave({ selected, current, auto }) {
 }
 
 // ── MAIN MODULE ──────────────────────────────────────────────────────────────
-export default function Cycle() {
+const CY_T = {
+  de: {
+    sub: "6-Stufen-Rotations-Framework · Beste & schwächste Performer je Zyklusphase · Stage oder Industrie anklicken für Beispiel-Titel",
+    best: "Beste Performer", worst: "Schwächste Performer", clickEx: "· anklicken für Beispiel-Titel",
+    stage: "Stage", current: "AKTUELLE STAGE", setCurrent: "ALS AKTUELL SETZEN", removeCurrent: "● AKTUELL — ENTFERNEN",
+    badge: "● AKTUELL", manual: "MANUELL: STAGE", auto: "AUTO-ERKENNUNG:",
+    badgeAuto: "● AUTO", badgeManual: "● MANUELL", whereAreWe: "WO STEHEN WIR?",
+    prevWindow: "VORHERIGES FENSTER:", seqPick: "SEQUENZ-WAHL:",
+    rawNote: "· roher Höchstwert Stage", rawNote2: "— gefiltert (Zyklen laufen 1→6, nicht querbeet)",
+    spdrExtremes: "· SPDR EXTREMA", top: "TOP", lag: "SCHWACH", autoDetected: "● AUTOMATISCH ERKANNT",
+    computing: "BERECHNE…", notEnough: "Zu wenige Daten für die Auto-Erkennung",
+    method: "Stage-Score = aggregierte RS der 3 besten minus der 3 schwächsten Titel gegen SPY. Klick auf ▸ für die ETF-Aufschlüsselung.",
+    footer: "SPX Cycle Framework · Auto-Erkennung über exponentiell gewichtete relative Stärke vs SPY je Stage-Korb (3 beste − 3 schwächste) auf Tages-, Wochen- und Monatsebene, sequenzgeprüft gegen das vorherige Fenster (Zyklen laufen 1→6). Strukturanalyse — keine Anlageberatung.",
+  },
+  en: {
+    sub: "6-Stage Rotation Framework · Best & worst performers per cycle phase · Click a stage or industry for example names",
+    best: "Best Performers", worst: "Worst Performers", clickEx: "· click for example names",
+    stage: "Stage", current: "CURRENT STAGE", setCurrent: "SET AS CURRENT", removeCurrent: "● CURRENT — REMOVE",
+    badge: "● CURRENT", manual: "MANUAL: STAGE", auto: "AUTO-DETECT:",
+    badgeAuto: "● AUTO", badgeManual: "● MANUAL", whereAreWe: "WHERE ARE WE?",
+    prevWindow: "PREV WINDOW:", seqPick: "SEQUENCE PICK:",
+    rawNote: "· raw max Stage", rawNote2: "— filtered (cycles run 1→6, not sideways)",
+    spdrExtremes: "· SPDR EXTREMES", top: "TOP", lag: "LAG", autoDetected: "● AUTO-DETECTED",
+    computing: "COMPUTING…", notEnough: "Not enough data for auto-detect",
+    method: "Stage score = aggregated RS of the 3 Best vs SPY minus aggregated RS of the 3 Worst vs SPY. Click ▸ for the ETF breakdown.",
+    footer: "SPX Cycle Framework · Auto-detect: EW relative strength vs SPY per stage basket (3 Best − 3 Worst) on daily / weekly / monthly resolution, sequence-checked against the previous window (cycles run 1→6). Structural analysis — not investment advice.",
+  },
+};
+
+export default function Cycle({ lang = "de" }) {
+  const T = CY_T[lang] || CY_T.de;
+  const stageTitle = s => (lang === "de" && s.titleDe) ? s.titleDe : s.title;
+  const stageDesc = s => (lang === "de" && s.descDe) ? s.descDe : s.desc;
   const [selected, setSelected] = useState(loadStage() || 1);
   const [selInd, setSelInd] = useState(null);
   const [current, setCurrent] = useState(loadStage);
@@ -397,20 +435,20 @@ export default function Cycle() {
           {autoStage && (
             <div style={{ display: "flex", alignItems: "center", gap: 9, fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.08em" }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", boxShadow: "0 0 9px #22c55e" }} />
-              <span style={{ color: "#c9c9c9" }}>{CYCLE_TFS[cycleTf].label}: STAGE <span style={{ color: "#f8e49b", fontWeight: 700 }}>{autoStage}</span></span>
+              <span style={{ color: "#c9c9c9" }}>{T.auto.replace("STAGE","")}{CYCLE_TFS[cycleTf].label}: STAGE <span style={{ color: "#f8e49b", fontWeight: 700 }}>{autoStage}</span></span>
               <span style={{ color: "#22c55e", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: 9.5, letterSpacing: "0.16em" }}>{STAGES[autoStage - 1].title}</span>
             </div>
           )}
           {current && (
             <div style={{ display: "flex", alignItems: "center", gap: 9, fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.08em" }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: GOLD, boxShadow: `0 0 9px ${GOLD}` }} />
-              <span style={{ color: "#c9c9c9" }}>MANUAL: STAGE <span style={{ color: "#f8e49b", fontWeight: 700 }}>{current}</span></span>
-              <span style={{ color: "#b99c64", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: 9.5, letterSpacing: "0.16em" }}>{STAGES[current - 1].title}</span>
+              <span style={{ color: "#c9c9c9" }}>{T.manual} <span style={{ color: "#f8e49b", fontWeight: 700 }}>{current}</span></span>
+              <span style={{ color: "#b99c64", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: 9.5, letterSpacing: "0.16em" }}>{stageTitle(STAGES[current - 1])}</span>
             </div>
           )}
         </div>
         <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11, color: "#b99c64", letterSpacing: "0.04em", marginBottom: 18 }}>
-          6-Stage Rotation Framework · Best & worst performers per cycle phase · Click a stage or industry for example names
+          {T.sub}
         </div>
 
         {/* SPDR SECTOR EXTREMES je Zyklus-Ebene */}
@@ -422,16 +460,16 @@ export default function Cycle() {
                   borderColor: cycleTf === id ? "rgba(212,175,55,0.45)" : "rgba(255,255,255,0.08)",
                   boxShadow: cycleTf === id ? "0 0 22px rgba(212,175,55,0.1), inset 0 1px 0 rgba(255,255,255,0.06)" : glass.boxShadow }}>
                 <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.2em", color: cycleTf === id ? "#f8e49b" : "#777", marginBottom: 9 }}>
-                  {tf.label} <span style={{ color: "#4a4a4a", fontWeight: 600, letterSpacing: "0.08em" }}>· SPDR EXTREMES</span>
+                  {tf.label} <span style={{ color: "#4a4a4a", fontWeight: 600, letterSpacing: "0.08em" }}>{T.spdrExtremes}</span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 7.5, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.16em", color: "#22c55e" }}>TOP</span>
+                    <span style={{ fontSize: 7.5, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.16em", color: "#22c55e" }}>{T.top}</span>
                     <span style={{ color: "#e8e8e8", fontWeight: 700 }}>{extremes[id].top.t}</span>
                     <span style={{ color: "#22c55e" }}>+{(extremes[id].top.v * 100).toFixed(1)}%</span>
                   </span>
                   <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 7.5, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.16em", color: "#ef4444" }}>LAG</span>
+                    <span style={{ fontSize: 7.5, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.16em", color: "#ef4444" }}>{T.lag}</span>
                     <span style={{ color: "#9a9a9a", fontWeight: 700 }}>{extremes[id].low.t}</span>
                     <span style={{ color: "#ef4444" }}>{(extremes[id].low.v * 100).toFixed(1)}%</span>
                   </span>
@@ -445,7 +483,7 @@ export default function Cycle() {
         <div style={{ ...glass, padding: "6px 0 0", marginBottom: 18, overflow: "hidden" }}>
           <div style={{ position: "relative" }}>
             <div style={{ display: "grid", gridTemplateColumns: "150px repeat(6, 1fr)" }}>
-              <div style={{ padding: "13px 14px", fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.2em", color: "#555", textTransform: "uppercase" }}>Stage</div>
+              <div style={{ padding: "13px 14px", fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.2em", color: "#555", textTransform: "uppercase" }}>{T.stage}</div>
               {STAGES.map(s => (
                 <div key={"h" + s.n} onClick={() => { setSelected(s.n); setSelInd(null); }}
                   onMouseEnter={() => setHoverCol(s.n)} onMouseLeave={() => setHoverCol(null)}
@@ -453,10 +491,10 @@ export default function Cycle() {
                   <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 20, letterSpacing: "0.12em", color: selected === s.n ? "#f8e49b" : "#c9c9c9" }}>{s.n}</span>
                   <span style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 2 }}>
                     {autoStage === s.n && (
-                      <span style={{ fontSize: 7, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.18em", color: "#22c55e" }}>● AUTO</span>
+                      <span style={{ fontSize: 7, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.18em", color: "#22c55e" }}>{T.badgeAuto}</span>
                     )}
                     {current === s.n && (
-                      <span style={{ fontSize: 7, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.18em", color: GOLD }}>● MANUAL</span>
+                      <span style={{ fontSize: 7, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.18em", color: GOLD }}>{T.badgeManual}</span>
                     )}
                   </span>
                 </div>
@@ -466,7 +504,7 @@ export default function Cycle() {
                 <React.Fragment key={"best" + row}>
                   {row === 0 ? (
                     <div style={{ padding: "14px 14px", fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.18em", color: "#22c55e", textTransform: "uppercase", display: "flex", alignItems: "center" }}>
-                      Best Performers
+                      {T.best}
                     </div>
                   ) : <div />}
                   {STAGES.map(s => (
@@ -486,7 +524,7 @@ export default function Cycle() {
                 <React.Fragment key={"worst" + row}>
                   {row === 0 ? (
                     <div style={{ padding: "14px 14px", fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.18em", color: "#ef4444", textTransform: "uppercase", display: "flex", alignItems: "center" }}>
-                      Worst Performers
+                      {T.worst}
                     </div>
                   ) : <div />}
                   {STAGES.map(s => (
@@ -511,7 +549,7 @@ export default function Cycle() {
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
           <div style={{ ...glass, flex: "1 1 360px", minWidth: 330, padding: "18px 22px 16px", borderColor: "rgba(34,197,94,0.3)" }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
-              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.18em", color: "#fdfdfd" }}>WHERE ARE WE?</span>
+              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.18em", color: "#fdfdfd" }}>{T.whereAreWe}</span>
               <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>EW-RS vs SPY · BEST − WORST</span>
             </div>
             <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, color: "#666", marginBottom: 10, lineHeight: 1.6 }}>
@@ -519,18 +557,18 @@ export default function Cycle() {
             </div>
             {prevStage && (
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 12, padding: "8px 12px", borderRadius: 10, background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.06)", fontFamily: "'DM Mono', monospace", fontSize: 9.5, letterSpacing: "0.05em" }}>
-                <span style={{ color: "#666" }}>PREV WINDOW:</span>
-                <span style={{ color: "#c9c9c9", fontWeight: 700 }}>STAGE {prevStage}</span>
+                <span style={{ color: "#666" }}>{T.prevWindow}</span>
+                <span style={{ color: "#c9c9c9", fontWeight: 700 }}>Stage {prevStage}</span>
                 <span style={{ color: "#4a4a4a" }}>→</span>
-                <span style={{ color: "#666" }}>SEQUENCE PICK:</span>
-                <span style={{ color: "#22c55e", fontWeight: 700 }}>STAGE {autoStage}</span>
+                <span style={{ color: "#666" }}>{T.seqPick}</span>
+                <span style={{ color: "#22c55e", fontWeight: 700 }}>Stage {autoStage}</span>
                 {rawTop != null && rawTop !== autoStage && (
-                  <span style={{ color: "#b99c64", fontSize: 8.5 }}>· raw max Stage {rawTop} — filtered (cycles run 1→6, not sideways)</span>
+                  <span style={{ color: "#b99c64", fontSize: 8.5 }}>{T.rawNote} {rawTop} {T.rawNote2}</span>
                 )}
               </div>
             )}
             {scoreLoading ? (
-              <div style={{ padding: "24px 0", textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 10, letterSpacing: "0.2em", color: "#3d3d3d" }}>COMPUTING…</div>
+              <div style={{ padding: "24px 0", textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 10, letterSpacing: "0.2em", color: "#3d3d3d" }}>{T.computing}</div>
             ) : scoreError ? (
               <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#f87171" }}>{scoreError}</div>
             ) : scores && (
@@ -590,32 +628,32 @@ export default function Cycle() {
           <div style={{ ...glass, flex: "2 1 560px", padding: "20px 24px 18px" }}>
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 12, marginBottom: 8 }}>
               <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 23, letterSpacing: "0.14em", color: "#fdfdfd" }}>
-                STAGE {sel.n} <span style={{ color: GOLD }}>·</span> {sel.title}
+                STAGE {sel.n} <span style={{ color: GOLD }}>·</span> {stageTitle(sel)}
               </span>
               {autoStage === sel.n && (
-                <span style={{ fontSize: 8.5, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.16em", color: "#22c55e" }}>● AUTO ({CYCLE_TFS[cycleTf].label})</span>
+                <span style={{ fontSize: 8.5, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.16em", color: "#22c55e" }}>{T.autoDetected} ({CYCLE_TFS[cycleTf].label})</span>
               )}
               {current === sel.n ? (
                 <button onClick={() => setCurrent(null)}
-                  style={{ padding: "6px 14px", borderRadius: 9, cursor: "pointer", background: "rgba(212,175,55,0.13)", border: "1px solid rgba(212,175,55,0.5)", color: "#f8e49b", fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em" }}>● CURRENT — REMOVE</button>
+                  style={{ padding: "6px 14px", borderRadius: 9, cursor: "pointer", background: "rgba(212,175,55,0.13)", border: "1px solid rgba(212,175,55,0.5)", color: "#f8e49b", fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em" }}>{T.removeCurrent}</button>
               ) : (
                 <button onClick={() => setCurrent(sel.n)}
                   style={{ padding: "6px 14px", borderRadius: 9, cursor: "pointer", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(212,175,55,0.3)", color: "#b99c64", fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em", transition: "all 0.2s" }}
                   onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.6)"; e.currentTarget.style.color = "#f8e49b"; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.3)"; e.currentTarget.style.color = "#b99c64"; }}>SET AS CURRENT</button>
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.3)"; e.currentTarget.style.color = "#b99c64"; }}>{T.setCurrent}</button>
               )}
             </div>
             <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11.5, color: "#8f8f8f", lineHeight: 1.7, marginBottom: 16 }}>
-              {sel.desc}
+              {stageDesc(sel)}
             </div>
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 22 }}>
               <div style={{ flex: "1 1 280px" }}>
-                <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.2em", color: "#22c55e", marginBottom: 8 }}>BEST PERFORMERS <span style={{ color: "#4a4a4a", fontWeight: 600, letterSpacing: "0.06em", textTransform: "none" }}>· click for example names</span></div>
+                <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.2em", color: "#22c55e", marginBottom: 8 }}>{T.best.toUpperCase()} <span style={{ color: "#4a4a4a", fontWeight: 600, letterSpacing: "0.06em", textTransform: "none" }}>{T.clickEx}</span></div>
                 {sel.best.map(x => indRow(x, "best"))}
               </div>
               <div style={{ flex: "1 1 280px" }}>
-                <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.2em", color: "#ef4444", marginBottom: 8 }}>WORST PERFORMERS</div>
+                <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.2em", color: "#ef4444", marginBottom: 8 }}>{T.worst.toUpperCase()}</div>
                 {sel.worst.map(x => indRow(x, "worst"))}
               </div>
             </div>
