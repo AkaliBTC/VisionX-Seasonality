@@ -265,16 +265,17 @@ const QUAD_ORDER = { LEADING: 0, IMPROVING: 1, WEAKENING: 2, LAGGING: 3 };
 
 // ── DATA LAYER ───────────────────────────────────────────────────────────────
 const fetchHistories = async (symbols) => {
-  const out = {}; const failed = [];
+  const out = {}; const failed = []; const names = {};
   for (let i = 0; i < symbols.length; i += 25) {
     const chunk = symbols.slice(i, i + 25);
     const res = await fetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=10y`);
     if (!res.ok) throw new Error(`API ${res.status} — läuft die Seite auf Vercel / \`vercel dev\`?`);
     const json = await res.json();
     Object.assign(out, json.data);
+    Object.assign(names, json.names || {});
     failed.push(...(json.failed || []));
   }
-  return { data: out, failed };
+  return { data: out, failed, names };
 };
 
 // ── SMOOTH TAIL ──────────────────────────────────────────────────────────────
@@ -801,10 +802,16 @@ export default function RRG({ lang = "de" }) {
     if (!missing.length) { setRaw({ ...cacheRef.current }); return; }
     setLoading(true); setError("");
     fetchHistories(missing)
-      .then(({ data, failed: f }) => {
+      .then(({ data, failed: f, names: n }) => {
         if (!alive) return;
         Object.assign(cacheRef.current, data);
         setRaw({ ...cacheRef.current });
+        // Namen aus der API übernehmen, ohne manuelle Einträge zu überschreiben
+        if (n && Object.keys(n).length) setNames(prev => {
+          const next = { ...prev };
+          for (const [k, v] of Object.entries(n)) if (!next[k]) next[k] = v;
+          return next;
+        });
         setFailed(f);
       })
       .catch(e => alive && setError(e.message))

@@ -262,7 +262,17 @@ function analyse(candles) {
 
   const tfs = {};
   for (const t of TF_DEFS) {
-    tfs[t.id] = signalsFor(t.agg === 1 ? candles : aggregate(candles, t.agg), t.barsPerYear);
+    const c = t.agg === 1 ? candles : aggregate(candles, t.agg);
+    const s = signalsFor(c, t.barsPerYear);
+    if (s) {
+      // Stabilisierung je Zeitebene: RSI aus dem Extrem heraus und Kurs über
+      // dem Tief der letzten fünf Kerzen DIESER Auflösung.
+      const cl = c.map(x => x[4]);
+      const lo = Math.min(...c.slice(-5).map(x => x[3]));
+      s.turning = s.rsi9 != null && s.rsi9 > 25
+        && cl[cl.length - 1] > lo * 1.01 && (s.sig?.drawdown ?? 0) > 40;
+    }
+    tfs[t.id] = s;
   }
   const avail = TF_DEFS.filter(t => tfs[t.id]?.score != null);
   if (!avail.length) return null;
@@ -512,6 +522,11 @@ export default function Bottom({ lang = "de" }) {
           <div><div style={{ ...overline(C.goldDim), marginBottom: 7 }}>VisionX Analytics</div>
           <div style={{ ...displayTitle(31) }}>{t.title}</div></div>
           <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#555", letterSpacing: "0.1em" }}>{rows.length} {t.symbols}</div>
+          {tfView !== "combined" && (
+            <span style={{ ...badge(GOLD), fontSize: 8.5 }}>
+              {t.tf} · {({ d1: t.d1, d4: t.d4, w2: t.w2, m1: t.m1 })[tfView]}
+            </span>
+          )}
           {(loading || cmcLoading) && (
             <span style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "'DM Mono', monospace", fontSize: 9.5, color: GOLD, letterSpacing: "0.14em" }}>
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: GOLD, boxShadow: `0 0 8px ${GOLD}`, animation: "vsxpulse 1s ease-in-out infinite" }} />

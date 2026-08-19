@@ -172,8 +172,8 @@ const REGIMES = {
 };
 
 // ── SPARKLINE / CHART ────────────────────────────────────────────────────────
-function LineChart({ values, ts, color = GOLD, zeroLine = false, bands = null, height = 130, label, fmt = v => v.toFixed(0) }) {
-  const W = 1000, H = height, PADL = 44, PADR = 12, PADT = 10, PADB = 18;
+function LineChart({ values, ts, color = GOLD, zeroLine = false, bands = null, height = 230, label, fmt = v => v.toFixed(0) }) {
+  const W = 1000, H = height, PADL = 46, PADR = 14, PADT = 12, PADB = 22;
   const pw = W - PADL - PADR, ph = H - PADT - PADB;
   const [hover, setHover] = useState(null);
   const ref = useRef(null);
@@ -201,11 +201,11 @@ function LineChart({ values, ts, color = GOLD, zeroLine = false, bands = null, h
 
   return (
     <svg ref={ref} viewBox={`0 0 ${W} ${H}`} onMouseMove={onMove} onMouseLeave={() => setHover(null)}
-      style={{ width: "100%", display: "block" }}>
+      style={{ width: "100%", display: "block", userSelect: "none" }} className="vsx-chart">
       {bands && bands.map((b, k) => (
         <g key={k}>
           <line x1={PADL} y1={Y(b)} x2={W - PADR} y2={Y(b)} stroke="rgba(255,255,255,0.09)" strokeDasharray="2 5" />
-          <text x={PADL - 6} y={Y(b) + 3} textAnchor="end" fill="#4a4a4a" style={{ font: "500 8.5px 'DM Mono', monospace" }}>{b}</text>
+          <text x={PADL - 6} y={Y(b) + 3} textAnchor="end" fill="#4a4a4a" style={{ font: "500 9.5px 'DM Mono', monospace" }}>{b}</text>
         </g>
       ))}
       {zeroLine && <line x1={PADL} y1={Y(0)} x2={W - PADR} y2={Y(0)} stroke="rgba(255,255,255,0.18)" strokeDasharray="2 5" />}
@@ -215,7 +215,7 @@ function LineChart({ values, ts, color = GOLD, zeroLine = false, bands = null, h
           <rect x={PADL} y={Y(0)} width={pw} height={Math.max(0, H - PADB - Y(0))} fill="rgba(239,68,68,0.045)" />
         </>
       )}
-      <path d={d} fill="none" stroke={color} strokeWidth="1.5" style={{ filter: `drop-shadow(0 0 4px ${color}55)` }} />
+      <path d={d} fill="none" stroke={color} strokeWidth="1.7" style={{ filter: `drop-shadow(0 0 5px ${color}66)` }} />
       {!zeroLine && !bands && (
         <text x={PADL - 6} y={Y(vals[vals.length - 1]) + 3} textAnchor="end" fill="#4a4a4a" style={{ font: "500 8.5px 'DM Mono', monospace" }}>
           {fmt(vals[vals.length - 1])}
@@ -240,17 +240,62 @@ function LineChart({ values, ts, color = GOLD, zeroLine = false, bands = null, h
   );
 }
 
+
+// ── ERKLÄRUNGEN (DE / EN) ────────────────────────────────────────────────────
+const GLOSSARY = {
+  pctMa200: {
+    de: ["Anteil über der 200-Tage-Linie",
+      "Wie viele Titel des Universums über ihrem 200-Tage-Durchschnitt notieren. Die wichtigste Beteiligungskennzahl überhaupt: Sie sagt, ob eine Indexbewegung breit getragen wird oder nur von wenigen Schwergewichten. Über 60 % gilt als gesund, unter 40 % als Warnzone, unter 20 % als Kapitulationsbereich. Fällt der Index auf ein neues Tief, während dieser Anteil steigt, ist das eine der verlässlichsten Bodendivergenzen."],
+    en: ["Share above the 200-day line",
+      "How many names in the universe trade above their 200-day average. The single most important participation metric: it tells you whether an index move is broadly carried or driven by a few heavyweights. Above 60% is healthy, below 40% a warning zone, below 20% capitulation territory. If the index makes a new low while this share rises, that is one of the most reliable bottoming divergences."] },
+  pctMa50: {
+    de: ["Anteil über der 50-Tage-Linie",
+      "Dieselbe Logik wie MA200, nur kurzfristiger. Reagiert deutlich schneller und eignet sich zur Bestätigung: Dreht MA50 nach oben, während MA200 noch tief steht, beginnt eine Erholung. Bleibt MA50 tief, obwohl der Index steigt, trägt die Rally nicht."],
+    en: ["Share above the 50-day line",
+      "Same logic as MA200 but shorter term. It reacts much faster and works as confirmation: if MA50 turns up while MA200 is still low, a recovery is starting. If MA50 stays low while the index rises, the rally is not carried."] },
+  mcOsc: {
+    de: ["McClellan Oszillator",
+      "Die Differenz zweier exponentieller Durchschnitte (19 und 39 Perioden) der Netto-Advances, also der Zahl steigender minus fallender Titel. Misst die Beschleunigung der Marktbreite. Über 0 verbessert sich die Breite, unter 0 verschlechtert sie sich. Werte unter −50 gelten als überverkauft, über +50 als überkauft. Wir nutzen die ratio-adjustierte Variante, die Netto-Advances auf die Universumsgröße normiert — dadurch bleiben die Schwellen unabhängig von der Titelanzahl vergleichbar."],
+    en: ["McClellan Oscillator",
+      "The difference between two exponential averages (19 and 39 periods) of net advances, meaning advancing minus declining names. It measures the acceleration of breadth. Above 0 breadth is improving, below 0 deteriorating. Readings below −50 count as oversold, above +50 as overbought. We use the ratio-adjusted variant that normalises net advances to universe size, so the thresholds stay comparable regardless of how many names are included."] },
+  mcSum: {
+    de: ["McClellan Summation Index",
+      "Die laufende Summe des Oszillators — das langfristige Gegenstück. Während der Oszillator die Beschleunigung misst, zeigt der Summation Index den kumulierten Zustand der Marktbreite. Ein steigender Summation Index bei fallendem Index ist ein starkes bullisches Signal; ein fallender Summation Index bei steigendem Index warnt vor einer sich verengenden Rally."],
+    en: ["McClellan Summation Index",
+      "The running sum of the oscillator — its long-term counterpart. Where the oscillator measures acceleration, the summation index shows the cumulative state of breadth. A rising summation index while the index falls is a strong bullish signal; a falling summation index while the index rises warns of a narrowing rally."] },
+  adLine: {
+    de: ["Advance/Decline-Linie",
+      "Die kumulierte Summe aus steigenden minus fallenden Titeln, Tag für Tag fortgeschrieben. Sie gewichtet jeden Titel gleich, unabhängig von der Marktkapitalisierung — deshalb entlarvt sie Rallys, die nur von wenigen Großkonzernen getragen werden. Die klassische Anwendung ist die Divergenz: Macht der Index neue Hochs, während die AD-Linie zurückbleibt, verliert der Aufwärtstrend seine Basis."],
+    en: ["Advance/Decline Line",
+      "The cumulative sum of advancing minus declining names, carried forward day by day. It weights every name equally regardless of market cap, which is why it exposes rallies carried by only a handful of mega caps. The classic use is divergence: if the index makes new highs while the AD line lags, the uptrend is losing its base."] },
+  netHL: {
+    de: ["Netto neue Hochs/Tiefs",
+      "Die Zahl der Titel auf einem 52-Wochen-Hoch minus jener auf einem 52-Wochen-Tief. Der schnellste Frühindikator für Regimewechsel: Extreme Negativwerte markieren häufig Kapitulationstiefs, und der erste Umschwung ins Positive nach einer Abverkaufsphase ist historisch einer der frühesten Bodenhinweise überhaupt."],
+    en: ["Net New Highs/Lows",
+      "The number of names at a 52-week high minus those at a 52-week low. The fastest early indicator for regime change: extreme negative readings often mark capitulation lows, and the first flip back to positive after a selloff is historically one of the earliest bottom signals available."] },
+  participation: {
+    de: ["Sektor-Beteiligung",
+      "Der Anteil der Titel je Sektor über der 200-Tage-Linie. Zeigt, wo die Stärke tatsächlich sitzt. Eine Rally, bei der nur ein oder zwei Sektoren über 60 % liegen, ist strukturell fragil; sind acht oder mehr Sektoren stark, ist der Aufwärtstrend breit fundiert. Für die Rotationsanalyse ist der Vergleich mit dem RRG-Modul aufschlussreich."],
+    en: ["Sector participation",
+      "The share of names per sector above the 200-day line. It shows where strength actually sits. A rally in which only one or two sectors exceed 60% is structurally fragile; if eight or more sectors are strong, the uptrend is broadly founded. Comparing this with the RRG module is instructive for rotation analysis."] },
+  regime: {
+    de: ["Breiten-Regime",
+      "Eine Gesamteinschätzung aus fünf Faktoren: Anteil über MA200, McClellan Oszillator, Steigung der AD-Linie über einen Monat, Netto neue Hochs/Tiefs und Vorzeichen des Summation Index. Die Skala reicht von breiter Stärke über gesund, gemischt und abschwächend bis zum Washout. Das Regime ist ein Kontextfilter, kein Timing-Signal: Es sagt, in welchem Umfeld Einzelsignale zu bewerten sind."],
+    en: ["Breadth regime",
+      "An overall read from five factors: share above MA200, McClellan oscillator, one-month slope of the AD line, net new highs/lows and the sign of the summation index. The scale runs from broad strength through healthy, mixed and deteriorating to washout. The regime is a context filter, not a timing signal: it tells you in what environment individual signals should be judged."] },
+};
+
 // ── ÜBERSETZUNGEN ────────────────────────────────────────────────────────────
 const T = {
   de: {
     title: "MARKET BREADTH",
-    sub: "Marktbreite aus Einzelwerten berechnet · Advance/Decline · McClellan · Anteil über MA50/MA200 · neue Hochs/Tiefs",
+    sub: "Marktbreite direkt aus den Einzelwerten berechnet",
     loading: "BERECHNE MARKTBREITE", universe: "TITEL IM UNIVERSUM",
     above200: "Über MA200", above50: "Über MA50", mcOsc: "McClellan Oszillator",
     mcSum: "McClellan Summation", adLine: "Advance/Decline-Linie", netHL: "Netto neue Hochs/Tiefs",
     advDec: "Advances / Declines", participation: "SEKTOR-BETEILIGUNG",
     partHint: "Anteil der Titel je Sektor über der 200-Tage-Linie",
-    range: "ZEITRAUM", regime: "REGIME",
+    range: "ZEITRAUM", regime: "REGIME", explain: "Kennzahl anklicken für die Erklärung", close: "Schließen",
     hint200: "Unter 40 % gilt als Warnzone, unter 20 % als Kapitulationsbereich",
     hintOsc: "Über 0 = Breite verbessert sich · unter −50 = überverkauft · über +50 = überkauft",
     hintAd: "Steigt die Linie, während der Index fällt, spricht das für einen nahen Boden",
@@ -258,13 +303,13 @@ const T = {
   },
   en: {
     title: "MARKET BREADTH",
-    sub: "Breadth computed from constituents · Advance/Decline · McClellan · % above MA50/MA200 · new highs/lows",
+    sub: "Breadth computed directly from the constituents",
     loading: "COMPUTING BREADTH", universe: "NAMES IN UNIVERSE",
     above200: "Above MA200", above50: "Above MA50", mcOsc: "McClellan Oscillator",
     mcSum: "McClellan Summation", adLine: "Advance/Decline Line", netHL: "Net New Highs/Lows",
     advDec: "Advances / Declines", participation: "SECTOR PARTICIPATION",
     partHint: "Share of names per sector above the 200-day line",
-    range: "RANGE", regime: "REGIME",
+    range: "RANGE", regime: "REGIME", explain: "Click a metric for the explanation", close: "Close",
     hint200: "Below 40% is a warning zone, below 20% capitulation territory",
     hintOsc: "Above 0 = breadth improving · below −50 oversold · above +50 overbought",
     hintAd: "If the line rises while the index falls, that argues for a nearby bottom",
@@ -280,6 +325,7 @@ export default function Breadth({ lang = "de" }) {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
   const [range, setRange] = useState(252);
+  const [explain, setExplain] = useState(null);
   const cacheRef = useRef({});
 
   useEffect(() => {
@@ -351,7 +397,7 @@ export default function Breadth({ lang = "de" }) {
             ))}
           </div>
         </div>
-        <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11, color: "#b99c64", letterSpacing: "0.04em", marginBottom: 16 }}>{t.sub}</div>
+        <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11, color: "#b99c64", letterSpacing: "0.04em", marginBottom: 16 }}>{t.sub}<span style={{ marginLeft: 10, color: C.textFaint }}>ⓘ {t.explain}</span></div>
 
         {error && (
           <div style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "14px 18px", marginBottom: 14, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#f87171" }}>{error}</div>
@@ -363,78 +409,107 @@ export default function Breadth({ lang = "de" }) {
           </div>
         ) : b && (
           <>
-            {/* REGIME + KENNZAHLEN */}
+            {/* REGIME */}
             {R && (
-              <div style={{ ...glass, padding: "16px 20px", marginBottom: 14, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14 }}>
-                <span style={{ width: 15, height: 15, borderRadius: "50%", background: R.color, boxShadow: `0 0 12px ${R.color}` }} />
-                <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 21, letterSpacing: "0.16em", color: R.color }}>{R[lang][0]}</span>
-                <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11, color: "#9a9a9a", flex: "1 1 320px", lineHeight: 1.6 }}>{R[lang][1]}</span>
+              <div onClick={() => setExplain("regime")}
+                style={{ ...glass, padding: "16px 22px", marginBottom: 14, display: "flex", flexWrap: "wrap",
+                  alignItems: "center", gap: 15, cursor: "pointer", borderColor: `${R.color}33` }}>
+                <span style={{ width: 14, height: 14, borderRadius: "50%", background: R.color, boxShadow: `0 0 13px ${R.color}` }} />
+                <span style={{ fontFamily: F.display, fontSize: 21, letterSpacing: "0.16em", color: R.color }}>{R[lang][0]}</span>
+                <span style={{ fontFamily: F.ui, fontSize: 11, color: C.textDim, flex: "1 1 340px", lineHeight: 1.6 }}>{R[lang][1]}</span>
+                <span style={{ color: C.textFaint, fontSize: 10 }}>ⓘ</span>
               </div>
             )}
 
+            {/* KENNZAHLEN — nur Werte, Erklärung per Klick */}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
-              {stat(t.above200, pct200 == null ? "—" : `${pct200.toFixed(0)}%`, colFor(pct200, 40, 60), t.hint200)}
-              {stat(t.above50, pct50 == null ? "—" : `${pct50.toFixed(0)}%`, colFor(pct50, 35, 60))}
-              {stat(t.mcOsc, osc == null ? "—" : osc.toFixed(0), osc == null ? "#555" : osc > 0 ? "#22c55e" : "#ef4444", t.hintOsc)}
-              {stat(t.mcSum, sum == null ? "—" : sum.toFixed(0), sum == null ? "#555" : sum > 0 ? "#22c55e" : "#ef4444")}
-              {stat(t.netHL, netHL == null ? "—" : (netHL > 0 ? "+" : "") + netHL, netHL == null ? "#555" : netHL > 0 ? "#22c55e" : "#ef4444")}
+              {[
+                ["pctMa200", t.above200, pct200 == null ? "—" : `${pct200.toFixed(0)}%`, colFor(pct200, 40, 60)],
+                ["pctMa50",  t.above50,  pct50 == null ? "—" : `${pct50.toFixed(0)}%`,  colFor(pct50, 35, 60)],
+                ["mcOsc",    t.mcOsc,    osc == null ? "—" : osc.toFixed(0), osc == null ? C.textMute : osc > 0 ? C.green : C.red],
+                ["mcSum",    t.mcSum,    sum == null ? "—" : sum.toFixed(0), sum == null ? C.textMute : sum > 0 ? C.green : C.red],
+                ["netHL",    t.netHL,    netHL == null ? "—" : (netHL > 0 ? "+" : "") + netHL, netHL == null ? C.textMute : netHL > 0 ? C.green : C.red],
+              ].map(([key, label, value, color]) => (
+                <div key={key} onClick={() => setExplain(key)}
+                  style={{ flex: "1 1 190px", padding: "15px 20px", borderRadius: 13, cursor: "pointer",
+                    background: C.bgRaised, border: `1px solid ${color}2e`, transition: "border-color 0.2s" }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor = `${color}66`}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = `${color}2e`}>
+                  <div style={{ ...overline(), marginBottom: 9, display: "flex", alignItems: "center", gap: 6 }}>
+                    {label}<span style={{ color: C.textFaint, fontSize: 8 }}>ⓘ</span>
+                  </div>
+                  <div style={{ fontFamily: F.mono, fontSize: 27, fontWeight: 500, color }}>{value}</div>
+                </div>
+              ))}
             </div>
 
-            {/* CHARTS */}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
-              <div style={{ ...glass, flex: "1 1 520px", padding: "14px 16px 8px" }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
-                  <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.18em", color: "#fdfdfd" }}>{t.above200}</span>
-                  <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, color: "#4a4a4a" }}>{t.hint200}</span>
+            {/* CHARTS — zwei Spalten, volle Höhe */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(560px, 1fr))", gap: 14, marginBottom: 14 }}>
+              {[
+                ["pctMa200", t.above200, slice(b.pctMa200), C.blue, { bands: [20, 40, 60, 80], fmt: v => `${v.toFixed(0)}%` }],
+                ["adLine",   t.adLine,   slice(b.adLine),   C.gold, {}],
+                ["mcOsc",    t.mcOsc,    slice(b.mcOsc),    "#f472b6", { zeroLine: true }],
+                ["netHL",    t.netHL,    slice(b.netNewHL), "#2dd4bf", { zeroLine: true }],
+              ].map(([key, label, values, color, opts]) => (
+                <div key={key} style={{ ...glass, padding: "16px 18px 10px" }}>
+                  <div onClick={() => setExplain(key)}
+                    style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 10, cursor: "pointer" }}>
+                    <span style={{ fontFamily: F.display, fontSize: 16, letterSpacing: "0.18em", color: "#fdfdfd" }}>{label}</span>
+                    <span style={{ color: C.textFaint, fontSize: 9 }}>ⓘ</span>
+                  </div>
+                  <LineChart values={values} ts={slice(b.ts)} color={color} height={230} {...opts} />
                 </div>
-                <LineChart values={slice(b.pctMa200)} ts={slice(b.ts)} color="#63b6ff" bands={[20, 40, 60, 80]} fmt={v => `${v.toFixed(0)}%`} />
-              </div>
-              <div style={{ ...glass, flex: "1 1 520px", padding: "14px 16px 8px" }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
-                  <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.18em", color: "#fdfdfd" }}>{t.adLine}</span>
-                  <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, color: "#4a4a4a" }}>{t.hintAd}</span>
-                </div>
-                <LineChart values={slice(b.adLine)} ts={slice(b.ts)} color={GOLD} />
-              </div>
-              <div style={{ ...glass, flex: "1 1 520px", padding: "14px 16px 8px" }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
-                  <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.18em", color: "#fdfdfd" }}>{t.mcOsc}</span>
-                  <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, color: "#4a4a4a" }}>{t.hintOsc}</span>
-                </div>
-                <LineChart values={slice(b.mcOsc)} ts={slice(b.ts)} color="#f472b6" zeroLine />
-              </div>
-              <div style={{ ...glass, flex: "1 1 520px", padding: "14px 16px 8px" }}>
-                <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.18em", color: "#fdfdfd", marginBottom: 4 }}>{t.netHL}</div>
-                <LineChart values={slice(b.netNewHL)} ts={slice(b.ts)} color="#2dd4bf" zeroLine />
-              </div>
+              ))}
             </div>
 
             {/* SEKTOR-BETEILIGUNG */}
-            <div style={{ ...glass, padding: "18px 22px 16px" }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
-                <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.2em", color: "#fdfdfd" }}>{t.participation}</span>
-                <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, color: "#4a4a4a" }}>{t.partHint}</span>
+            <div style={{ ...glass, padding: "20px 22px 18px" }}>
+              <div onClick={() => setExplain("participation")}
+                style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, cursor: "pointer" }}>
+                <span style={{ fontFamily: F.display, fontSize: 17, letterSpacing: "0.2em", color: "#fdfdfd" }}>{t.participation}</span>
+                <span style={{ color: C.textFaint, fontSize: 9 }}>ⓘ</span>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 11 }}>
-                {Object.entries(b.sectorPct)
-                  .filter(([, v]) => v)
-                  .sort((a, c) => c[1].pct - a[1].pct)
-                  .map(([sec, v]) => (
-                    <div key={sec} style={{ padding: "11px 14px", borderRadius: 12, background: "rgba(255,255,255,0.025)", border: `1px solid ${SECTOR_COLORS[sec]}30` }}>
-                      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
-                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, fontWeight: 700, letterSpacing: "0.12em", color: SECTOR_COLORS[sec] }}>{sec}</span>
-                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, color: "#5a5a5a" }}>{SECTOR_NAMES[sec]}</span>
-                        <span style={{ marginLeft: "auto", fontFamily: "'DM Mono', monospace", fontSize: 14, fontWeight: 700, color: colFor(v.pct, 40, 60) }}>{v.pct.toFixed(0)}%</span>
-                      </div>
-                      <div style={{ height: 5, borderRadius: 3, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
-                        <div style={{ width: `${v.pct}%`, height: "100%", background: SECTOR_COLORS[sec], opacity: 0.85 }} />
-                      </div>
-                      <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8.5, color: "#4a4a4a", marginTop: 6 }}>{v.above} / {v.total}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 12 }}>
+                {Object.entries(b.sectorPct).filter(([, v]) => v).sort((a, c) => c[1].pct - a[1].pct).map(([sec, v]) => (
+                  <div key={sec} style={{ padding: "13px 16px", borderRadius: 12, background: C.bgRaised, border: `1px solid ${SECTOR_COLORS[sec]}2e` }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 9, marginBottom: 10 }}>
+                      <span style={{ fontFamily: F.ui, fontSize: 10, fontWeight: 700, letterSpacing: "0.14em", color: SECTOR_COLORS[sec] }}>{sec}</span>
+                      <span style={{ fontFamily: F.ui, fontSize: 9, color: C.textMute }}>{SECTOR_NAMES[sec]}</span>
+                      <span style={{ marginLeft: "auto", fontFamily: F.mono, fontSize: 16, fontWeight: 600, color: colFor(v.pct, 40, 60) }}>{v.pct.toFixed(0)}%</span>
                     </div>
-                  ))}
+                    <div style={{ height: 6, borderRadius: 3, background: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
+                      <div style={{ width: `${v.pct}%`, height: "100%", background: SECTOR_COLORS[sec], opacity: 0.85 }} />
+                    </div>
+                    <div style={{ fontFamily: F.mono, fontSize: 9, color: C.textFaint, marginTop: 8 }}>{v.above} / {v.total}</div>
+                  </div>
+                ))}
               </div>
             </div>
           </>
+        )}
+
+        {/* ERKLÄRUNGS-POPUP */}
+        {explain && GLOSSARY[explain] && (
+          <div onClick={() => setExplain(null)}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(12px)",
+              WebkitBackdropFilter: "blur(12px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: 20 }}>
+            <div onClick={e => e.stopPropagation()}
+              style={{ ...glass, background: "rgba(14,14,14,0.98)", maxWidth: 620, width: "100%", padding: "26px 30px 24px" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 14 }}>
+                <div>
+                  <div style={{ ...overline(C.goldDim), marginBottom: 8 }}>VisionX Analytics</div>
+                  <div style={{ fontFamily: F.display, fontSize: 23, letterSpacing: "0.12em", color: "#fdfdfd" }}>
+                    {GLOSSARY[explain][lang][0]}
+                  </div>
+                </div>
+                <button onClick={() => setExplain(null)} title={t.close}
+                  style={{ marginLeft: "auto", background: "none", border: "none", color: C.textFaint, cursor: "pointer", fontSize: 17 }}>✕</button>
+              </div>
+              <div style={{ fontFamily: F.ui, fontSize: 12, color: "#a8a8a8", lineHeight: 1.8 }}>
+                {GLOSSARY[explain][lang][1]}
+              </div>
+            </div>
+          </div>
         )}
 
         <div style={{ marginTop: 16, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
