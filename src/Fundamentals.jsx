@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
 import { evaluate, lightFor, LIGHTS, CATEGORY_LIST, benchFor } from "./scoring";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -283,20 +284,8 @@ export default function Fundamentals({ lang = "de" }) {
     a.click();
   };
 
-  const glass = {
-    background: "linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015) 55%, rgba(212,175,55,0.02))",
-    border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20,
-    backdropFilter: "blur(22px) saturate(150%)", WebkitBackdropFilter: "blur(22px) saturate(150%)",
-    boxShadow: "0 14px 44px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)",
-  };
-  const pill = (active) => ({
-    padding: "8px 16px", borderRadius: 10, cursor: "pointer", fontFamily: "'Montserrat', sans-serif",
-    fontSize: 9.5, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase",
-    background: active ? "linear-gradient(135deg, rgba(212,175,55,0.16), rgba(212,175,55,0.07))" : "rgba(255,255,255,0.03)",
-    border: `1px solid ${active ? "rgba(212,175,55,0.5)" : "rgba(255,255,255,0.08)"}`,
-    color: active ? "#f8e49b" : "#777", transition: "all 0.25s cubic-bezier(0.22,1,0.36,1)",
-    boxShadow: active ? "0 0 18px rgba(212,175,55,0.12)" : "none",
-  });
+  const glass = panel();
+  const pill = (active) => btnGhost(active);
   const th = (key, label, align = "right") => (
     <th onClick={() => setSortKey(key)}
       style={{ padding: "7px 10px", textAlign: align, cursor: "pointer", userSelect: "none",
@@ -309,10 +298,7 @@ export default function Fundamentals({ lang = "de" }) {
 
   return (
     <div style={{ position: "relative", overflow: "hidden", minHeight: "calc(100vh - 76px)" }}>
-      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}>
-        <div style={{ position: "absolute", top: -220, right: "-6%", width: 820, height: 820, borderRadius: "50%", background: "radial-gradient(circle, rgba(212,175,55,0.06), transparent 62%)", filter: "blur(50px)" }} />
-        <div style={{ position: "absolute", bottom: -320, left: "-10%", width: 880, height: 880, borderRadius: "50%", background: "radial-gradient(circle, rgba(99,182,255,0.035), transparent 62%)", filter: "blur(60px)" }} />
-      </div>
+      <Ambient tint="rgba(99,182,255,0.03)" />
 
       <style>{`
         @keyframes vsxpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
@@ -322,12 +308,13 @@ export default function Fundamentals({ lang = "de" }) {
         .vsx-fund-scroll::-webkit-scrollbar-thumb { background: rgba(212,175,55,0.25); border-radius: 4px; }
         .vsx-fund-scroll::-webkit-scrollbar-track { background: transparent; }
       `}</style>
-      <div style={{ position: "relative", zIndex: 1, maxWidth: 1840, margin: "0 auto", padding: "22px 30px 50px" }}>
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 1880, margin: "0 auto", padding: "26px 34px 60px" }}>
         {/* KOPF */}
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 16, marginBottom: 6 }}>
-          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 30, letterSpacing: "0.18em", color: "#fdfdfd" }}>
+          <div><div style={{ ...overline(C.goldDim), marginBottom: 7 }}>VisionX Analytics</div>
+          <div style={{ ...displayTitle(31) }}>
             FUNDAMENTAL CHECK
-          </div>
+          </div></div>
           <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#555", letterSpacing: "0.1em" }}>
             {rows.length} {L.symbols}
           </div>
@@ -457,7 +444,7 @@ export default function Fundamentals({ lang = "de" }) {
         </div>
 
         {/* TABELLE */}
-        <div className="vsx-fund-scroll" style={{ ...glass, padding: "16px 18px 14px", overflowX: "auto" }}>
+        <div className="vsx-fund-scroll" style={{ ...glass, padding: "16px 18px 14px", overflowX: "auto" }} className="vsx-scroll">
           {rows.length === 0 && !loading ? (
             <div style={{ padding: 80, textAlign: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.3em", color: "#262626" }}>
               TICKER EINGEBEN
@@ -465,7 +452,7 @@ export default function Fundamentals({ lang = "de" }) {
           ) : (
             <table className="vsx-fund-table" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
               <thead>
-                <tr style={{ fontSize: 8.5, letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, textTransform: "uppercase" }}>
+                <tr style={{ ...tableHead }}>
                   {th("symbol", "Symbol", "left")}
                   <th style={{ padding: "7px 10px", textAlign: "left", color: "#555" }}>{L.name}</th>
                   {ratingView && th("sector", "Sector / Industry", "left")}

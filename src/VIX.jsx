@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · VIX OPPORTUNITY MAP v2
@@ -404,32 +405,19 @@ export default function VIX({ lang = "de" }) {
     ? `${new Date(candles[0][0]).toLocaleDateString("en-US", { month: "short", year: "numeric" })} – ${new Date(candles[candles.length - 1][0]).toLocaleDateString("en-US", { month: "short", year: "numeric" })}`
     : "";
 
-  const glass = {
-    background: "linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015) 55%, rgba(212,175,55,0.02))",
-    border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20,
-    backdropFilter: "blur(22px) saturate(150%)", WebkitBackdropFilter: "blur(22px) saturate(150%)",
-    boxShadow: "0 14px 44px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)",
-  };
-  const pill = (active) => ({
-    padding: "8px 15px", borderRadius: 10, cursor: "pointer", fontFamily: "'Montserrat', sans-serif",
-    fontSize: 9.5, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase",
-    background: active ? "linear-gradient(135deg, rgba(212,175,55,0.16), rgba(212,175,55,0.07))" : "rgba(255,255,255,0.03)",
-    border: `1px solid ${active ? "rgba(212,175,55,0.5)" : "rgba(255,255,255,0.08)"}`,
-    color: active ? "#f8e49b" : "#777", transition: "all 0.25s cubic-bezier(0.22,1,0.36,1)",
-  });
+  const glass = panel();
+  const pill = (active) => btnGhost(active);
 
   return (
     <div style={{ position: "relative", overflow: "hidden", minHeight: "calc(100vh - 76px)" }}>
-      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}>
-        <div style={{ position: "absolute", top: -220, right: "-6%", width: 820, height: 820, borderRadius: "50%", background: "radial-gradient(circle, rgba(212,175,55,0.06), transparent 62%)", filter: "blur(50px)" }} />
-        <div style={{ position: "absolute", bottom: -320, left: "-10%", width: 880, height: 880, borderRadius: "50%", background: "radial-gradient(circle, rgba(239,68,68,0.035), transparent 62%)", filter: "blur(60px)" }} />
-      </div>
+      <Ambient tint="rgba(240,80,110,0.03)" />
 
-      <div style={{ position: "relative", zIndex: 1, maxWidth: 1840, margin: "0 auto", padding: "22px 30px 50px" }}>
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 1880, margin: "0 auto", padding: "26px 34px 60px" }}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 16, marginBottom: 6 }}>
-          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 30, letterSpacing: "0.18em", color: "#fdfdfd" }}>
+          <div><div style={{ ...overline(C.goldDim), marginBottom: 7 }}>VisionX Analytics</div>
+          <div style={{ ...displayTitle(31) }}>
             VIX OPPORTUNITY MAP
-          </div>
+          </div></div>
           {curZone && (
             <div style={{ display: "flex", alignItems: "center", gap: 9, fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.08em" }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: curZone.color, boxShadow: `0 0 9px ${curZone.color}` }} />

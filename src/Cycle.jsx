@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · SPX SECTOR CYCLE
@@ -366,12 +367,7 @@ export default function Cycle({ lang = "de" }) {
 
   const sel = STAGES.find(s => s.n === selected);
 
-  const glass = {
-    background: "linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015) 55%, rgba(212,175,55,0.02))",
-    border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20,
-    backdropFilter: "blur(22px) saturate(150%)", WebkitBackdropFilter: "blur(22px) saturate(150%)",
-    boxShadow: "0 14px 44px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)",
-  };
+  const glass = panel();
 
   const cellBase = (col) => ({
     padding: "11px 10px", textAlign: "center", cursor: "pointer",
@@ -407,17 +403,15 @@ export default function Cycle({ lang = "de" }) {
 
   return (
     <div style={{ position: "relative", overflow: "hidden", minHeight: "calc(100vh - 76px)" }}>
-      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}>
-        <div style={{ position: "absolute", top: -220, right: "-6%", width: 820, height: 820, borderRadius: "50%", background: "radial-gradient(circle, rgba(212,175,55,0.06), transparent 62%)", filter: "blur(50px)" }} />
-        <div style={{ position: "absolute", bottom: -320, left: "-10%", width: 880, height: 880, borderRadius: "50%", background: "radial-gradient(circle, rgba(99,182,255,0.035), transparent 62%)", filter: "blur(60px)" }} />
-      </div>
+      <Ambient tint="rgba(99,182,255,0.03)" />
 
-      <div style={{ position: "relative", zIndex: 1, maxWidth: 1840, margin: "0 auto", padding: "22px 30px 50px" }}>
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 1880, margin: "0 auto", padding: "26px 34px 60px" }}>
         {/* HEADER */}
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 16, marginBottom: 6 }}>
-          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 30, letterSpacing: "0.18em", color: "#fdfdfd" }}>
+          <div><div style={{ ...overline(C.goldDim), marginBottom: 7 }}>VisionX Analytics</div>
+          <div style={{ ...displayTitle(31) }}>
             SPX SECTOR CYCLE
-          </div>
+          </div></div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {Object.entries(CYCLE_TFS).map(([id, tf]) => (
               <button key={id} onClick={() => { setCycleTf(id); setExpandedScore(null); }} title={tf.sub}

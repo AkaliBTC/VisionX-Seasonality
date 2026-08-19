@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
 import { createPortal } from "react-dom";
+import { SPX_BY_SECTOR } from "./constituents";
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · RELATIVE ROTATION GRAPH v4
@@ -12,19 +14,22 @@ const GOLD = "#d4af37";
 const PACK_STORAGE_KEY = "vsx_rrg_pack_v2";
 
 // ── SEKTOR-KONFIG ────────────────────────────────────────────────────────────
-const SECTORS = [
-  { etf: "XLK",  name: "Technology",    holdings: ["MSFT","AAPL","NVDA","AVGO","CRM","ORCL","AMD","ADBE","CSCO","ACN"] },
-  { etf: "XLF",  name: "Financials",    holdings: ["BRK-B","JPM","V","MA","BAC","WFC","GS","MS","SPGI","AXP"] },
-  { etf: "XLV",  name: "Health Care",   holdings: ["LLY","UNH","JNJ","ABBV","MRK","TMO","ABT","AMGN","ISRG","PFE"] },
-  { etf: "XLY",  name: "Cons. Discr.",  holdings: ["AMZN","TSLA","HD","MCD","BKNG","LOW","TJX","NKE","SBUX","CMG"] },
-  { etf: "XLP",  name: "Cons. Staples", holdings: ["PG","COST","WMT","KO","PEP","PM","MDLZ","MO","CL","TGT"] },
-  { etf: "XLE",  name: "Energy",        holdings: ["XOM","CVX","COP","WMB","EOG","SLB","PSX","MPC","KMI","OKE"] },
-  { etf: "XLI",  name: "Industrials",   holdings: ["GE","CAT","UBER","RTX","HON","UNP","ETN","BA","DE","LMT"] },
-  { etf: "XLB",  name: "Materials",     holdings: ["LIN","SHW","APD","ECL","FCX","NEM","CTVA","DD","DOW","PPG"] },
-  { etf: "XLRE", name: "Real Estate",   holdings: ["PLD","AMT","EQIX","WELL","SPG","PSA","O","CCI","DLR","VICI"] },
-  { etf: "XLU",  name: "Utilities",     holdings: ["NEE","SO","DUK","CEG","SRE","AEP","D","PCG","EXC","XEL"] },
-  { etf: "XLC",  name: "Comm. Serv.",   holdings: ["META","GOOGL","NFLX","DIS","CMCSA","T","VZ","TMUS","EA","WBD"] },
+const SECTOR_META = [
+  { etf: "XLK",  name: "Technology" },
+  { etf: "XLF",  name: "Financials" },
+  { etf: "XLV",  name: "Health Care" },
+  { etf: "XLY",  name: "Cons. Discr." },
+  { etf: "XLP",  name: "Cons. Staples" },
+  { etf: "XLE",  name: "Energy" },
+  { etf: "XLI",  name: "Industrials" },
+  { etf: "XLB",  name: "Materials" },
+  { etf: "XLRE", name: "Real Estate" },
+  { etf: "XLU",  name: "Utilities" },
+  { etf: "XLC",  name: "Comm. Serv." },
 ];
+// Holdings kommen aus der zentralen Konstituenten-Liste (voller S&P 500)
+const SECTORS = SECTOR_META.map(s => ({ ...s, holdings: SPX_BY_SECTOR[s.etf] || [] }));
+
 
 // ── PRESETS ──────────────────────────────────────────────────────────────────
 const PRESETS = [
@@ -921,20 +926,8 @@ export default function RRG({ lang = "de" }) {
   const headDate = items[0]?.tail?.[items[0].tail.length - 1]?.t;
 
   // ── STYLES ─────────────────────────────────────────────────────────────────
-  const glass = {
-    background: "linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015) 55%, rgba(212,175,55,0.02))",
-    border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20,
-    backdropFilter: "blur(22px) saturate(150%)", WebkitBackdropFilter: "blur(22px) saturate(150%)",
-    boxShadow: "0 14px 44px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)",
-  };
-  const pill = (active) => ({
-    padding: "9px 18px", borderRadius: 11, cursor: "pointer", fontFamily: "'Montserrat', sans-serif",
-    fontSize: 10, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase",
-    background: active ? "linear-gradient(135deg, rgba(212,175,55,0.16), rgba(212,175,55,0.07))" : "rgba(255,255,255,0.03)",
-    border: `1px solid ${active ? "rgba(212,175,55,0.5)" : "rgba(255,255,255,0.08)"}`,
-    color: active ? "#f8e49b" : "#777", transition: "all 0.25s cubic-bezier(0.22,1,0.36,1)",
-    boxShadow: active ? "0 0 18px rgba(212,175,55,0.12)" : "none",
-  });
+  const glass = panel();
+  const pill = (active) => btnGhost(active);
   const divider = { width: 1, height: 24, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)" };
   const th = (key, label, align = "left") => (
     <th onClick={() => setSortKey(key)}
@@ -946,16 +939,14 @@ export default function RRG({ lang = "de" }) {
   return (
     <div style={{ position: "relative", overflow: "hidden", minHeight: "calc(100vh - 76px)" }}>
       {/* AMBIENT */}
-      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}>
-        <div style={{ position: "absolute", top: -220, right: "-6%", width: 820, height: 820, borderRadius: "50%", background: "radial-gradient(circle, rgba(212,175,55,0.06), transparent 62%)", filter: "blur(50px)" }} />
-        <div style={{ position: "absolute", bottom: -320, left: "-10%", width: 880, height: 880, borderRadius: "50%", background: "radial-gradient(circle, rgba(99,182,255,0.04), transparent 62%)", filter: "blur(60px)" }} />
-      </div>
+      <Ambient tint="rgba(99,182,255,0.03)" />
 
       <div style={{ position: "relative", zIndex: 1, maxWidth: 1840, margin: "0 auto", padding: "20px 30px 50px" }}>
         {/* TITELZEILE */}
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 14, marginBottom: 12 }}>
-          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 27, letterSpacing: "0.2em", color: "#fdfdfd" }}>
-            RELATIVE ROTATION
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: 16, marginBottom: 12 }}>
+          <div>
+            <div style={{ ...overline(C.goldDim), marginBottom: 7 }}>VisionX Analytics</div>
+            <div style={{ ...displayTitle(31) }}>{T.title}</div>
           </div>
           <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.28em", color: "#b99c64", textTransform: "uppercase" }}>
             {drill ? `${drill} · ${drillSector.name}` : preset.label}
@@ -1120,9 +1111,9 @@ export default function RRG({ lang = "de" }) {
               <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.16em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>{items.length} {T.titles}</span>
             </div>
             <div style={{ overflowY: "auto", flex: 1, marginRight: -6, paddingRight: 6 }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 10.5 }}>
+              <table className="vsx-table" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 10.5 }}>
                 <thead style={{ position: "sticky", top: 0, background: "rgba(20,20,20,0.96)", backdropFilter: "blur(8px)", zIndex: 2 }}>
-                  <tr style={{ fontSize: 8, letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, textTransform: "uppercase" }}>
+                  <tr style={{ ...tableHead }}>
                     {th("alpha", "Symbol")}
                     {th("quad", "Quad")}
                     {th("rsr", "RS-L", "right")}
@@ -1170,9 +1161,9 @@ export default function RRG({ lang = "de" }) {
             <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.2em", color: "#fdfdfd", marginBottom: 12 }}>
               {T.memberDetail}
             </div>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
+            <table className="vsx-table" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
               <thead>
-                <tr style={{ fontSize: 8.5, letterSpacing: "0.16em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, textTransform: "uppercase" }}>
+                <tr style={{ ...tableHead }}>
                   <th style={{ padding: "6px 9px", textAlign: "left", color: "#555" }}>Tail</th>
                   {th("alpha", "Symbol")}
                   <th style={{ padding: "6px 9px", textAlign: "left", color: "#555" }}>Name</th>

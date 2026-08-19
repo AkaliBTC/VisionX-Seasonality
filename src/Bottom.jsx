@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
 import {
   VSX_STOCKS, VSX_STOCK_SECTOR, VSX_CRYPTO,
   VSX_COMMODITY_SYMBOLS, VSX_FOREX_SYMBOLS, VSX_INDEX_SYMBOLS, VSX_ETFS, VSX_LABELS,
 } from "./vsxTickers";
+import { SPX_BY_SECTOR, SPX_ALL, SPX_SECTOR_OF, DAX40, MDAX, DE_ALL, DE_SECTOR_OF } from "./constituents";
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · BOTTOM RADAR
@@ -15,25 +17,22 @@ const GOLD = "#d4af37";
 const STORAGE_KEY = "vsx_bottom_list_v1";
 
 // Alle 11 SPDR-Sektoren mit ihren Top-Holdings — Basis für die Sektor-Filter
-const SECTORS = {
-  XLK:  { name: "Technology",    members: ["MSFT","AAPL","NVDA","AVGO","CRM","ORCL","AMD","ADBE","CSCO","ACN","INTC","TXN","QCOM","NOW","INTU"] },
-  XLF:  { name: "Financials",    members: ["BRK-B","JPM","V","MA","BAC","WFC","GS","MS","SPGI","AXP","BLK","C","SCHW","CB","PGR"] },
-  XLV:  { name: "Health Care",   members: ["LLY","UNH","JNJ","ABBV","MRK","TMO","ABT","AMGN","ISRG","PFE","DHR","BMY","GILD","CVS","MDT"] },
-  XLY:  { name: "Cons. Discr.",  members: ["AMZN","TSLA","HD","MCD","BKNG","LOW","TJX","NKE","SBUX","CMG","ORLY","MAR","GM","F","DHI"] },
-  XLP:  { name: "Cons. Staples", members: ["PG","COST","WMT","KO","PEP","PM","MDLZ","MO","CL","TGT","KMB","GIS","STZ","SYY","KHC"] },
-  XLE:  { name: "Energy",        members: ["XOM","CVX","COP","WMB","EOG","SLB","PSX","MPC","KMI","OKE","VLO","HAL","BKR","OXY","DVN"] },
-  XLI:  { name: "Industrials",   members: ["GE","CAT","UBER","RTX","HON","UNP","ETN","BA","DE","LMT","ADP","UPS","CSX","NOC","EMR"] },
-  XLB:  { name: "Materials",     members: ["LIN","SHW","APD","ECL","FCX","NEM","CTVA","DD","DOW","PPG","NUE","VMC","MLM","ALB","IFF"] },
-  XLRE: { name: "Real Estate",   members: ["PLD","AMT","EQIX","WELL","SPG","PSA","O","CCI","DLR","VICI","EXR","AVB","IRM","SBAC","EQR"] },
-  XLU:  { name: "Utilities",     members: ["NEE","SO","DUK","CEG","SRE","AEP","D","PCG","EXC","XEL","ED","PEG","WEC","ES","AWK"] },
-  XLC:  { name: "Comm. Serv.",   members: ["META","GOOGL","NFLX","DIS","CMCSA","T","VZ","TMUS","EA","WBD","OMC","TTWO","LYV","MTCH","NWSA"] },
+const SECTOR_NAMES = {
+  XLK: "Technology", XLF: "Financials", XLV: "Health Care", XLY: "Cons. Discr.",
+  XLP: "Cons. Staples", XLE: "Energy", XLI: "Industrials", XLB: "Materials",
+  XLRE: "Real Estate", XLU: "Utilities", XLC: "Comm. Serv.",
 };
+const SECTORS = Object.fromEntries(
+  Object.entries(SECTOR_NAMES).map(([etf, name]) => [etf, { name, members: SPX_BY_SECTOR[etf] || [] }])
+);
 const ALL_SECTOR_ETFS = Object.keys(SECTORS);
-const ALL_HOLDINGS = [...new Set(Object.values(SECTORS).flatMap(s => s.members))];
+const ALL_HOLDINGS = SPX_ALL;
 
 const PRESETS = {
   "SECTOR ETFS": ALL_SECTOR_ETFS,
-  "ALL SPDR": [...ALL_SECTOR_ETFS, ...ALL_HOLDINGS],
+  "S&P 500": SPX_ALL,
+  "DAX 40": DAX40,
+  "DAX + MDAX": DE_ALL,
   "VSX STOCKS": VSX_STOCKS,
   "VSX CRYPTO": VSX_CRYPTO,
   "VSX COMMODITIES": VSX_COMMODITY_SYMBOLS,
@@ -51,6 +50,8 @@ Object.entries(SECTORS).forEach(([etf, s]) => {
   SECTOR_OF[etf] = etf;
   s.members.forEach(m => { if (!SECTOR_OF[m]) SECTOR_OF[m] = etf; });
 });
+Object.entries(SPX_SECTOR_OF).forEach(([sym, sec]) => { if (!SECTOR_OF[sym]) SECTOR_OF[sym] = sec; });
+Object.entries(DE_SECTOR_OF).forEach(([sym, sec]) => { if (!SECTOR_OF[sym]) SECTOR_OF[sym] = sec; });
 Object.entries(VSX_STOCK_SECTOR).forEach(([sym, sec]) => { if (!SECTOR_OF[sym]) SECTOR_OF[sym] = sec; });
 
 const SECTOR_COLORS = {
@@ -466,19 +467,8 @@ export default function Bottom({ lang = "de" }) {
     setInput("");
   };
 
-  const glass = {
-    background: "linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015) 55%, rgba(212,175,55,0.02))",
-    border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20,
-    backdropFilter: "blur(22px) saturate(150%)", WebkitBackdropFilter: "blur(22px) saturate(150%)",
-    boxShadow: "0 14px 44px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)",
-  };
-  const pill = (active) => ({
-    padding: "8px 16px", borderRadius: 10, cursor: "pointer", fontFamily: "'Montserrat', sans-serif",
-    fontSize: 9.5, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase",
-    background: active ? "linear-gradient(135deg, rgba(212,175,55,0.16), rgba(212,175,55,0.07))" : "rgba(255,255,255,0.03)",
-    border: `1px solid ${active ? "rgba(212,175,55,0.5)" : "rgba(255,255,255,0.08)"}`,
-    color: active ? "#f8e49b" : "#777", transition: "all 0.25s cubic-bezier(0.22,1,0.36,1)",
-  });
+  const glass = panel();
+  const pill = (active) => btnGhost(active);
   const th = (key, label, align = "right") => (
     <th onClick={() => setSortKey(key)}
       style={{ padding: "7px 10px", textAlign: align, cursor: "pointer", userSelect: "none", whiteSpace: "nowrap",
@@ -498,14 +488,12 @@ export default function Bottom({ lang = "de" }) {
         .vsx-bt-scroll::-webkit-scrollbar { height: 7px; }
         .vsx-bt-scroll::-webkit-scrollbar-thumb { background: rgba(212,175,55,0.25); border-radius: 4px; }
       `}</style>
-      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}>
-        <div style={{ position: "absolute", top: -220, right: "-6%", width: 820, height: 820, borderRadius: "50%", background: "radial-gradient(circle, rgba(212,175,55,0.06), transparent 62%)", filter: "blur(50px)" }} />
-        <div style={{ position: "absolute", bottom: -320, left: "-10%", width: 880, height: 880, borderRadius: "50%", background: "radial-gradient(circle, rgba(34,197,94,0.035), transparent 62%)", filter: "blur(60px)" }} />
-      </div>
+      <Ambient tint="rgba(63,207,142,0.03)" />
 
-      <div style={{ position: "relative", zIndex: 1, maxWidth: 1840, margin: "0 auto", padding: "22px 30px 50px" }}>
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 1880, margin: "0 auto", padding: "26px 34px 60px" }}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 16, marginBottom: 6 }}>
-          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 30, letterSpacing: "0.18em", color: "#fdfdfd" }}>{t.title}</div>
+          <div><div style={{ ...overline(C.goldDim), marginBottom: 7 }}>VisionX Analytics</div>
+          <div style={{ ...displayTitle(31) }}>{t.title}</div></div>
           <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#555", letterSpacing: "0.1em" }}>{rows.length} {t.symbols}</div>
           {(loading || cmcLoading) && (
             <span style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "'DM Mono', monospace", fontSize: 9.5, color: GOLD, letterSpacing: "0.14em" }}>
@@ -605,13 +593,13 @@ export default function Bottom({ lang = "de" }) {
         )}
 
         {/* TABELLE */}
-        <div className="vsx-bt-scroll" style={{ ...glass, padding: "16px 18px 14px", overflowX: "auto" }}>
+        <div className="vsx-bt-scroll" style={{ ...glass, padding: "16px 18px 14px", overflowX: "auto" }} className="vsx-scroll">
           {rows.length === 0 && !loading ? (
             <div style={{ padding: 80, textAlign: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.3em", color: "#262626" }}>—</div>
           ) : (
             <table className="vsx-bt" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
               <thead>
-                <tr style={{ fontSize: 8.5, letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, textTransform: "uppercase" }}>
+                <tr style={{ ...tableHead }}>
                   {th("symbol", "Symbol", "left")}
                   {th("sector", t.sector, "left")}
                   {th("score", t.score)}
