@@ -244,41 +244,58 @@ function signalsFor(candles, barsPerYear) {
   return { px, drawdown, rsi9: r9, distMa, volSpike, zScore, rangePos, streak, high52, low52, sig, score, adx: a };
 }
 
-// ── ANALYSE JE TITEL · 1D + 4D kombiniert ────────────────────────────────────
-// Gewichtung 4D:1D = 60:40 — der 4-Tage-Chart filtert Tagesrauschen und hat sich
-// in der VSX-Praxis als der aussagekräftigere Timeframe erwiesen.
-const W_D4 = 0.6, W_D1 = 0.4;
+// ── ANALYSE JE TITEL · vier Zeitebenen ──────────────────────────────────────
+// 1D · 4D · 2W (10 Handelstage) · 1M (21 Handelstage).
+// Der 4D-Chart hat sich in der VSX-Praxis als aussagekräftigster Timeframe
+// erwiesen und trägt deshalb das höchste Gewicht; 2W und 1M liefern den
+// übergeordneten Kontext, 1D die Feinauflösung.
+const TF_DEFS = [
+  { id: "d1",  agg: 1,  barsPerYear: 252, weight: 0.25 },
+  { id: "d4",  agg: 4,  barsPerYear: 63,  weight: 0.40 },
+  { id: "w2",  agg: 10, barsPerYear: 25,  weight: 0.20 },
+  { id: "m1",  agg: 21, barsPerYear: 12,  weight: 0.15 },
+];
+const TF_WEIGHT = Object.fromEntries(TF_DEFS.map(t => [t.id, t.weight]));
 
 function analyse(candles) {
   if (!candles || candles.length < 220) return null;
-  const d1 = signalsFor(candles, 252);
-  const d4 = signalsFor(aggregate(candles, 4), 63);
-  if (!d1 && !d4) return null;
 
-  let score = null;
-  if (d1?.score != null && d4?.score != null) score = Math.round(d4.score * W_D4 + d1.score * W_D1);
-  else score = d4?.score ?? d1?.score ?? null;
+  const tfs = {};
+  for (const t of TF_DEFS) {
+    tfs[t.id] = signalsFor(t.agg === 1 ? candles : aggregate(candles, t.agg), t.barsPerYear);
+  }
+  const avail = TF_DEFS.filter(t => tfs[t.id]?.score != null);
+  if (!avail.length) return null;
 
-  // Kombinierte Einzelsignale (gleiche Gewichtung) für die Detailansicht
+  // Gewichteter Gesamtscore über alle verfügbaren Zeitebenen
+  const wSum = avail.reduce((a, t) => a + t.weight, 0);
+  const score = Math.round(avail.reduce((a, t) => a + tfs[t.id].score * t.weight, 0) / wSum);
+
+  // Kombinierte Einzelsignale, gleiche Gewichtung
   const sig = {};
   for (const k of ["drawdown", "rsi", "distMa", "volume", "zScore", "range", "adx"]) {
-    const a = d4?.sig?.[k], b = d1?.sig?.[k];
-    sig[k] = a != null && b != null ? a * W_D4 + b * W_D1 : (a ?? b ?? null);
+    let num = 0, den = 0;
+    for (const t of TF_DEFS) {
+      const v = tfs[t.id]?.sig?.[k];
+      if (v != null) { num += v * t.weight; den += t.weight; }
+    }
+    sig[k] = den > 0 ? num / den : null;
   }
 
-  // Confluence: stimmen beide Timeframes überein?
-  const align = d1?.score != null && d4?.score != null
-    ? 100 - Math.min(100, Math.abs(d1.score - d4.score) * 2)
+  // Confluence: mittlere Abweichung der Zeitebenen vom Gesamtscore.
+  // 100 = alle Timeframes zeigen dasselbe Bild.
+  const align = avail.length >= 2
+    ? 100 - Math.min(100, (avail.reduce((a, t) => a + Math.abs(tfs[t.id].score - score), 0) / avail.length) * 2)
     : null;
 
-  const base = d1 || d4;
+  const base = tfs.d1 || tfs.d4 || tfs[avail[0].id];
   const closes = candles.map(c => c[4]);
   const lows = candles.map(c => c[3]);
   const last5Low = Math.min(...lows.slice(-5));
   const turning = base.rsi9 != null && base.rsi9 > 25
     && closes[closes.length - 1] > last5Low * 1.01 && sig.drawdown > 40;
 
-  return { ...base, sig, score, d1, d4, align, turning };
+  return { ...base, sig, score, ...tfs, align, turning };
 }
 
 // ── PHASEN ───────────────────────────────────────────────────────────────────
@@ -305,40 +322,40 @@ const phaseFor = (s) => s == null ? null : PHASES.find(p => s >= p.min) || PHASE
 // ── ÜBERSETZUNGEN ────────────────────────────────────────────────────────────
 const T = {
   de: {
-    title: "BOTTOM RADAR", sub: "Kapitulations-Screening auf 1D und 4D · RSI-9 · Drawdown · Volumenklimax · MA-Abstand",
+    title: "BOTTOM RADAR", sub: "Kapitulations-Screening auf 1D · 4D · 2W · 1M · RSI-9 · Drawdown · Volumenklimax · MA-Abstand",
     add: "+ HINZU", clear: "Leeren", researching: "LADE", symbols: "TITEL",
     score: "Score", phase: "Phase", price: "Kurs", dd: "Drawdown", rsi: "RSI-9",
     ma: "vs MA200", vol: "Vol-Spike", z: "Z-Score", pos: "52W-Pos", streak: "Rote Tage",
     signals: "SIGNALE", summary: "RESÜMEE", turning: "STABILISIERT",
     sector: "Sektor", allSectors: "ALLE", filter: "SEKTOR-FILTER", tf: "TIMEFRAME",
-    d1: "1D", d4: "4D", combined: "KOMB.", align: "Confluence",
-    alignHint: "Übereinstimmung zwischen 1D und 4D — hohe Werte heißen: beide Zeitebenen zeigen dasselbe Bild",
-    weights: "Gewichtung 4D 60 % · 1D 40 %", onlyTurning: "NUR STABILISIERT",
+    d1: "1D", d4: "4D", w2: "2W", m1: "1M", combined: "KOMB.", align: "Confluence",
+    alignHint: "Übereinstimmung aller Zeitebenen — hohe Werte heißen: 1D, 4D, 2W und 1M zeigen dasselbe Bild",
+    weights: "Gewichtung 4D 40 % · 1D 25 % · 2W 20 % · 1M 15 %", onlyTurning: "NUR STABILISIERT",
     sigNames: { drawdown: "Drawdown vom Hoch", rsi: "RSI-9 überverkauft", distMa: "Abstand zur MA200",
       volume: "Volumen-Klimax", zScore: "Statistische Überdehnung", range: "Position 52W-Spanne",
       adx: "Trend-Erschöpfung (VSX-ADX)" },
     adxCol: "ADX", diCol: "DI", regimeCol: "ADX-Regime", rollover: "CLIMAX-ROLLOVER",
     adxHint: "ADX misst die Trendstärke, +DI/-DI die Richtung. Hoher ADX mit dominantem -DI, der abdreht, ist die klassische Erschöpfung eines Abwärtstrends.",
     notFound: "NICHT GEFUNDEN", hint: "Yahoo-Schreibweise prüfen (z.B. BAS.DE, BTC-USD)",
-    footer: "Capitulation Score = sechs Washout-Signale, berechnet auf 1D und 4D, gewichtet 40/60 (0–100). Kein Kaufsignal, sondern eine Rangfolge der Erschöpfung. Ein tiefer Score ersetzt weder Struktur- noch Fundamentalanalyse.",
+    footer: "Capitulation Score = sieben Washout-Signale, berechnet auf 1D, 4D, 2W und 1M, gewichtet 25/40/20/15 (0–100). Kein Kaufsignal, sondern eine Rangfolge der Erschöpfung. Ein tiefer Score ersetzt weder Struktur- noch Fundamentalanalyse.",
   },
   en: {
-    title: "BOTTOM RADAR", sub: "Capitulation screening on 1D and 4D · RSI-9 · Drawdown · Volume climax · MA distance",
+    title: "BOTTOM RADAR", sub: "Capitulation screening on 1D · 4D · 2W · 1M · RSI-9 · Drawdown · Volume climax · MA distance",
     add: "+ ADD", clear: "Clear", researching: "LOADING", symbols: "SYMBOLS",
     score: "Score", phase: "Phase", price: "Price", dd: "Drawdown", rsi: "RSI-9",
     ma: "vs MA200", vol: "Vol Spike", z: "Z-Score", pos: "52W Pos", streak: "Down Days",
     signals: "SIGNALS", summary: "SUMMARY", turning: "STABILISING",
     sector: "Sector", allSectors: "ALL", filter: "SECTOR FILTER", tf: "TIMEFRAME",
-    d1: "1D", d4: "4D", combined: "COMB.", align: "Confluence",
-    alignHint: "Agreement between 1D and 4D — high values mean both timeframes show the same picture",
-    weights: "Weighting 4D 60% · 1D 40%", onlyTurning: "TURNING ONLY",
+    d1: "1D", d4: "4D", w2: "2W", m1: "1M", combined: "COMB.", align: "Confluence",
+    alignHint: "Agreement across all timeframes — high values mean 1D, 4D, 2W and 1M show the same picture",
+    weights: "Weighting 4D 40% · 1D 25% · 2W 20% · 1M 15%", onlyTurning: "TURNING ONLY",
     sigNames: { drawdown: "Drawdown from high", rsi: "RSI-9 oversold", distMa: "Distance to MA200",
       volume: "Volume climax", zScore: "Statistical stretch", range: "Position in 52W range",
       adx: "Trend exhaustion (VSX-ADX)" },
     adxCol: "ADX", diCol: "DI", regimeCol: "ADX regime", rollover: "CLIMAX ROLLOVER",
     adxHint: "ADX measures trend strength, +DI/-DI the direction. A high ADX with dominant -DI that rolls over is the classic exhaustion of a downtrend.",
     notFound: "NOT FOUND", hint: "Check Yahoo notation (e.g. BAS.DE, BTC-USD)",
-    footer: "Capitulation Score = six washout signals computed on 1D and 4D, weighted 40/60 (0–100). Not a buy signal but a ranking of exhaustion. A deep score replaces neither structural nor fundamental analysis.",
+    footer: "Capitulation Score = seven washout signals computed on 1D, 4D, 2W and 1M, weighted 25/40/20/15 (0–100). Not a buy signal but a ranking of exhaustion. A deep score replaces neither structural nor fundamental analysis.",
   },
 };
 
@@ -535,7 +552,7 @@ export default function Bottom({ lang = "de" }) {
         {rows.length > 0 && (
           <div style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 9, padding: "12px 18px", marginBottom: 14 }}>
             <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#777" }}>{t.tf}</span>
-            {[["combined", t.combined], ["d4", t.d4], ["d1", t.d1]].map(([id, lbl]) => (
+            {[["combined", t.combined], ["d1", t.d1], ["d4", t.d4], ["w2", t.w2], ["m1", t.m1]].map(([id, lbl]) => (
               <button key={id} style={pill(tfView === id)} onClick={() => setTfView(id)}
                 title={id === "combined" ? t.weights : ""}>{lbl}</button>
             ))}
@@ -718,9 +735,10 @@ export default function Bottom({ lang = "de" }) {
             <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11.5, color: "#9a9a9a", lineHeight: 1.7, marginBottom: 18 }}>
               {detail.phase?.[lang].desc}
             </div>
-            {(detail.d1 || detail.d4) && (
+            {(detail.d1 || detail.d4 || detail.w2 || detail.m1) && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
-                {[["d4", t.d4, W_D4], ["d1", t.d1, W_D1]].map(([k, lbl, w]) => {
+                {[["d1", t.d1], ["d4", t.d4], ["w2", t.w2], ["m1", t.m1]].map(([k, lbl]) => {
+                  const w = TF_WEIGHT[k];
                   const v = detail[k];
                   const ph = v?.score != null ? phaseFor(v.score) : null;
                   return (
