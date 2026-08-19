@@ -221,6 +221,22 @@ function LineChart({ values, ts, color = GOLD, zeroLine = false, bands = null, h
           {fmt(vals[vals.length - 1])}
         </text>
       )}
+      {/* Zeitmarken auf der X-Achse — bei voller Breite gut lesbar */}
+      {(() => {
+        const marks = [];
+        const step = Math.max(1, Math.floor(n / 8));
+        for (let i = step; i < n - step / 2; i += step) {
+          marks.push(
+            <g key={"x" + i}>
+              <line x1={X(i)} y1={PADT} x2={X(i)} y2={H - PADB} stroke="rgba(255,255,255,0.028)" />
+              <text x={X(i)} y={H - 6} textAnchor="middle" fill="#3f3f3f" style={{ font: "500 8.5px 'DM Mono', monospace" }}>
+                {new Date(ts[i]).toLocaleDateString("en-US", { month: "short", year: "2-digit" })}
+              </text>
+            </g>
+          );
+        }
+        return marks;
+      })()}
       {label && <text x={PADL} y={PADT + 10} fill="#5a5a5a" style={{ font: "700 9px Montserrat, sans-serif", letterSpacing: "0.18em" }}>{label}</text>}
       {hover != null && values[hover] != null && (
         <g pointerEvents="none">
@@ -444,20 +460,27 @@ export default function Breadth({ lang = "de" }) {
             </div>
 
             {/* CHARTS — zwei Spalten, volle Höhe */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(560px, 1fr))", gap: 14, marginBottom: 14 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 14 }}>
               {[
                 ["pctMa200", t.above200, slice(b.pctMa200), C.blue, { bands: [20, 40, 60, 80], fmt: v => `${v.toFixed(0)}%` }],
                 ["adLine",   t.adLine,   slice(b.adLine),   C.gold, {}],
                 ["mcOsc",    t.mcOsc,    slice(b.mcOsc),    "#f472b6", { zeroLine: true }],
                 ["netHL",    t.netHL,    slice(b.netNewHL), "#2dd4bf", { zeroLine: true }],
               ].map(([key, label, values, color, opts]) => (
-                <div key={key} style={{ ...glass, padding: "16px 18px 10px" }}>
+                <div key={key} style={{ ...glass, padding: "18px 22px 12px" }}>
                   <div onClick={() => setExplain(key)}
-                    style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 10, cursor: "pointer" }}>
-                    <span style={{ fontFamily: F.display, fontSize: 16, letterSpacing: "0.18em", color: "#fdfdfd" }}>{label}</span>
+                    style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, cursor: "pointer" }}>
+                    <span style={{ fontFamily: F.display, fontSize: 17, letterSpacing: "0.2em", color: "#fdfdfd" }}>{label}</span>
                     <span style={{ color: C.textFaint, fontSize: 9 }}>ⓘ</span>
+                    <span style={{ marginLeft: "auto", fontFamily: F.mono, fontSize: 17, fontWeight: 500, color }}>
+                      {(() => {
+                        const v = values.filter(x => x != null && isFinite(x)).slice(-1)[0];
+                        if (v == null) return "—";
+                        return opts.fmt ? opts.fmt(v) : (v > 0 && opts.zeroLine ? "+" : "") + v.toFixed(0);
+                      })()}
+                    </span>
                   </div>
-                  <LineChart values={values} ts={slice(b.ts)} color={color} height={230} {...opts} />
+                  <LineChart values={values} ts={slice(b.ts)} color={color} height={190} {...opts} />
                 </div>
               ))}
             </div>
