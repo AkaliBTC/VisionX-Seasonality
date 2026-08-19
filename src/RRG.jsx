@@ -315,6 +315,7 @@ function BenchChart({ series, label, offset, tailLen, onScrub, maxOffset }) {
     onScrub(Math.min(maxOffset, Math.max(0, (n - 1) - endIdx)));
   };
   const onPointerDown = (e) => {
+    e.preventDefault();
     draggingRef.current = true;
     e.currentTarget.setPointerCapture(e.pointerId);
     scrubTo(e.clientX);
@@ -323,9 +324,10 @@ function BenchChart({ series, label, offset, tailLen, onScrub, maxOffset }) {
   const onPointerUp = () => { draggingRef.current = false; };
 
   return (
-    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
+    <svg ref={svgRef} className="vsx-chart" viewBox={`0 0 ${W} ${H}`}
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
-      style={{ width: "100%", display: "block", cursor: "ew-resize", touchAction: "none" }}>
+      style={{ width: "100%", display: "block", cursor: "ew-resize", touchAction: "none",
+        userSelect: "none", WebkitUserSelect: "none", MozUserSelect: "none" }}>
       <defs>
         <linearGradient id="bench-fill" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="rgba(212,175,55,0.16)" /><stop offset="100%" stopColor="rgba(212,175,55,0)" />
@@ -388,6 +390,7 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showT
   }, [zoomAt]);
 
   const onPointerDown = (e) => {
+    e.preventDefault();
     if (view.z === 1) return;
     dragRef.current = { x: e.clientX, y: e.clientY, cx: view.cx, cy: view.cy };
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -425,9 +428,11 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showT
 
   return (
     <div style={{ position: "relative" }}>
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
+      <svg ref={svgRef} className="vsx-chart" viewBox={`0 0 ${W} ${H}`}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
-        style={{ width: "100%", display: "block", touchAction: "none", cursor: view.z > 1 ? "grab" : "default" }}>
+        style={{ width: "100%", display: "block", touchAction: "none",
+          userSelect: "none", WebkitUserSelect: "none", MozUserSelect: "none",
+          cursor: dragRef.current ? "grabbing" : view.z > 1 ? "grab" : "default" }}>
         <defs>
           <clipPath id="rrg-clip"><rect x={PADL} y={PADT} width={plotW} height={plotH} rx="4" /></clipPath>
           <linearGradient id="q-lead" x1="0" y1="1" x2="1" y2="0">
@@ -482,7 +487,7 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showT
                   style={it.vsx ? { filter: "drop-shadow(0 0 5px rgba(212,175,55,0.55))" } : {}} />
                 <text x={X(head.x)} y={Y(head.y) - 10.5} textAnchor="middle"
                   fill={it.vsx ? "#f8e49b" : "#eaeaea"}
-                  style={{ font: `700 ${it.vsx ? 11 : 10.5}px Montserrat, sans-serif`, letterSpacing: "0.06em", paintOrder: "stroke", stroke: "#0a0a0add", strokeWidth: 3.5 }}>
+                  style={{ font: `700 ${it.vsx ? 11 : 10.5}px Montserrat, sans-serif`, letterSpacing: "0.06em", paintOrder: "stroke", stroke: "#0a0a0add", strokeWidth: 3.5, userSelect: "none" }}>
                   {it.label}
                 </text>
               </g>

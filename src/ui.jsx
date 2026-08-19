@@ -107,6 +107,7 @@ export const GLOBAL_CSS = `
   .vsx-scroll::-webkit-scrollbar { height: 7px; width: 7px; }
   .vsx-scroll::-webkit-scrollbar-thumb { background: rgba(212,175,55,0.22); border-radius: 4px; }
   .vsx-scroll::-webkit-scrollbar-track { background: transparent; }
+  .vsx-chart, .vsx-chart * { user-select: none; -webkit-user-select: none; -moz-user-select: none; }
   .vsx-hover-gold:hover { border-color: rgba(212,175,55,0.5) !important; color: ${C.goldLight} !important; }
 `;
 

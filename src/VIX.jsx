@@ -214,7 +214,7 @@ function VixChart({ candles, T }) {
 
   return (
     <div style={{ position: "relative" }}>
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
+      <svg ref={svgRef} className="vsx-chart" viewBox={`0 0 ${W} ${H}`}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
         onMouseLeave={() => setHover(null)}
         style={{ width: "100%", display: "block", touchAction: "none", userSelect: "none", WebkitUserSelect: "none",
