@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { apiFetch } from "./access";
 import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -350,7 +351,7 @@ export default function Breadth({ lang = "de" }) {
       try {
         for (let i = 0; i < ALL.length; i += 25) {
           const chunk = ALL.slice(i, i + 25);
-          const res = await fetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=2y`);
+          const res = await apiFetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=2y`);
           if (!res.ok) throw new Error(`API ${res.status}`);
           const json = await res.json();
           if (!alive) return;

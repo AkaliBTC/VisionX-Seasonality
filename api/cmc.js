@@ -1,3 +1,5 @@
+import { guard, useQuota, quotaLeft } from "./_guard.js";
+
 // ── VISIONX ANALYTICS · COINMARKETCAP PROXY ──────────────────────────────────
 // GET /api/cmc?action=listings&limit=50           → Top-Coins nach Marktkapitalisierung
 // GET /api/cmc?action=quotes&symbols=BTC,ETH      → aktuelle Kennzahlen je Coin
@@ -37,6 +39,12 @@ const EXCLUDE = new Set([
 export default async function handler(req, res) {
   const action = String(req.query.action || "listings");
 
+  if (!guard(req, res, 2)) return;
+  if (!useQuota("cmc")) {
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).json({ error: "cmc_daily_quota_reached", data: [] });
+  }
+
   try {
     if (action === "listings") {
       const limit = Math.min(200, Math.max(5, parseInt(req.query.limit) || 50));
@@ -65,7 +73,7 @@ export default async function handler(req, res) {
           supplyRatio: c.max_supply ? c.circulating_supply / c.max_supply : null,
         }));
       res.setHeader("Cache-Control", "public, s-maxage=1800, stale-while-revalidate=7200");
-      return res.status(200).json({ asOf: Date.now(), count: data.length, data });
+      return res.status(200).json({ asOf: Date.now(), count: data.length, data, quotaLeft: quotaLeft("cmc") });
     }
 
     if (action === "quotes") {

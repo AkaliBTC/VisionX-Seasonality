@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { apiFetch } from "./access";
 import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
 import { evaluate, lightFor, LIGHTS, CATEGORY_LIST, benchFor } from "./scoring";
 
@@ -189,7 +190,7 @@ export default function Fundamentals({ lang = "de" }) {
     if (!missing.length) { setData({ ...cacheRef.current }); return; }
     let alive = true;
     setLoading(true); setError("");
-    fetch(`/api/fundamentals?symbols=${missing.join(",")}`)
+    apiFetch(`/api/fundamentals?symbols=${missing.join(",")}`)
       .then(r => { if (!r.ok) throw new Error(`API ${r.status} — läuft die Seite auf Vercel / \`vercel dev\`?`); return r.json(); })
       .then(json => {
         if (!alive) return;

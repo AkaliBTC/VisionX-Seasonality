@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { apiFetch } from "./access";
 import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -384,7 +385,7 @@ export default function VIX({ lang = "de" }) {
 
   useEffect(() => {
     let alive = true;
-    fetch(`/api/history?symbols=${encodeURIComponent("^VIX")}&interval=1d&range=10y&ohlc=1`)
+    apiFetch(`/api/history?symbols=${encodeURIComponent("^VIX")}&interval=1d&range=10y&ohlc=1`)
       .then(r => { if (!r.ok) throw new Error(`API ${r.status} — läuft die Seite auf Vercel / \`vercel dev\`?`); return r.json(); })
       .then(json => {
         if (!alive) return;

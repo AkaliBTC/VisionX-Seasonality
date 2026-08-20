@@ -1,3 +1,5 @@
+import { guard } from "./_guard.js";
+
 // ── VISIONX ANALYTICS · FUNDAMENTALS PROXY v2 ────────────────────────────────
 // GET /api/fundamentals?symbols=NVDA,MSFT,BAS.DE
 //
@@ -148,6 +150,8 @@ export default async function handler(req, res) {
     .split(",").map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 40);
 
   if (!symbols.length) return res.status(400).json({ error: "symbols required" });
+
+  if (!guard(req, res, Math.max(1, Math.ceil(symbols.length / 4)))) return;
 
   await getSession();
 

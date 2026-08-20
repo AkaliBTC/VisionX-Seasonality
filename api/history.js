@@ -1,3 +1,5 @@
+import { guard, useQuota, quotaLeft } from "./_guard.js";
+
 // ── VISIONX ANALYTICS · HISTORY PROXY ────────────────────────────────────────
 // GET /api/history?symbols=XLK,XLF,SPY&interval=1d&range=2y
 //
@@ -24,6 +26,7 @@ const fetchYahoo = async (symbol, range, interval, ohlc = false) => {
       const ts = r?.timestamp;
       const q = r?.indicators?.quote?.[0];
       if (!ts || !q?.close) continue;
+      const nm = r?.meta?.longName || r?.meta?.shortName || null;
       const out = [];
       for (let i = 0; i < ts.length; i++) {
         if (q.close[i] == null) continue;
@@ -34,7 +37,7 @@ const fetchYahoo = async (symbol, range, interval, ohlc = false) => {
           out.push([ts[i] * 1000, +q.close[i].toFixed(6)]);
         }
       }
-      if (out.length > 30) return out;
+      if (out.length > 30) { out.name = nm; return out; }
     } catch { /* nächster Host / Fallback */ }
   }
   return null;
@@ -61,6 +64,7 @@ const fetchBinance = async (symbol, interval, ohlc = false) => {
 const fetchCmc = async (symbol, ohlc) => {
   const key = process.env.CMC_KEY;
   if (!key || !/-USD$/.test(symbol)) return null;
+  if (!useQuota("cmc")) return null;         // Tageslimit erreicht
   try {
     const base = symbol.replace(/-USD$/, "");
     const url = `https://pro-api.coinmarketcap.com/v2/cryptocurrency/ohlcv/historical`
@@ -80,6 +84,7 @@ const fetchCmc = async (symbol, ohlc) => {
 
 const fetchTwelveData = async (symbol, interval, ohlc = false) => {
   if (!TD_KEY) return null;
+  if (!useQuota("td")) return null;          // Tageslimit erreicht
   try {
     const tdInterval = interval === "1wk" ? "1week" : "1day";
     const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=${tdInterval}&outputsize=600&apikey=${TD_KEY}`;
@@ -104,7 +109,11 @@ export default async function handler(req, res) {
 
   if (!symbols.length) return res.status(400).json({ error: "symbols required" });
 
+  // Zugang + Rate-Limit; Kosten skalieren mit der Symbolanzahl
+  if (!guard(req, res, Math.max(1, Math.ceil(symbols.length / 5)))) return;
+
   const data = {};
+  const names = {};
   const failed = [];
 
   // Batches à 6 parallel — schnell genug, ohne Yahoo zu triggern
@@ -115,11 +124,15 @@ export default async function handler(req, res) {
       if (!series) series = await fetchYahoo(sym, range, interval, ohlc);
       if (!series) series = await fetchTwelveData(sym, interval, ohlc);
       if (!series) series = await fetchCmc(sym, ohlc);
-      if (series) data[sym] = series; else failed.push(sym);
+      if (series) {
+        if (series.name) names[sym] = series.name;
+        data[sym] = Array.from(series);          // Namens-Property nicht mitserialisieren
+      } else failed.push(sym);
     }));
   }
 
   res.setHeader("Cache-Control", "public, s-maxage=43200, stale-while-revalidate=86400");
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.status(200).json({ interval, range, ohlc, asOf: Date.now(), failed, data });
+  res.status(200).json({ interval, range, ohlc, asOf: Date.now(), failed, names, data,
+    quota: { td: quotaLeft("td"), cmc: quotaLeft("cmc") } });
 }

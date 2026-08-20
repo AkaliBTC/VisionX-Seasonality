@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { apiFetch } from "./access";
 import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
 import { createPortal } from "react-dom";
 import { SPX_BY_SECTOR } from "./constituents";
@@ -268,7 +269,7 @@ const fetchHistories = async (symbols) => {
   const out = {}; const failed = []; const names = {};
   for (let i = 0; i < symbols.length; i += 25) {
     const chunk = symbols.slice(i, i + 25);
-    const res = await fetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=10y`);
+    const res = await apiFetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=10y`);
     if (!res.ok) throw new Error(`API ${res.status} — läuft die Seite auf Vercel / \`vercel dev\`?`);
     const json = await res.json();
     Object.assign(out, json.data);
@@ -709,7 +710,7 @@ export default function RRG({ lang = "de" }) {
     const p = PRESETS.find(x => x.id === presetId);
     if (!p?.cmcLimit || cmcUniverse[presetId]) return;
     let alive = true;
-    fetch(`/api/cmc?action=listings&limit=${p.cmcLimit}`)
+    apiFetch(`/api/cmc?action=listings&limit=${p.cmcLimit}`)
       .then(r => r.json())
       .then(json => {
         if (!alive) return;

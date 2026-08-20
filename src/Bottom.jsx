@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { apiFetch } from "./access";
 import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
 import {
   VSX_STOCKS, VSX_STOCK_SECTOR, VSX_CRYPTO,
@@ -394,7 +395,7 @@ export default function Bottom({ lang = "de" }) {
   // Universum von CoinMarketCap ziehen und als Liste setzen
   const loadCmc = (limit) => {
     setCmcLoading(true); setCmcError("");
-    fetch(`/api/cmc?action=listings&limit=${limit}`)
+    apiFetch(`/api/cmc?action=listings&limit=${limit}`)
       .then(r => r.json())
       .then(json => {
         if (json.error) { setCmcError(json.error); return; }
@@ -424,7 +425,7 @@ export default function Bottom({ lang = "de" }) {
       try {
         for (let i = 0; i < missing.length; i += 20) {
           const chunk = missing.slice(i, i + 20);
-          const res = await fetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=2y&ohlc=1`);
+          const res = await apiFetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=2y&ohlc=1`);
           if (!res.ok) throw new Error(`API ${res.status}`);
           const json = await res.json();
           if (!alive) return;

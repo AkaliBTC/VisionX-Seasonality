@@ -550,7 +550,10 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   const icept = (sy - slope * sx) / n;
 
   const minP = 8;
-  const maxP = Math.min(Math.floor(n / 4), 500);
+  // Ein Zyklus, der sich nur vier Mal wiederholt, ist statistisch kaum belegbar.
+  // Fünf volle Durchläufe als Minimum verhindern, dass die Analyse auf das
+  // langsamste zulässige Band ausweicht und dort Trendreste als "Zyklus" liest.
+  const maxP = Math.min(Math.floor(n / 5), 500);
   if (maxP <= minP) return { cycles: [], trend: null, spectrum: [] };
 
   // HIGH-PASS detrend: subtract a centered moving average (window ≈ 1.2×maxP).
@@ -628,30 +631,58 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     return Math.hypot(re, im) / k;
   };
 
-  const firstSpec = scanSpectrum(r);
+  // ROTRAUSCHEN-NORMIERUNG (Whitening)
+  // Kursreihen haben ein 1/f-Spektrum: die Amplitude wächst systematisch mit der
+  // Periode, ganz ohne echten Zyklus. Wer nach roher Amplitude sortiert, wählt
+  // deshalb fast immer die längste zulässige Periode — genau das Artefakt, das
+  // als breite Sinuswelle ohne Bezug zu den realen Tiefs erscheint.
+  // Abhilfe: jede Amplitude am Median ihrer spektralen Nachbarschaft messen.
+  // Bewertet wird dann, wie stark ein Peak HERAUSRAGT, nicht wie groß er ist.
+  const whiten = (spec) => {
+    const out = spec.map(s => ({ ...s }));
+    for (let i = 0; i < out.length; i++) {
+      const P = out[i].period;
+      const lo = P * 0.7, hi = P * 1.45;
+      const nb = [];
+      for (let k = 0; k < spec.length; k++) {
+        const q = spec[k].period;
+        if (q >= lo && q <= hi) nb.push(spec[k].amp);
+      }
+      nb.sort((a, b) => a - b);
+      const med = nb.length ? nb[Math.floor(nb.length / 2)] : 0;
+      out[i].snr = med > 1e-12 ? out[i].amp / med : 0;
+    }
+    return out;
+  };
+
+  const firstSpec = whiten(scanSpectrum(r));
   const work = Float64Array.from(r);
   const found = [];
   let refAmp = null;
 
   for (let iter = 0; iter < Math.min(maxCycles, 12); iter++) {
-    const spec = iter === 0 ? firstSpec : scanSpectrum(work);
+    const spec = iter === 0 ? firstSpec : whiten(scanSpectrum(work));
     const peaks = [];
     for (let i = 1; i < spec.length - 1; i++) {
-      if (spec[i].amp > spec[i - 1].amp && spec[i].amp >= spec[i + 1].amp) peaks.push(spec[i]);
+      if (spec[i].snr > spec[i - 1].snr && spec[i].snr >= spec[i + 1].snr) peaks.push(spec[i]);
     }
-    peaks.sort((a, b) => b.amp - a.amp);
+    peaks.sort((a, b) => b.snr - a.snr);
 
     // Among the strongest candidates, pick the one with the best amp·bartels²
     let best = null;
     for (const p of peaks.slice(0, 12)) {
       if (found.some(f => Math.abs(f.period - p.period) / Math.max(f.period, p.period) < 0.08)) continue;
       const bt = bartelsOn(work, p.period);
-      const score = p.amp * bt * bt;
+      // Ein Peak zählt nur, wenn er sowohl aus dem Rauschen herausragt (SNR)
+      // als auch phasenstabil ist (Bartels). Beides multiplikativ, damit ein
+      // starker Ausschlag ohne Phasenstabilität nicht gewinnt.
+      const score = p.snr * bt * bt;
       if (!best || score > best.score) best = { ...p, bartels: bt, score };
     }
     if (!best) break;
+    if (best.snr < 1.15) break;                 // ragt nicht aus dem Rauschen
     if (refAmp == null) refAmp = best.amp;
-    if (best.amp < refAmp * 0.10) break; // remaining energy is noise
+    if (best.amp < refAmp * 0.10) break;        // Restenergie ist Rauschen
     found.push(best);
 
     // Subtract this cycle so the next scan sees a cleaned residual

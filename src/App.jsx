@@ -7,6 +7,7 @@ import Fundamentals from "./Fundamentals";
 import Bottom from "./Bottom";
 import Breadth from "./Breadth";
 import { C, F, overline, GLOBAL_CSS, Wordmark } from "./ui";
+import { AccessGate, useAccess } from "./access";
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · SHELL
@@ -55,7 +56,7 @@ function LangToggle({ lang, setLang }) {
 }
 
 // ── KOPFZEILE ────────────────────────────────────────────────────────────────
-function Header({ lang, setLang, clock }) {
+function Header({ lang, setLang, clock, onSignOut }) {
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 20, padding: "16px 34px 0 34px",
@@ -68,6 +69,13 @@ function Header({ lang, setLang, clock }) {
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 18 }}>
         <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textFaint, letterSpacing: "0.1em" }}>{clock}</span>
         <LangToggle lang={lang} setLang={setLang} />
+        {onSignOut && (
+          <button onClick={onSignOut} title="Sign out"
+            style={{ background: "rgba(255,255,255,0.025)", border: `1px solid ${C.line}`, borderRadius: 9,
+              color: C.textMute, cursor: "pointer", padding: "6px 11px", fontFamily: F.ui,
+              fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em", transition: "all 0.2s" }}
+            className="vsx-hover-gold">⏻</button>
+        )}
       </div>
     </div>
   );
@@ -113,6 +121,7 @@ export default function App() {
   const [active, setActive] = useState("seasonality");
   const [lang, setLang] = useState(loadLang);
   const [clock, setClock] = useState("");
+  const access = useAccess();
 
   useEffect(() => { try { localStorage.setItem(LANG_KEY, lang); } catch { /* private */ } }, [lang]);
   useEffect(() => {
@@ -124,6 +133,18 @@ export default function App() {
 
   const M = COMPONENTS[active];
 
+  // Zugangsschirm, solange das Gate aktiv und nicht entsperrt ist
+  if (access.loading) {
+    return (
+      <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ fontFamily: F.mono, fontSize: 11, color: C.textFaint, letterSpacing: "0.24em" }}>VISIONX</span>
+      </div>
+    );
+  }
+  if (access.gated && !access.unlocked) {
+    return <AccessGate lang={lang} onUnlock={access.unlock} />;
+  }
+
   return (
     <div style={{ minHeight: "100vh", background: C.bg }}>
       <style>{`
@@ -132,7 +153,7 @@ export default function App() {
         ${GLOBAL_CSS}
       `}</style>
 
-      <Header lang={lang} setLang={setLang} clock={clock} />
+      <Header lang={lang} setLang={setLang} clock={clock} onSignOut={access.gated ? access.signOut : null} />
       <ModuleNav active={active} setActive={setActive} />
 
       <div key={active} className="vsx-fade">

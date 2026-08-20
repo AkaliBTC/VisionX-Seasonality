@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { apiFetch } from "./access";
 import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -384,7 +385,7 @@ export default function Cycle({ lang = "de" }) {
 
   useEffect(() => {
     let alive = true;
-    fetch(`/api/history?symbols=${[...new Set(["SPY", ...CYCLE_ETFS, ...SPDRS])].join(",")}&interval=1d&range=10y`)
+    apiFetch(`/api/history?symbols=${[...new Set(["SPY", ...CYCLE_ETFS, ...SPDRS])].join(",")}&interval=1d&range=10y`)
       .then(r => { if (!r.ok) throw new Error(`API ${r.status}`); return r.json(); })
       .then(json => { if (alive) setRawData(json.data || {}); })
       .catch(e => alive && setScoreError(e.message))
