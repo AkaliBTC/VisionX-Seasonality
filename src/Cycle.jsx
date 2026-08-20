@@ -199,6 +199,73 @@ const ewRsTf = (seriesD, spyD, tf, shift = 0) => {
 
 const SPDRS = ["XLK","XLF","XLV","XLY","XLP","XLE","XLI","XLB","XLRE","XLU","XLC"];
 
+// ── BODEN-RELEVANZ ───────────────────────────────────────────────────────────
+// Findet Swing-Tiefs im Benchmark und bewertet, wie bedeutsam jeder Boden war.
+// Ein Zyklus-Tief ist nur dann handelbar, wenn ihm ein echter Abverkauf
+// vorausging — deshalb fließen Tiefe, Dauer, Erholung und Isolation ein.
+const detectTroughs = (seriesD, tf) => {
+  const s = resampleSeries(seriesD, tf.resample);
+  if (!s || s.length < 40) return [];
+  const px = s.map(x => x[1]);
+  const n = px.length;
+  // Pivot-Fenster skaliert mit der Zeitebene
+  const w = tf.resample === "d" ? 12 : tf.resample === "w" ? 5 : 3;
+
+  // 1) Lokale Tiefs: tiefster Punkt im Fenster ±w
+  const pivots = [];
+  for (let i = w; i < n - w; i++) {
+    let isLow = true;
+    for (let k = i - w; k <= i + w; k++) if (px[k] < px[i]) { isLow = false; break; }
+    if (isLow) pivots.push(i);
+  }
+  if (!pivots.length) return [];
+
+  // 2) Je Pivot: Tiefe zum vorherigen Hoch, Dauer des Abverkaufs, Erholung danach
+  const out = [];
+  for (const i of pivots) {
+    const lookBack = Math.min(i, tf.resample === "d" ? 252 : tf.resample === "w" ? 52 : 24);
+    let peak = px[i], peakIdx = i;
+    for (let k = i - lookBack; k < i; k++) if (k >= 0 && px[k] > peak) { peak = px[k]; peakIdx = k; }
+    const depth = peak > 0 ? px[i] / peak - 1 : 0;
+    if (depth > -0.02) continue;                       // Rauschen ausfiltern
+    const declineBars = i - peakIdx;
+
+    // Erholung bis zum nächsten Pivot bzw. bis heute
+    const nextPivot = pivots.find(p => p > i);
+    const end = nextPivot ?? n - 1;
+    let high = px[i];
+    for (let k = i; k <= end; k++) if (px[k] > high) high = px[k];
+    const rally = px[i] > 0 ? high / px[i] - 1 : 0;
+
+    out.push({ i, t: s[i][0], price: px[i], depth, declineBars, rally, barsSince: n - 1 - i });
+  }
+  if (!out.length) return [];
+
+  // 3) Relevanz-Score: Tiefe dominiert, Dauer und Erholung bestätigen,
+  //    Isolation misst, ob der Boden im Umfeld herausragt.
+  const maxDepth = Math.max(...out.map(o => Math.abs(o.depth)));
+  const maxBars = Math.max(...out.map(o => o.declineBars));
+  const maxRally = Math.max(...out.map(o => o.rally));
+  out.forEach(o => {
+    const dep = maxDepth > 0 ? Math.abs(o.depth) / maxDepth : 0;
+    const dur = maxBars > 0 ? o.declineBars / maxBars : 0;
+    const ral = maxRally > 0 ? Math.min(1, o.rally / maxRally) : 0;
+    // Isolation: wie viel tiefer als die anderen Tiefs im Umfeld
+    const near = out.filter(x => Math.abs(x.i - o.i) <= (tf.resample === "d" ? 130 : tf.resample === "w" ? 26 : 12) && x !== o);
+    const iso = near.length === 0 ? 1 : (near.every(x => x.price > o.price) ? 1 : 0.45);
+    o.score = Math.round((dep * 0.45 + dur * 0.2 + ral * 0.2 + iso * 0.15) * 100);
+  });
+
+  return out.sort((a, b) => b.i - a.i);
+};
+
+const TROUGH_TIERS = [
+  { min: 72, id: "major",        color: "#22c55e", de: "MAJOR", en: "MAJOR" },
+  { min: 48, id: "intermediate", color: "#facc15", de: "MITTEL", en: "INTERMEDIATE" },
+  { min: 0,  id: "minor",        color: "#94a3b8", de: "KLEIN", en: "MINOR" },
+];
+const troughTier = s => TROUGH_TIERS.find(t => s >= t.min) || TROUGH_TIERS[2];
+
 const computeCycleScores = (data, tf, shift = 0) => {
   const spy = data.SPY;
   if (!spy) return null;
@@ -273,6 +340,11 @@ const CY_T = {
     rawNote: "· roher Höchstwert Stage", rawNote2: "— gefiltert (Zyklen laufen 1→6, nicht querbeet)",
     spdrExtremes: "· SPDR EXTREMA", top: "TOP", lag: "SCHWACH", autoDetected: "● AUTOMATISCH ERKANNT",
     computing: "BERECHNE…", notEnough: "Zu wenige Daten für die Auto-Erkennung",
+    troughs: "BODEN-RELEVANZ", troughSub: "Swing-Tiefs im Benchmark, bewertet nach Tiefe, Dauer, Erholung und Isolation",
+    trDepth: "Tiefe", trDecline: "Abverkauf", trRally: "Erholung", trSince: "seither", trScore: "Relevanz",
+    trLast: "LETZTER BODEN", trNone: "Keine relevanten Tiefs im Zeitraum gefunden",
+    bars: { d: "Tage", w: "Wochen", m: "Monate" },
+    trHint: "Ein Zyklus-Tief ist nur handelbar, wenn ihm ein echter Abverkauf vorausging. MAJOR-Böden markieren Zyklus-Wenden, KLEIN-Böden sind Rücksetzer im laufenden Trend.",
     method: "Stage-Score = aggregierte RS der 3 besten minus der 3 schwächsten Titel gegen SPY. Klick auf ▸ für die ETF-Aufschlüsselung.",
     footer: "SPX Cycle Framework · Auto-Erkennung über exponentiell gewichtete relative Stärke vs SPY je Stage-Korb (3 beste − 3 schwächste) auf Tages-, Wochen- und Monatsebene, sequenzgeprüft gegen das vorherige Fenster (Zyklen laufen 1→6). Strukturanalyse — keine Anlageberatung.",
   },
@@ -286,6 +358,11 @@ const CY_T = {
     rawNote: "· raw max Stage", rawNote2: "— filtered (cycles run 1→6, not sideways)",
     spdrExtremes: "· SPDR EXTREMES", top: "TOP", lag: "LAG", autoDetected: "● AUTO-DETECTED",
     computing: "COMPUTING…", notEnough: "Not enough data for auto-detect",
+    troughs: "TROUGH SIGNIFICANCE", troughSub: "Swing lows in the benchmark, rated by depth, duration, recovery and isolation",
+    trDepth: "Depth", trDecline: "Decline", trRally: "Recovery", trSince: "since", trScore: "Significance",
+    trLast: "LATEST TROUGH", trNone: "No relevant lows found in the period",
+    bars: { d: "days", w: "weeks", m: "months" },
+    trHint: "A cycle low is only tradable if a genuine selloff preceded it. MAJOR troughs mark cycle turns, MINOR ones are pullbacks within the ongoing trend.",
     method: "Stage score = aggregated RS of the 3 Best vs SPY minus aggregated RS of the 3 Worst vs SPY. Click ▸ for the ETF breakdown.",
     footer: "SPX Cycle Framework · Auto-detect: EW relative strength vs SPY per stage basket (3 Best − 3 Worst) on daily / weekly / monthly resolution, sequence-checked against the previous window (cycles run 1→6). Structural analysis — not investment advice.",
   },
@@ -344,6 +421,13 @@ export default function Cycle({ lang = "de" }) {
     return b > a ? nextStage : prevStage;
   }, [scores, prevStage, rawTop]);
   const maxAbs = scores ? Math.max(1e-9, ...scores.map(s => Math.abs(s.score ?? 0))) : 1;
+
+  // Boden-Relevanz auf der gewählten Zyklus-Ebene (Benchmark SPY)
+  const troughs = React.useMemo(
+    () => rawData?.SPY ? detectTroughs(rawData.SPY, CYCLE_TFS[cycleTf]).slice(0, 4) : [],
+    [rawData, cycleTf]
+  );
+  const lastTrough = troughs[0] || null;
 
   // SPDR-Extrema (Top / Loser) je Zyklus-Ebene
   const extremes = React.useMemo(() => {
@@ -616,6 +700,60 @@ export default function Cycle({ lang = "de" }) {
               </div>
             )}
           </div>
+
+        {/* BODEN-RELEVANZ */}
+        {troughs.length > 0 && (() => {
+          const unit = t.bars[CYCLE_TFS[cycleTf].resample];
+          const tier = troughTier(lastTrough.score);
+          return (
+            <div style={{ ...glass, flex: "1 1 340px", minWidth: 320, padding: "18px 22px 16px", borderColor: `${tier.color}33` }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
+                <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.18em", color: "#fdfdfd" }}>{t.troughs}</span>
+                <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>SPY · {CYCLE_TFS[cycleTf].label}</span>
+              </div>
+              <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, color: "#666", marginBottom: 14, lineHeight: 1.6 }}>{t.troughSub}</div>
+
+              {/* Letzter Boden hervorgehoben */}
+              <div style={{ padding: "13px 16px", borderRadius: 12, background: `${tier.color}0d`, border: `1px solid ${tier.color}33`, marginBottom: 12 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 11, marginBottom: 9 }}>
+                  <span style={{ fontSize: 7.5, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.2em", color: "#777" }}>{t.trLast}</span>
+                  <span style={{ ...badge(tier.color) }}>{tier[lang]}</span>
+                  <span style={{ marginLeft: "auto", fontFamily: "'DM Mono', monospace", fontSize: 19, fontWeight: 600, color: tier.color }}>{lastTrough.score}</span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 18, fontFamily: "'DM Mono', monospace", fontSize: 10.5 }}>
+                  <span style={{ color: "#c9c9c9" }}>{new Date(lastTrough.t).toLocaleDateString(lang === "en" ? "en-US" : "de-DE", { day: "2-digit", month: "short", year: "numeric" })}</span>
+                  <span style={{ color: "#ef4444" }}>{t.trDepth} {(lastTrough.depth * 100).toFixed(1)}%</span>
+                  <span style={{ color: "#22c55e" }}>{t.trRally} +{(lastTrough.rally * 100).toFixed(0)}%</span>
+                  <span style={{ color: "#666" }}>{lastTrough.barsSince} {unit} {t.trSince}</span>
+                </div>
+              </div>
+
+              {/* Weitere Tiefs */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {troughs.slice(1).map(o => {
+                  const ti = troughTier(o.score);
+                  return (
+                    <div key={o.i} style={{ display: "grid", gridTemplateColumns: "84px 60px 1fr 34px", alignItems: "center", gap: 10,
+                      padding: "6px 8px", borderRadius: 8, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+                      <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5, color: "#8f8f8f" }}>
+                        {new Date(o.t).toLocaleDateString(lang === "en" ? "en-US" : "de-DE", { month: "short", year: "2-digit" })}
+                      </span>
+                      <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5, color: "#ef4444" }}>{(o.depth * 100).toFixed(0)}%</span>
+                      <span style={{ height: 5, borderRadius: 3, background: "rgba(255,255,255,0.05)", overflow: "hidden", display: "block" }}>
+                        <span style={{ display: "block", width: `${o.score}%`, height: "100%", background: ti.color, opacity: 0.8 }} />
+                      </span>
+                      <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, textAlign: "right", color: ti.color }}>{o.score}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, color: "#4a4a4a", marginTop: 12, lineHeight: 1.7 }}>
+                {t.trHint}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* DETAIL */}
         {sel && (
