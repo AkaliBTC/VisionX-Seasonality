@@ -536,7 +536,7 @@ const scanPatterns = (candles, years) => {
 // this, cycle #1 masks everything else — secondary cycles test against a signal
 // still full of #1's energy and score "dead". With it, each cycle is measured
 // on a cleaned residual, so genuine secondary cycles surface with real scores.
-const detectCyclesSpectral = (candles, maxCycles = 20, band = null) => {
+const detectCyclesSpectral = (candles, maxCycles = 20) => {
   const n = candles.length;
   if (n < 80) return { cycles: [], trend: null, spectrum: [] };
 
@@ -554,9 +554,8 @@ const detectCyclesSpectral = (candles, maxCycles = 20, band = null) => {
   // Minimum). Mit Vorgabe entscheidet das Band — entscheidend, weil der
   // Hochpass unten an maxP hängt: ein enges Band entfernt langsamere
   // Trendschwünge KOMPLETT aus dem Residuum, statt sie als Zyklus zu lesen.
-  const autoMax = Math.min(Math.floor(n / 5), 500);
-  const minP = Math.max(4, Math.round(band?.min ?? 8));
-  const maxP = Math.max(minP + 4, Math.min(Math.round(band?.max ?? autoMax), Math.floor(n / 2.5)));
+  const minP = 8;
+  const maxP = Math.min(Math.floor(n / 5), 500);
   if (maxP <= minP) return { cycles: [], trend: null, spectrum: [] };
 
   // HIGH-PASS detrend: subtract a centered moving average (window ≈ 1.2×maxP).
@@ -692,12 +691,13 @@ const detectCyclesSpectral = (candles, maxCycles = 20, band = null) => {
       // Surrogate, die aus dem Chart selbst gebaut wurden? Die Hürde ist eine
       // Wahrscheinlichkeit aus den Daten, keine gesetzte Amplitudengrenze.
       const sig = significanceOf(work, p.period, bt);
-      if (sig < 0.9) continue;                 // schlägt weniger als 90 % — raus
-      const score = sig * bt;
+      // Die Signifikanz RANGIERT, sie schließt nicht aus. Ein hart gesetzter
+      // Schwellwert liefert auf realen Daten regelmäßig eine leere Liste —
+      // besser eine bewertete Rangfolge, in der du selbst entscheidest.
+      const score = (0.3 + 0.7 * sig) * bt * Math.sqrt(p.amp / (refAmp || p.amp));
       if (!best || score > best.score) best = { ...p, bartels: bt, sig, score };
     }
     if (!best) break;
-    if ((best.sig ?? 0) < 0.9) break;           // nicht mehr signifikant
     if (refAmp == null) refAmp = best.amp;
     if (best.amp < refAmp * 0.10) break;        // Restenergie ist Rauschen
     found.push(best);
@@ -853,7 +853,12 @@ const detectCyclesSpectral = (candles, maxCycles = 20, band = null) => {
   // QUALITY GATE: a cycle only makes the list if it proved itself on the chart —
   // at least 3 confirmed swing pivot lows, with at least 2 consecutive
   // bottom-to-bottom spacings inside the valid rhythm band (0.7–1.3 × P).
-  kept = kept.filter(c => (c.nBottoms ?? 0) >= 3 && (c.nSpacings ?? 0) >= 2);
+  // Gestufter Gate: erst streng, dann gelockert. Eine leere Liste ist nie das
+  // Ergebnis — sie sagt dem Nutzer nichts. Stattdessen die beste verfügbare
+  // Rangfolge mit ehrlicher Signifikanzangabe je Zeile.
+  const strict = kept.filter(c => (c.nBottoms ?? 0) >= 3 && (c.nSpacings ?? 0) >= 2);
+  const loose = kept.filter(c => (c.nBottoms ?? 0) >= 2);
+  kept = strict.length >= 2 ? strict : loose.length ? loose : kept;
   // Sort by accuracy, top-down
   kept.sort((a, b) => (b.acc ?? 0) - (a.acc ?? 0) || b.score - a.score);
   const maxStr = kept.length ? Math.max(...kept.map(f => f.score)) : 1;
@@ -1834,12 +1839,6 @@ export default function App({ nav, lang = "de" }) {
   const [spectralShift, setSpectralShift] = useState(0); // phase nudge in bars (vT's "p" param)
   const [ampMode, setAmpMode] = useState("equal");       // 'equal' | 'true' amplitude weighting
   const [analysisWin, setAnalysisWin] = useState(0);     // 0 = full history, else last N bars
-  // Suchband: begrenzt die Perioden, in denen überhaupt gesucht wird.
-  // Der Hochpass folgt der Obergrenze — alles Langsamere fliegt aus dem
-  // Residuum und kann sich nicht mehr als Zyklus tarnen.
-  const [bandOn, setBandOn] = useState(false);
-  const [bandMin, setBandMin] = useState(150);
-  const [bandMax, setBandMax] = useState(300);
   // Seasonal pattern (Seasonax-style)
   const [seasonSel, setSeasonSel] = useState(null); // {startKey, endKey}
   const [showCurYear, setShowCurYear] = useState(true);
@@ -1988,7 +1987,7 @@ export default function App({ nav, lang = "de" }) {
       // then remap anchors back to absolute indices in the full history
       const src = analysisWin && candles.length > analysisWin ? candles.slice(candles.length - analysisWin) : candles;
       const offset = candles.length - src.length;
-      const res = detectCyclesSpectral(src, 20, bandOn ? { min: bandMin, max: bandMax } : null);
+      const res = detectCyclesSpectral(src, 20);
       if (offset) res.cycles = res.cycles.map(c => ({ ...c, anchor: (c.anchor ?? 0) + offset }));
       setSpectral(res);
       setSpectralShift(0);
@@ -2357,47 +2356,6 @@ export default function App({ nav, lang = "de" }) {
                         <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#333", marginTop: 6, lineHeight: 1.5 }}>
                           Each candidate is tested against 28 surrogates built from this chart\u2019s own data — only cycles that hold their phase where surrogates cannot are kept · ≥3 confirmed swing lows · ♪ = harmonic
                         </div>
-
-                        {/* SEARCH BAND — restricts which periods are scanned.
-                            The high-pass follows the upper bound, so anything
-                            slower is removed from the residual entirely and
-                            cannot masquerade as a cycle. */}
-                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: bandOn ? 8 : 0 }}>
-                            <button onClick={() => setBandOn(v => !v)}
-                              style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-                              <span style={{ width: 22, height: 12, borderRadius: 7, background: bandOn ? "rgba(212,175,55,0.85)" : "#1e1e1e", position: "relative", transition: "background 0.2s" }}>
-                                <span style={{ position: "absolute", top: 2, left: bandOn ? 12 : 2, width: 8, height: 8, borderRadius: "50%", background: bandOn ? "#0a0a0a" : "#555", transition: "left 0.2s" }} />
-                              </span>
-                              <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.15em", color: bandOn ? "#d4af37" : "#3a3a3a", textTransform: "uppercase" }}>Search band</span>
-                            </button>
-                            {!bandOn && <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 7.5, color: "#2e2e2e" }}>auto · calibrated to this chart</span>}
-                          </div>
-
-                          {bandOn && (
-                            <>
-                              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                                {[["min", bandMin, setBandMin], ["max", bandMax, setBandMax]].map(([lbl, val, set]) => (
-                                  <div key={lbl} style={{ flex: 1 }}>
-                                    <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, letterSpacing: "0.14em", color: "#2e2e2e", textTransform: "uppercase", marginBottom: 3 }}>{lbl}</div>
-                                    <input type="number" value={val} min={4} step={5}
-                                      onChange={e => set(Math.max(4, parseInt(e.target.value) || 4))}
-                                      style={{ width: "100%", boxSizing: "border-box", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(212,175,55,0.25)", color: "#f8e49b", fontFamily: "'DM Mono', monospace", fontSize: 10, padding: "5px 7px", borderRadius: 4, outline: "none" }} />
-                                  </div>
-                                ))}
-                              </div>
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 7 }}>
-                                {[["Short 10–40", 10, 40], ["Swing 40–90", 40, 90], ["Mid 90–180", 90, 180], ["Long 180–320", 180, 320]].map(([lbl, lo, hi]) => (
-                                  <button key={lbl} onClick={() => { setBandMin(lo); setBandMax(hi); }}
-                                    style={{ background: bandMin === lo && bandMax === hi ? "rgba(212,175,55,0.12)" : "rgba(255,255,255,0.02)", border: `1px solid ${bandMin === lo && bandMax === hi ? "rgba(212,175,55,0.45)" : "rgba(255,255,255,0.06)"}`, color: bandMin === lo && bandMax === hi ? "#f8e49b" : "#3a3a3a", fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.1em", padding: "3px 7px", borderRadius: 4, cursor: "pointer" }}>{lbl}</button>
-                                ))}
-                              </div>
-                              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 7.5, color: "#2e2e2e", marginTop: 6, lineHeight: 1.5 }}>
-                                Anything slower than max is filtered out of the residual — trend swings can no longer win the scan
-                              </div>
-                            </>
-                          )}
-                        </div>
                       </div>
                       {/* In-sample window (vT maxbars) */}
                       <div style={{ padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 8 }}>
@@ -2520,7 +2478,7 @@ export default function App({ nav, lang = "de" }) {
                         )}
                         {spectral && spectral.cycles.length === 0 && (
                           <div style={{ padding: "20px 16px", fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#333", textAlign: "center", lineHeight: 1.6 }}>
-                            No cycle passed the quality gate (≥3 confirmed swing lows in rhythm) — this market is currently not cycling cleanly
+                            Not enough data for a cycle scan — load more history or switch the interval
                           </div>
                         )}
                         {spectral && spectral.cycles.map((cyc, i) => {

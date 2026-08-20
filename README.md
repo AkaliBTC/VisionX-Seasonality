@@ -12,6 +12,7 @@ Multi-Modul-Marktanalyse: Seasonality · RRG · VIX · SPX Cycle · Fundamentals
 | `VSX_CMC_DAILY` | nein | `300` | CoinMarketCap-Calls pro Tag |
 | `TD_KEY` | nein | — | Twelve Data API Key (Fallback-Datenquelle) |
 | `CMC_KEY` | nein | — | CoinMarketCap API Key |
+| `CYCLE_TOOLS_KEY` | nein | `wttpreview` | Cycle-Engine von Lars von Thienen. Erfordert ein "Analyst"-Abo bei whentotrade. Ohne eigenen Key läuft der limitierte öffentliche Vorschau-Key |
 
 ## Schutz bei öffentlichem Link
 
@@ -30,3 +31,22 @@ aber keine harte globale Obergrenze. Für harte Limits wäre ein zentraler Speic
 
     npm install
     vercel dev      # nicht `npm run dev` — sonst fehlen die /api-Routen
+
+## Zyklus-Engines
+
+Zwei Wege stehen zur Verfügung:
+
+**VSX Spectral** (eingebaut) — DFT-Projektion, Bartels-Phasenstabilität und ein
+Surrogat-Test, dessen Vergleichsverteilung aus dem geladenen Chart selbst
+erzeugt wird. Kein externer Dienst, keine Kosten, volle Kontrolle.
+
+**cycle.tools** (optional, `/api/cycles`) — die Engine von Lars von Thienen.
+Sein Verfahren ist proprietär und läuft ausschließlich serverseitig bei ihm;
+er hält den Quellcode bewusst getrennt. Nachbauen ist deshalb nicht möglich,
+anbinden schon. Liefert dominante Zykluslänge, Amplitude, Phase, die letzten
+und die nächsten erwarteten Wendepunkte, einen lesbaren Phasenstatus sowie
+einen Profitabilitäts- und Phasing-Score.
+
+Wichtig zur Interpretation, in seinen eigenen Worten: Zyklen und Composite-
+Modelle dienen **ausschließlich dem Timing** — man achtet auf Richtungswechsel.
+Die Amplitude sagt nichts über Kursziele.
