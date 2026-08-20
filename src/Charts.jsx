@@ -536,7 +536,7 @@ const scanPatterns = (candles, years) => {
 // this, cycle #1 masks everything else — secondary cycles test against a signal
 // still full of #1's energy and score "dead". With it, each cycle is measured
 // on a cleaned residual, so genuine secondary cycles surface with real scores.
-const detectCyclesSpectral = (candles, maxCycles = 20) => {
+const detectCyclesSpectral = (candles, maxCycles = 20, band = null) => {
   const n = candles.length;
   if (n < 80) return { cycles: [], trend: null, spectrum: [] };
 
@@ -549,11 +549,14 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   const slope = den ? (n * sxy - sx * sy) / den : 0;
   const icept = (sy - slope * sx) / n;
 
-  const minP = 8;
-  // Ein Zyklus, der sich nur vier Mal wiederholt, ist statistisch kaum belegbar.
-  // Fünf volle Durchläufe als Minimum verhindern, dass die Analyse auf das
-  // langsamste zulässige Band ausweicht und dort Trendreste als "Zyklus" liest.
-  const maxP = Math.min(Math.floor(n / 5), 500);
+  // SUCHBAND
+  // Ohne Vorgabe: 8 Bars bis n/5 (fünf volle Durchläufe als statistisches
+  // Minimum). Mit Vorgabe entscheidet das Band — entscheidend, weil der
+  // Hochpass unten an maxP hängt: ein enges Band entfernt langsamere
+  // Trendschwünge KOMPLETT aus dem Residuum, statt sie als Zyklus zu lesen.
+  const autoMax = Math.min(Math.floor(n / 5), 500);
+  const minP = Math.max(4, Math.round(band?.min ?? 8));
+  const maxP = Math.max(minP + 4, Math.min(Math.round(band?.max ?? autoMax), Math.floor(n / 2.5)));
   if (maxP <= minP) return { cycles: [], trend: null, spectrum: [] };
 
   // HIGH-PASS detrend: subtract a centered moving average (window ≈ 1.2×maxP).
@@ -631,56 +634,70 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     return Math.hypot(re, im) / k;
   };
 
-  // ROTRAUSCHEN-NORMIERUNG (Whitening)
-  // Kursreihen haben ein 1/f-Spektrum: die Amplitude wächst systematisch mit der
-  // Periode, ganz ohne echten Zyklus. Wer nach roher Amplitude sortiert, wählt
-  // deshalb fast immer die längste zulässige Periode — genau das Artefakt, das
-  // als breite Sinuswelle ohne Bezug zu den realen Tiefs erscheint.
-  // Abhilfe: jede Amplitude am Median ihrer spektralen Nachbarschaft messen.
-  // Bewertet wird dann, wie stark ein Peak HERAUSRAGT, nicht wie groß er ist.
-  const whiten = (spec) => {
-    const out = spec.map(s => ({ ...s }));
-    for (let i = 0; i < out.length; i++) {
-      const P = out[i].period;
-      const lo = P * 0.7, hi = P * 1.45;
-      const nb = [];
-      for (let k = 0; k < spec.length; k++) {
-        const q = spec[k].period;
-        if (q >= lo && q <= hi) nb.push(spec[k].amp);
+  // ── EMPIRISCHE SIGNIFIKANZ AUS DIESEM CHART (Surrogat-Test) ──────────────
+  // Statt eine Rauschschwelle anzunehmen, erzeugt der Chart seine eigene
+  // Vergleichsverteilung: Block-Bootstrap zerlegt das Residuum und setzt es neu
+  // zusammen. Lokale Struktur und Autokorrelation bleiben erhalten, die
+  // Phasentreue über aufeinanderfolgende Zyklen hinweg wird zerstört.
+  // Ein echter Zyklus hält seine Phase — Surrogate können das nicht.
+  // Die Signifikanz ist damit der Anteil der Surrogate, die der Kandidat
+  // schlägt: vollständig aus den Daten erarbeitet, ohne Modellannahme.
+  const SURROGATES = 28;
+  const blockLen = Math.max(8, Math.round(maxP * 0.8));
+  const surrogates = [];
+  {
+    let seed = 20260101;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+    for (let s = 0; s < SURROGATES; s++) {
+      const out = new Float64Array(n);
+      let i = 0;
+      while (i < n) {
+        const st = Math.floor(rnd() * n);
+        for (let j = 0; j < blockLen && i < n; j++, i++) out[i] = r[(st + j) % n];
       }
-      nb.sort((a, b) => a - b);
-      const med = nb.length ? nb[Math.floor(nb.length / 2)] : 0;
-      out[i].snr = med > 1e-12 ? out[i].amp / med : 0;
+      surrogates.push(out);
     }
-    return out;
+  }
+  // Anteil der Surrogate, deren Phasenstabilität unter der beobachteten liegt
+  const significanceOf = (arr, P, observed) => {
+    let below = 0;
+    for (const s of surrogates) if (bartelsOn(s, P) < observed) below++;
+    return below / SURROGATES;
   };
 
-  const firstSpec = whiten(scanSpectrum(r));
+  const firstSpec = scanSpectrum(r);
   const work = Float64Array.from(r);
   const found = [];
   let refAmp = null;
 
   for (let iter = 0; iter < Math.min(maxCycles, 12); iter++) {
-    const spec = iter === 0 ? firstSpec : whiten(scanSpectrum(work));
+    const spec = iter === 0 ? firstSpec : scanSpectrum(work);
     const peaks = [];
     for (let i = 1; i < spec.length - 1; i++) {
-      if (spec[i].snr > spec[i - 1].snr && spec[i].snr >= spec[i + 1].snr) peaks.push(spec[i]);
+      // Peaks auf der Amplitude suchen — das SNR ist nur das Bewertungsmaß,
+      // als Suchkriterium erzeugt es Scheinpeaks im Rauschband.
+      if (spec[i].amp > spec[i - 1].amp && spec[i].amp >= spec[i + 1].amp) peaks.push(spec[i]);
     }
-    peaks.sort((a, b) => b.snr - a.snr);
+    // Nach Amplitude vorsortieren — die eigentliche Entscheidung fällt gleich
+    // über den Surrogat-Test, der nur auf den aussichtsreichsten Kandidaten
+    // läuft (er kostet je Kandidat 28 zusätzliche Bartels-Durchläufe).
+    peaks.sort((a, b) => b.amp - a.amp);
 
-    // Among the strongest candidates, pick the one with the best amp·bartels²
+    // Kandidaten werden gegen die chart-eigenen Surrogate geprüft
     let best = null;
-    for (const p of peaks.slice(0, 12)) {
+    for (const p of peaks.slice(0, 18)) {
       if (found.some(f => Math.abs(f.period - p.period) / Math.max(f.period, p.period) < 0.08)) continue;
       const bt = bartelsOn(work, p.period);
-      // Ein Peak zählt nur, wenn er sowohl aus dem Rauschen herausragt (SNR)
-      // als auch phasenstabil ist (Bartels). Beides multiplikativ, damit ein
-      // starker Ausschlag ohne Phasenstabilität nicht gewinnt.
-      const score = p.snr * bt * bt;
-      if (!best || score > best.score) best = { ...p, bartels: bt, score };
+      // EMPIRISCHE PRÜFUNG: Schlägt die Phasenstabilität dieses Kandidaten die
+      // Surrogate, die aus dem Chart selbst gebaut wurden? Die Hürde ist eine
+      // Wahrscheinlichkeit aus den Daten, keine gesetzte Amplitudengrenze.
+      const sig = significanceOf(work, p.period, bt);
+      if (sig < 0.9) continue;                 // schlägt weniger als 90 % — raus
+      const score = sig * bt;
+      if (!best || score > best.score) best = { ...p, bartels: bt, sig, score };
     }
     if (!best) break;
-    if (best.snr < 1.15) break;                 // ragt nicht aus dem Rauschen
+    if ((best.sig ?? 0) < 0.9) break;           // nicht mehr signifikant
     if (refAmp == null) refAmp = best.amp;
     if (best.amp < refAmp * 0.10) break;        // Restenergie ist Rauschen
     found.push(best);
@@ -847,8 +864,8 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     // Beantwortet "wie viel vom Geschehen macht dieser Zyklus aus" — anders als
     // die rohe Amplitude ist das über Märkte und Zeiträume hinweg vergleichbar.
     strg: s.strg,
-    // SNR: wie stark der Peak aus seiner spektralen Nachbarschaft herausragt
-    snr: s.snr,
+    // SIG: Anteil der Surrogate dieses Charts, die der Zyklus schlägt (0–1)
+    sig: s.sig, sigPct: (s.sig ?? 0) * 100,
     anchor: s.anchor, skew: s.skew,
     acc: s.acc, accPct: (s.acc ?? s.bartels) * 100, spacingCons: s.spacingCons,
     nBottoms: s.nBottoms,
@@ -1817,6 +1834,12 @@ export default function App({ nav, lang = "de" }) {
   const [spectralShift, setSpectralShift] = useState(0); // phase nudge in bars (vT's "p" param)
   const [ampMode, setAmpMode] = useState("equal");       // 'equal' | 'true' amplitude weighting
   const [analysisWin, setAnalysisWin] = useState(0);     // 0 = full history, else last N bars
+  // Suchband: begrenzt die Perioden, in denen überhaupt gesucht wird.
+  // Der Hochpass folgt der Obergrenze — alles Langsamere fliegt aus dem
+  // Residuum und kann sich nicht mehr als Zyklus tarnen.
+  const [bandOn, setBandOn] = useState(false);
+  const [bandMin, setBandMin] = useState(150);
+  const [bandMax, setBandMax] = useState(300);
   // Seasonal pattern (Seasonax-style)
   const [seasonSel, setSeasonSel] = useState(null); // {startKey, endKey}
   const [showCurYear, setShowCurYear] = useState(true);
@@ -1965,7 +1988,7 @@ export default function App({ nav, lang = "de" }) {
       // then remap anchors back to absolute indices in the full history
       const src = analysisWin && candles.length > analysisWin ? candles.slice(candles.length - analysisWin) : candles;
       const offset = candles.length - src.length;
-      const res = detectCyclesSpectral(src, 20);
+      const res = detectCyclesSpectral(src, 20, bandOn ? { min: bandMin, max: bandMax } : null);
       if (offset) res.cycles = res.cycles.map(c => ({ ...c, anchor: (c.anchor ?? 0) + offset }));
       setSpectral(res);
       setSpectralShift(0);
@@ -2332,7 +2355,48 @@ export default function App({ nav, lang = "de" }) {
                           {detecting ? "ANALYZING…" : spectral ? "↻ RE-DETECT CYCLES" : "⚡ DETECT DOMINANT CYCLES"}
                         </button>
                         <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#333", marginTop: 6, lineHeight: 1.5 }}>
-                          Only cycles with ≥3 confirmed swing lows · sorted by accuracy · bottom-to-bottom anchored · ♪ = harmonic (whole-number ratio)
+                          Each candidate is tested against 28 surrogates built from this chart\u2019s own data — only cycles that hold their phase where surrogates cannot are kept · ≥3 confirmed swing lows · ♪ = harmonic
+                        </div>
+
+                        {/* SEARCH BAND — restricts which periods are scanned.
+                            The high-pass follows the upper bound, so anything
+                            slower is removed from the residual entirely and
+                            cannot masquerade as a cycle. */}
+                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: bandOn ? 8 : 0 }}>
+                            <button onClick={() => setBandOn(v => !v)}
+                              style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                              <span style={{ width: 22, height: 12, borderRadius: 7, background: bandOn ? "rgba(212,175,55,0.85)" : "#1e1e1e", position: "relative", transition: "background 0.2s" }}>
+                                <span style={{ position: "absolute", top: 2, left: bandOn ? 12 : 2, width: 8, height: 8, borderRadius: "50%", background: bandOn ? "#0a0a0a" : "#555", transition: "left 0.2s" }} />
+                              </span>
+                              <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.15em", color: bandOn ? "#d4af37" : "#3a3a3a", textTransform: "uppercase" }}>Search band</span>
+                            </button>
+                            {!bandOn && <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 7.5, color: "#2e2e2e" }}>auto · calibrated to this chart</span>}
+                          </div>
+
+                          {bandOn && (
+                            <>
+                              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                                {[["min", bandMin, setBandMin], ["max", bandMax, setBandMax]].map(([lbl, val, set]) => (
+                                  <div key={lbl} style={{ flex: 1 }}>
+                                    <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, letterSpacing: "0.14em", color: "#2e2e2e", textTransform: "uppercase", marginBottom: 3 }}>{lbl}</div>
+                                    <input type="number" value={val} min={4} step={5}
+                                      onChange={e => set(Math.max(4, parseInt(e.target.value) || 4))}
+                                      style={{ width: "100%", boxSizing: "border-box", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(212,175,55,0.25)", color: "#f8e49b", fontFamily: "'DM Mono', monospace", fontSize: 10, padding: "5px 7px", borderRadius: 4, outline: "none" }} />
+                                  </div>
+                                ))}
+                              </div>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 7 }}>
+                                {[["Short 10–40", 10, 40], ["Swing 40–90", 40, 90], ["Mid 90–180", 90, 180], ["Long 180–320", 180, 320]].map(([lbl, lo, hi]) => (
+                                  <button key={lbl} onClick={() => { setBandMin(lo); setBandMax(hi); }}
+                                    style={{ background: bandMin === lo && bandMax === hi ? "rgba(212,175,55,0.12)" : "rgba(255,255,255,0.02)", border: `1px solid ${bandMin === lo && bandMax === hi ? "rgba(212,175,55,0.45)" : "rgba(255,255,255,0.06)"}`, color: bandMin === lo && bandMax === hi ? "#f8e49b" : "#3a3a3a", fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.1em", padding: "3px 7px", borderRadius: 4, cursor: "pointer" }}>{lbl}</button>
+                                ))}
+                              </div>
+                              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 7.5, color: "#2e2e2e", marginTop: 6, lineHeight: 1.5 }}>
+                                Anything slower than max is filtered out of the residual — trend swings can no longer win the scan
+                              </div>
+                            </>
+                          )}
                         </div>
                       </div>
                       {/* In-sample window (vT maxbars) */}
@@ -2492,8 +2556,8 @@ export default function App({ nav, lang = "de" }) {
                                 style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: (cyc.strg ?? 0) >= 4 ? "#d4af37" : "#4a4a4a" }}>
                                 {(cyc.strg ?? 0).toFixed(1)}
                               </span>
-                              <span title={`Bartels ${cyc.bartelsPct.toFixed(0)}% · bottom-timing ${((cyc.spacingCons ?? 0.75) * 100).toFixed(0)}% · ${cyc.nBottoms} confirmed lows`}
-                                style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: cyc.accPct > 60 ? "#22c55e" : cyc.accPct > 42 ? "#f59e0b" : "#ef4444" }}>{cyc.accPct.toFixed(0)}%</span>
+                              <span title={`Beats ${(cyc.sigPct ?? 0).toFixed(0)}% of this chart\u2019s own surrogates · Bartels ${cyc.bartelsPct.toFixed(0)}% · bottom-timing ${((cyc.spacingCons ?? 0.75) * 100).toFixed(0)}% · ${cyc.nBottoms} confirmed lows`}
+                                style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: (cyc.sigPct ?? cyc.accPct) >= 95 ? "#22c55e" : (cyc.sigPct ?? cyc.accPct) >= 90 ? "#f59e0b" : "#ef4444" }}>{(cyc.sigPct ?? cyc.accPct).toFixed(0)}%</span>
                               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                                 <div style={{ width: 7, height: 7, borderRadius: "50%", background: isOn ? "#d4af37" : "transparent", border: `1px solid ${isOn ? "#d4af37" : "#2a2a2a"}`, transition: "all 0.15s" }} />
                               </div>
