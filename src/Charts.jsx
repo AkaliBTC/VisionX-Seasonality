@@ -690,6 +690,16 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     for (let i = 0; i < n; i++) work[i] -= best.a * Math.cos(w * i) + best.b * Math.sin(w * i);
   }
 
+  // STRENGTH je Zyklus: Amplitude gemessen an der Streuung des Residuums.
+  // amp/σ·√2 ≈ Anteil der Schwankung, den der Zyklus trägt; auf 0–10 skaliert.
+  let rMean = 0;
+  for (let i = 0; i < n; i++) rMean += r[i];
+  rMean /= n;
+  let rVar = 0;
+  for (let i = 0; i < n; i++) rVar += (r[i] - rMean) ** 2;
+  const rSd = Math.sqrt(rVar / n) || 1e-9;
+  found.forEach(f => { f.strg = Math.min(10, (f.amp / Math.SQRT2 / rSd) * 10); });
+
   // Drop phase-unstable candidates entirely unless that leaves too few
   let kept = found.filter(f => f.bartels >= 0.3);
   if (kept.length < 3) kept = found;
@@ -833,6 +843,12 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
 
   const cycles = kept.map(s => ({
     period: s.period, pf: s.pf, a: s.a, b: s.b, amp: s.amp, bartels: s.bartels,
+    // STRENGTH: Anteil der Residualvarianz, den dieser Zyklus erklärt (0–10).
+    // Beantwortet "wie viel vom Geschehen macht dieser Zyklus aus" — anders als
+    // die rohe Amplitude ist das über Märkte und Zeiträume hinweg vergleichbar.
+    strg: s.strg,
+    // SNR: wie stark der Peak aus seiner spektralen Nachbarschaft herausragt
+    snr: s.snr,
     anchor: s.anchor, skew: s.skew,
     acc: s.acc, accPct: (s.acc ?? s.bartels) * 100, spacingCons: s.spacingCons,
     nBottoms: s.nBottoms,
@@ -2426,8 +2442,8 @@ export default function App({ nav, lang = "de" }) {
                         return null;
                       })()}
                       {/* Spectral table header */}
-                      <div style={{ display: "grid", gridTemplateColumns: "24px 52px 1fr 44px 24px", gap: 0, padding: "6px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                        {["#", "Period", "Strength", "Acc", ""].map((h, i) => (
+                      <div style={{ display: "grid", gridTemplateColumns: "20px 48px 1fr 34px 40px 22px", gap: 0, padding: "6px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                        {["#", "Len", "Amp", "Strg", "Stab", ""].map((h, i) => (
                           <span key={i} style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#2a2a2a", textTransform: "uppercase" }}>{h}</span>
                         ))}
                       </div>
@@ -2462,7 +2478,7 @@ export default function App({ nav, lang = "de" }) {
                           return (
                             <div key={cyc.period} onClick={() => toggleSpectral(cyc.period)}
                               title={harm ? `Harmonic: ${harm}` : clash && !isOn ? "Too close to a selected period — would beat against it" : undefined}
-                              style={{ display: "grid", gridTemplateColumns: "24px 52px 1fr 44px 24px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.04)", borderLeft: harm ? "2px solid rgba(212,175,55,0.55)" : "2px solid transparent", cursor: "pointer", opacity: clash && !isOn ? 0.4 : 1, background: isOn ? "rgba(212,175,55,0.05)" : harm ? "rgba(212,175,55,0.03)" : "transparent", transition: "background 0.15s, opacity 0.15s" }}>
+                              style={{ display: "grid", gridTemplateColumns: "20px 48px 1fr 34px 40px 22px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.04)", borderLeft: harm ? "2px solid rgba(212,175,55,0.55)" : "2px solid transparent", cursor: "pointer", opacity: clash && !isOn ? 0.4 : 1, background: isOn ? "rgba(212,175,55,0.05)" : harm ? "rgba(212,175,55,0.03)" : "transparent", transition: "background 0.15s, opacity 0.15s" }}>
                               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#2a2a2a" }}>{i + 1}</span>
                               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: isOn ? "#f8e49b" : harm ? "#d4af37" : "#555", fontWeight: isOn ? 600 : 400 }}>
                                 {cyc.period}{interval === "1d" ? "d" : "w"}{harm ? " ♪" : clash && !isOn ? " ≈" : ""}
@@ -2472,6 +2488,10 @@ export default function App({ nav, lang = "de" }) {
                                   <div style={{ width: `${Math.min(cyc.strengthPct, 100)}%`, height: "100%", background: "#d4af37", borderRadius: 2, opacity: isOn ? 1 : 0.5 }} />
                                 </div>
                               </div>
+                              <span title="Strength: share of the residual swing this cycle carries (0–10)"
+                                style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: (cyc.strg ?? 0) >= 4 ? "#d4af37" : "#4a4a4a" }}>
+                                {(cyc.strg ?? 0).toFixed(1)}
+                              </span>
                               <span title={`Bartels ${cyc.bartelsPct.toFixed(0)}% · bottom-timing ${((cyc.spacingCons ?? 0.75) * 100).toFixed(0)}% · ${cyc.nBottoms} confirmed lows`}
                                 style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: cyc.accPct > 60 ? "#22c55e" : cyc.accPct > 42 ? "#f59e0b" : "#ef4444" }}>{cyc.accPct.toFixed(0)}%</span>
                               <div style={{ display: "flex", justifyContent: "flex-end" }}>
