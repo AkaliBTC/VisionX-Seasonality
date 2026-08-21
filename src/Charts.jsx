@@ -818,10 +818,51 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
       }
     } else c.pf = P;
 
-    // Anchor = the MOST RECENT real bottom, as an absolute bar index — exactly
-    // like a manual Set Low. Averaging bottom phases mod the (coarse) bin
-    // period while the wave runs on the refined period caused a phase offset.
-    c.anchor = bottoms.length ? bottoms[bottoms.length - 1] : t0;
+    // ── PHASENVERANKERUNG AM ECHTEN KURS ────────────────────────────────
+    // Die Tiefs oben stammen aus dem entrendeten Residuum. Gezeichnet wird die
+    // Welle aber gegen den PREIS — und im Trend fallen Residuum-Tief und
+    // Kurstief nicht zusammen. Genau daher der sichtbare Versatz.
+    //
+    // Lösung: Der Anker wird nachträglich so gewählt, dass die Wellentäler auf
+    // den TIEFSTEN DURCHSCHNITTSKURSEN liegen. Alle Phasenlagen einer Periode
+    // werden durchprobiert; gewinnt die mit dem niedrigsten Mittelwert. Damit
+    // sitzen die Täler per Konstruktion auf den Kurstiefs, nicht daneben.
+    {
+      const Pf = c.pf || P;
+      const lowsArr = rawLo;
+      // Kurse normieren, damit frühe (niedrige) Bars nicht automatisch gewinnen
+      const win = Math.max(Math.round(Pf * 2), 20);
+      const norm = new Array(n);
+      for (let i = 0; i < n; i++) {
+        const lo = Math.max(0, i - win), hi = Math.min(n - 1, i + win);
+        let mn = Infinity, mx = -Infinity;
+        for (let k = lo; k <= hi; k += Math.max(1, Math.round(win / 24))) {
+          if (lowsArr[k] < mn) mn = lowsArr[k];
+          if (lowsArr[k] > mx) mx = lowsArr[k];
+        }
+        norm[i] = mx > mn ? (lowsArr[i] - mn) / (mx - mn) : 0.5;
+      }
+      const fallback = bottoms.length ? bottoms[bottoms.length - 1] : t0;
+      let bestPhase = fallback % Pf, bestScore = Infinity;
+      const step = Pf > 120 ? 2 : 1;
+      for (let ph = 0; ph < Pf; ph += step) {
+        let sum = 0, cnt = 0;
+        // Alle Talpositionen dieser Phasenlage über die gesamte Historie
+        for (let t = ph; t < n; t += Pf) {
+          const i = Math.round(t);
+          if (i >= 0 && i < n) { sum += norm[i]; cnt++; }
+        }
+        if (cnt >= 2) {
+          const score = sum / cnt;
+          if (score < bestScore) { bestScore = score; bestPhase = ph; }
+        }
+      }
+      // Anker in die Nähe des letzten echten Tiefs legen (gleiche Phase)
+      let anc = bestPhase;
+      while (anc + Pf < n) anc += Pf;
+      c.anchor = anc;
+      c.phaseFit = 1 - bestScore;   // 1 = Täler exakt auf den tiefsten Kursen
+    }
 
     // Skew = average relative top position between consecutive REAL bottoms.
     // Sharp smoothing + parabolic sub-bar refinement of the peak, then a gentle
@@ -871,6 +912,8 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     strg: s.strg,
     // SIG: Anteil der Surrogate dieses Charts, die der Zyklus schlägt (0–1)
     sig: s.sig, sigPct: (s.sig ?? 0) * 100,
+    // PHASE-FIT: wie gut die Wellentäler auf den echten Kurstiefs sitzen (0–1)
+    phaseFit: s.phaseFit,
     anchor: s.anchor, skew: s.skew,
     acc: s.acc, accPct: (s.acc ?? s.bartels) * 100, spacingCons: s.spacingCons,
     nBottoms: s.nBottoms,
