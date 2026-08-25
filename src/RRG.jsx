@@ -265,18 +265,53 @@ const QUAD_COLOR = { LEADING: "#22c55e", WEAKENING: "#facc15", LAGGING: "#ef4444
 const QUAD_ORDER = { LEADING: 0, IMPROVING: 1, WEAKENING: 2, LAGGING: 3 };
 
 // ── DATA LAYER ───────────────────────────────────────────────────────────────
-const fetchHistories = async (symbols) => {
-  const out = {}; const failed = []; const names = {};
-  for (let i = 0; i < symbols.length; i += 25) {
-    const chunk = symbols.slice(i, i + 25);
-    const res = await apiFetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=10y`);
-    if (!res.ok) throw new Error(`API ${res.status} — läuft die Seite auf Vercel / \`vercel dev\`?`);
-    const json = await res.json();
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+const CHUNK = 30;        // /api/history cappt selbst bei 30 Symbolen
+const MAX_RETRY = 4;     // Versuche pro Chunk bei 429
+
+// Robuster Loader: ein rate-limitierter Chunk bricht NICHT mehr den ganzen Lauf
+// ab. Jeder Chunk wird bis zu MAX_RETRY-mal versucht (Wartezeit aus Retry-After),
+// erfolgreiche Chunks werden über onPartial sofort nach oben gemeldet, damit sich
+// der Chart progressiv füllt statt alles-oder-nichts zu sein.
+const fetchHistories = async (symbols, onPartial) => {
+  const out = {}; const failed = []; const names = {}; const limited = [];
+  let hardError = null;
+
+  for (let i = 0; i < symbols.length; i += CHUNK) {
+    const chunk = symbols.slice(i, i + CHUNK);
+    let json = null;
+
+    for (let attempt = 0; attempt < MAX_RETRY && !json; attempt++) {
+      try {
+        const res = await apiFetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=10y`);
+        if (!res.ok) throw new Error(`API ${res.status} — läuft die Seite auf Vercel / \`vercel dev\`?`);
+        json = await res.json();
+      } catch (e) {
+        const msg = String(e?.message || e);
+        const m = /^RATE_LIMITED:(\d+)/.exec(msg);
+        if (m) {
+          if (attempt === MAX_RETRY - 1) { limited.push(...chunk); break; }
+          await sleep((Number(m[1]) + 1) * 1000);      // Retry-After abwarten
+          continue;
+        }
+        if (msg === "ACCESS_REQUIRED") throw e;        // Auth: sofort raus
+        hardError = msg;                              // sonst: Chunk aufgeben
+        limited.push(...chunk);
+        break;
+      }
+    }
+
+    if (!json) continue;                              // weiter mit dem nächsten Chunk
     Object.assign(out, json.data);
     Object.assign(names, json.names || {});
     failed.push(...(json.failed || []));
+    onPartial?.(json.data, json.names || {});
   }
-  return { data: out, failed, names };
+
+  // Nur meckern, wenn wirklich nichts ankam
+  if (!Object.keys(out).length && hardError) throw new Error(hardError);
+  return { data: out, failed, names, limited };
 };
 
 // ── SMOOTH TAIL ──────────────────────────────────────────────────────────────
@@ -651,6 +686,8 @@ const RRG_T = {
     tipNorm: "Querschnitts-Normierung: jeder Titel gegen seine Peer-Group, spreizt das Feld über alle Quadranten",
     tipAbs: "Rohe RS-Performance gegen den Basiswert, 100 = Basis geschlagen, nachrechenbar",
     dragPan: "ZIEHEN ZUM VERSCHIEBEN", noDataFor: "Keine Daten",
+    rateLimited: "Rate-Limit erreicht · nicht geladen",
+    loadedOf: "geladen",
     history: "HISTORIE", animate: "▶ ABSPIELEN", pause: "⏸ PAUSE",
     memberDetail: "MEMBER DETAIL", tail: "Tail", quadrant: "Quadrant", price: "Kurs", chg: "Änderung",
     packTitle: "VSX PACK MANAGER", packSub: "Watchlist-Titel je Paket · lokal gespeichert",
@@ -668,6 +705,8 @@ const RRG_T = {
     tipNorm: "Cross-sectional normalisation: each name against its peer group, spreads the field across all quadrants",
     tipAbs: "Raw RS performance vs the benchmark, 100 = matched the benchmark, directly verifiable",
     dragPan: "DRAG TO PAN", noDataFor: "No data",
+    rateLimited: "Rate limit hit · not loaded",
+    loadedOf: "loaded",
     history: "HISTORY", animate: "▶ ANIMATE", pause: "⏸ PAUSE",
     memberDetail: "MEMBER DETAIL", tail: "Tail", quadrant: "Quadrant", price: "Price", chg: "% Chg",
     packTitle: "VSX PACK MANAGER", packSub: "Watchlist names per pack · stored locally",
@@ -697,6 +736,8 @@ export default function RRG({ lang = "de" }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [failed, setFailed] = useState([]);
+  const [limited, setLimited] = useState([]);   // Chunks, die am Rate-Limit hängen blieben
+  const [reloadKey, setReloadKey] = useState(0); // manueller Retry-Trigger
   const [hovered, setHovered] = useState(null);
   const [offset, setOffset] = useState(0);          // History-Scrub: 0 = aktuell
   const [playing, setPlaying] = useState(false);
@@ -801,24 +842,36 @@ export default function RRG({ lang = "de" }) {
     let alive = true;
     const missing = neededSymbols.filter(s => !cacheRef.current[s]);
     if (!missing.length) { setRaw({ ...cacheRef.current }); return; }
-    setLoading(true); setError("");
-    fetchHistories(missing)
-      .then(({ data, failed: f, names: n }) => {
+    setLoading(true); setError(""); setLimited([]);
+
+    const mergeNames = n => {
+      if (!n || !Object.keys(n).length) return;
+      setNames(prev => {
+        const next = { ...prev };
+        for (const [k, v] of Object.entries(n)) if (!next[k]) next[k] = v;
+        return next;
+      });
+    };
+
+    // onPartial: jeder erfolgreiche Chunk landet sofort im Cache und im Chart
+    fetchHistories(missing, (partial, partialNames) => {
+      if (!alive) return;
+      Object.assign(cacheRef.current, partial);
+      setRaw({ ...cacheRef.current });
+      mergeNames(partialNames);
+    })
+      .then(({ data, failed: f, names: n, limited: l }) => {
         if (!alive) return;
         Object.assign(cacheRef.current, data);
         setRaw({ ...cacheRef.current });
-        // Namen aus der API übernehmen, ohne manuelle Einträge zu überschreiben
-        if (n && Object.keys(n).length) setNames(prev => {
-          const next = { ...prev };
-          for (const [k, v] of Object.entries(n)) if (!next[k]) next[k] = v;
-          return next;
-        });
+        mergeNames(n);
         setFailed(f);
+        setLimited(l || []);
       })
       .catch(e => alive && setError(e.message))
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
-  }, [neededSymbols]);
+  }, [neededSymbols, reloadKey]);
 
   const params = interval_ === "1wk"
     ? { window: 52,  momWindow: 13 }   // RS über 1 Jahr (X) vs. 1 Quartal (Y)
@@ -861,19 +914,43 @@ export default function RRG({ lang = "de" }) {
       if (!buckets.has(t)) buckets.set(t, []);
       buckets.get(t).push([k, i]);
     }));
-    const stats = a => {
-      const m = a.reduce((p, q) => p + q, 0) / a.length;
-      const s = Math.sqrt(a.reduce((p, q) => p + (q - m) ** 2, 0) / a.length);
-      return [m, s];
+
+    // Log-Raum: RS-Performance ist multiplikativ und rechtsschief (ein Coin macht
+    // +2000 %, der Rest bewegt sich um 100). ln() macht die Verteilung symmetrisch,
+    // damit ein Ausreißer den Mittelwert nicht mehr wegzieht.
+    const L = v => Math.log(Math.max(Number(v) || 1e-9, 1e-9) / 100);
+
+    // Median + MAD statt Mittelwert + Stdev: beide sind gegen einzelne Extremwerte
+    // immun. Ohne das frisst ein Titel wie ZEC die komplette Querschnitts-Varianz
+    // und alle anderen kleben bei z≈0, also exakt auf der Mittellinie.
+    const median = a => {
+      const s = [...a].sort((p, q) => p - q);
+      const h = s.length >> 1;
+      return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2;
     };
+    const robust = a => {
+      const med = median(a);
+      let scale = 1.4826 * median(a.map(v => Math.abs(v - med)));
+      if (!(scale > 1e-9)) {                       // Fallback: Stdev, falls MAD = 0
+        const m = a.reduce((p, q) => p + q, 0) / a.length;
+        scale = Math.sqrt(a.reduce((p, q) => p + (q - m) ** 2, 0) / a.length);
+      }
+      return [med, scale > 1e-9 ? scale : 1e-9];
+    };
+
+    // Clipping bei ±CLIP_Z: Extremwerte parken am Rand, statt die Skala zu sprengen
+    const CLIP_Z = 3;
+    const SPREAD = 3;                              // Skalenfaktor → 1σ = 3 Punkte
+    const clip = z => Math.max(-CLIP_Z, Math.min(CLIP_Z, z));
+
     buckets.forEach(arr => {
       if (arr.length < 3) return;
-      const xs = arr.map(([k, i]) => fullItems[k].full.xs[i]);
-      const ys = arr.map(([k, i]) => fullItems[k].full.ys[i]);
-      const [mx, sx] = stats(xs), [my, sy] = stats(ys);
+      const xs = arr.map(([k, i]) => L(fullItems[k].full.xs[i]));
+      const ys = arr.map(([k, i]) => L(fullItems[k].full.ys[i]));
+      const [mx, sx] = robust(xs), [my, sy] = robust(ys);
       arr.forEach(([k, i], j) => {
-        out[k].full.xs[i] = sx > 1e-9 ? 100 + ((xs[j] - mx) / sx) * 3 : 100;
-        out[k].full.ys[i] = sy > 1e-9 ? 100 + ((ys[j] - my) / sy) * 3 : 100;
+        out[k].full.xs[i] = 100 + clip((xs[j] - mx) / sx) * SPREAD;
+        out[k].full.ys[i] = 100 + clip((ys[j] - my) / sy) * SPREAD;
       });
     });
     return out;
@@ -889,16 +966,26 @@ export default function RRG({ lang = "de" }) {
 
   // Feste, getrennte X/Y-Extents über die komplette scrubbare Range (kein Jiggle)
   const chartExt = useMemo(() => {
-    let mx = 1.5, my = 1.5;
+    // Extents über das 96. Perzentil statt über das Maximum: ein einzelner
+    // Ausreißer soll nicht den ganzen Rest in einen Punkt zusammenquetschen.
+    const dx = [], dy = [];
     scaledItems.forEach(it => {
       const len = it.full.xs.length;
       const start = Math.max(0, len - MAX_OFFSET - tailLen);
       for (let i = start; i < len; i++) {
-        mx = Math.max(mx, Math.abs(it.full.xs[i] - 100));
-        my = Math.max(my, Math.abs(it.full.ys[i] - 100));
+        dx.push(Math.abs(it.full.xs[i] - 100));
+        dy.push(Math.abs(it.full.ys[i] - 100));
       }
     });
-    return { x: mx * 1.08, y: my * 1.08 };
+    const pct = (a, p) => {
+      if (!a.length) return 1.5;
+      const s = [...a].sort((u, v) => u - v);
+      return s[Math.min(s.length - 1, Math.floor(p * s.length))];
+    };
+    return {
+      x: Math.max(1.5, pct(dx, 0.96)) * 1.15,
+      y: Math.max(1.5, pct(dy, 0.96)) * 1.15,
+    };
   }, [scaledItems, tailLen]);
 
   const sorted = useMemo(() => {
@@ -1080,6 +1167,20 @@ export default function RRG({ lang = "de" }) {
             <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, color: "#5a5a5a" }}>
               CMC_KEY in den Vercel Environment Variables setzen
             </span>
+          </div>
+        )}
+        {limited.length > 0 && !error && (
+          <div style={{ ...glass, borderColor: "rgba(250,204,21,0.30)", padding: "10px 16px", marginBottom: 12,
+            display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+            <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#facc15" }}>
+              {T.rateLimited}
+            </span>
+            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#8f8f8f" }}>
+              {items.length}/{universe.length} {T.loadedOf} · {limited.length}× 429
+            </span>
+            <button style={{ ...pill(false), fontSize: 9 }} onClick={() => { cacheRef.current = {}; setRaw({}); setLimited([]); setReloadKey(k => k + 1); }}>
+              ↻ RETRY
+            </button>
           </div>
         )}
         {failed.length > 0 && !error && (
