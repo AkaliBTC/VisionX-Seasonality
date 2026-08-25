@@ -110,7 +110,10 @@ export default async function handler(req, res) {
   if (!symbols.length) return res.status(400).json({ error: "symbols required" });
 
   // Zugang + Rate-Limit; Kosten skalieren mit der Symbolanzahl
-  if (!guard(req, res, Math.max(1, Math.ceil(symbols.length / 5)))) return;
+  // Kosten 1 pro Request statt ceil(n/5): das Batching schont die Provider
+  // ohnehin (6 parallel, Edge-Cache 12h). Die alte Formel hat genau das
+  // Verhalten bestraft, das man haben will, und 100er-Packs unmöglich gemacht.
+  if (!guard(req, res, 1)) return;
 
   const data = {};
   const names = {};
