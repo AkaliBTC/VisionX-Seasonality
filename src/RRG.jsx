@@ -387,6 +387,9 @@ function BenchChart({ series, label, offset, tailLen, onScrub, maxOffset }) {
 }
 
 // ── RRG-CHART (breites Rechteck · zoombar) ───────────────────────────────────
+const MIN_Z = 0.3;   // bis ~3,3× weiter raus als die Auto-Extents
+const MAX_Z = 8;
+
 function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showTails, xLabel, yLabel, T }) {
   const W = 1480, H = 560, PADL = 52, PADR = 18, PADT = 14, PADB = 38;
   const plotW = W - PADL - PADR, plotH = H - PADT - PADB;
@@ -402,8 +405,10 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showT
 
   const zoomAt = useCallback((factor, px, py) => {
     setView(v => {
-      const z = Math.min(8, Math.max(1, v.z * factor));
-      if (z === 1) return { cx: 100, cy: 100, z: 1 };
+      // z < 1 = weiter raus als die Auto-Extents. Nötig, seit chartExt auf dem
+      // 96. Perzentil basiert: geclippte Ausreißer liegen sonst außerhalb des Bildes.
+      const z = Math.min(MAX_Z, Math.max(MIN_Z, v.z * factor));
+      if (Math.abs(z - 1) < 1e-9) return { cx: 100, cy: 100, z: 1 };
       const hx0 = ext.x / v.z, hx1 = ext.x / z;
       const hy0 = ext.y / v.z, hy1 = ext.y / z;
       const dx = px != null ? (v.cx - hx0 + ((px - PADL) / plotW) * 2 * hx0) : v.cx;
@@ -428,7 +433,7 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showT
 
   const onPointerDown = (e) => {
     e.preventDefault();
-    if (view.z === 1) return;
+    if (Math.abs(view.z - 1) < 1e-9) return;
     dragRef.current = { x: e.clientX, y: e.clientY, cx: view.cx, cy: view.cy };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
@@ -550,12 +555,12 @@ function RRGChart({ items, hovered, setHovered, onNodeClick, tailLen, ext, showT
         <button style={zoomBtn} onClick={() => zoomAt(1 / 1.35)} title={T.tipZoomOut}
           onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"; e.currentTarget.style.color = "#f8e49b"; }}
           onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "#c9c9c9"; }}>−</button>
-        {view.z > 1 && (
+        {Math.abs(view.z - 1) > 1e-9 && (
           <button style={{ ...zoomBtn, color: GOLD, borderColor: "rgba(212,175,55,0.4)" }}
             onClick={() => setView({ cx: 100, cy: 100, z: 1 })} title={T.tipZoomReset}>⟲</button>
         )}
       </div>
-      {view.z > 1 && (
+      {Math.abs(view.z - 1) > 1e-9 && (
         <div style={{ position: "absolute", bottom: 12, right: 12, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#666", letterSpacing: "0.14em", background: "rgba(18,18,18,0.7)", padding: "4px 9px", borderRadius: 7, backdropFilter: "blur(10px)" }}>
           {view.z.toFixed(1)}× · {T.dragPan}
         </div>
