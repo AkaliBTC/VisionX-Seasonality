@@ -38,11 +38,6 @@ const HEAT_GAMMA = 0.68;         // <1 = flächiger und heller, >1 = mehr Schwar
 const COINS = [
   { id: "BTC-USD", label: "BTC" },
   { id: "ETH-USD", label: "ETH" },
-  { id: "SOL-USD", label: "SOL" },
-  { id: "XRP-USD", label: "XRP" },
-  { id: "BNB-USD", label: "BNB" },
-  { id: "DOGE-USD", label: "DOGE" },
-  { id: "ADA-USD", label: "ADA" },
 ];
 const isBtc = c => c === "BTC-USD";
 
