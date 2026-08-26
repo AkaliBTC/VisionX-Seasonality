@@ -6,6 +6,7 @@ import Cycle from "./Cycle";
 import Fundamentals from "./Fundamentals";
 import Bottom from "./Bottom";
 import Breadth from "./Breadth";
+import OnChain from "./OnChain";
 import { C, F, overline, GLOBAL_CSS, Wordmark } from "./ui";
 import { AccessGate, useAccess } from "./access";
 
@@ -22,9 +23,10 @@ const MODULES = [
   { id: "fundamentals", label: "FUNDAMENTALS" },
   { id: "bottom",       label: "BOTTOM RADAR" },
   { id: "breadth",      label: "BREADTH" },
+  { id: "onchain",      label: "ON-CHAIN" },
 ];
 
-const COMPONENTS = { rrg: RRG, vix: VIX, cycle: Cycle, fundamentals: Fundamentals, bottom: Bottom, breadth: Breadth };
+const COMPONENTS = { rrg: RRG, vix: VIX, cycle: Cycle, fundamentals: Fundamentals, bottom: Bottom, breadth: Breadth, onchain: OnChain };
 
 const LANG_KEY = "vsx_lang_v1";
 const loadLang = () => {
