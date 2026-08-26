@@ -178,6 +178,162 @@ const fetchSnapshot = async () => {
   };
 };
 
+// ── ANGEBOTSVERTEILUNG (Movement Zones) ──────────────────────────────────────
+// Die echte Kostenbasis-Verteilung: wie viel BTC-Angebot liegt in welchem
+// Preisbucket. Das ist der Datensatz hinter der STH-Distribution-Heatmap —
+// gezählt wird Angebot in BTC, nicht gehandeltes Volumen.
+//
+// Format unbekannt, deshalb defensiv geparst. Zwei plausible Formen:
+//   BREIT: { d: "2026-08-20", "60000": 12345, "61000": 23456, … }
+//   LANG:  { d: "2026-08-20", price: 60000, supply: 12345 }
+// Beide landen in derselben Struktur { ts[], buckets[], grid[][] }.
+const BG_DIST_PATHS = [
+  "movement-zones", "supply-distribution", "cost-basis-distribution",
+  "realized-price-distribution", "distribution-realized-price", "utxo-distribution",
+];
+
+const MAX_DIST_DATES = 2200;
+const MAX_DIST_BUCKETS = 420;
+
+const parseDistribution = (rows) => {
+  const first = rows.find(r => r && typeof r === "object");
+  if (!first) return null;
+
+  const dateOf = (row) => {
+    for (const [k, v] of Object.entries(row)) {
+      const lk = k.toLowerCase();
+      if (lk === "d" || lk === "date") {
+        const t = Date.parse(typeof v === "string" && v.length === 10 ? `${v}T00:00:00Z` : v);
+        if (Number.isFinite(t)) return t;
+      }
+      if (lk === "unixts" || lk === "timestamp" || lk === "time") {
+        const n = Number(v);
+        if (Number.isFinite(n)) return n > 1e12 ? n : n * 1000;
+      }
+    }
+    return null;
+  };
+
+  const numericKeys = Object.keys(first).filter(k => {
+    const n = Number(k);
+    return Number.isFinite(n) && n > 0;
+  });
+
+  // ── BREITES FORMAT ────────────────────────────────────────────────────────
+  if (numericKeys.length >= 5) {
+    const buckets = numericKeys.map(Number).sort((a, b) => a - b);
+    const ts = [], grid = [];
+    for (const row of rows) {
+      const t = dateOf(row);
+      if (t == null) continue;
+      const line = new Array(buckets.length);
+      for (let i = 0; i < buckets.length; i++) {
+        const v = Number(row[String(buckets[i])]);
+        line[i] = Number.isFinite(v) && v > 0 ? v : 0;
+      }
+      ts.push(t); grid.push(line);
+    }
+    return ts.length > 20 ? { ts, buckets, grid } : null;
+  }
+
+  // ── LANGES FORMAT ─────────────────────────────────────────────────────────
+  // Zwei numerische Felder neben dem Datum: eines ist der Preisbucket, eines
+  // die Menge. Erst über die Feldnamen entscheiden, sonst über die Streuung —
+  // Buckets wiederholen sich über die Tage, Mengen praktisch nie.
+  const skip = new Set(["d", "date", "unixts", "timestamp", "time", "t"]);
+  const cand = Object.keys(first).filter(k => !skip.has(k.toLowerCase()) && Number.isFinite(Number(first[k])));
+  if (cand.length < 2) return null;
+
+  const priceLike = /price|bucket|zone|level|band|bin/i;
+  const supplyLike = /supply|btc|coins|amount|value|qty/i;
+  let priceKey = cand.find(k => priceLike.test(k));
+  let supplyKey = cand.find(k => k !== priceKey && supplyLike.test(k));
+
+  if (!priceKey || !supplyKey) {
+    const distinct = k => new Set(rows.slice(0, 4000).map(r => Number(r[k]))).size;
+    const sorted = [...cand].sort((a, b) => distinct(a) - distinct(b));
+    priceKey = priceKey || sorted[0];
+    supplyKey = supplyKey || sorted.find(k => k !== priceKey);
+  }
+  if (!priceKey || !supplyKey) return null;
+
+  const byDate = new Map();
+  const bucketSet = new Set();
+  for (const row of rows) {
+    const t = dateOf(row);
+    const price = Number(row[priceKey]);
+    const supply = Number(row[supplyKey]);
+    if (t == null || !Number.isFinite(price) || price <= 0 || !Number.isFinite(supply)) continue;
+    bucketSet.add(price);
+    if (!byDate.has(t)) byDate.set(t, new Map());
+    byDate.get(t).set(price, supply);
+  }
+  if (byDate.size < 20 || bucketSet.size < 5) return null;
+
+  const buckets = [...bucketSet].sort((a, b) => a - b);
+  const ts = [...byDate.keys()].sort((a, b) => a - b);
+  const grid = ts.map(t => {
+    const m = byDate.get(t);
+    return buckets.map(b => {
+      const v = m.get(b);
+      return Number.isFinite(v) && v > 0 ? v : 0;
+    });
+  });
+  return { ts, buckets, grid };
+};
+
+// Auf handliche Größe bringen: sonst wandern schnell mehrere MB durch die Leitung
+const shrinkDistribution = (dist) => {
+  let { ts, buckets, grid } = dist;
+
+  if (buckets.length > MAX_DIST_BUCKETS) {
+    const g = Math.ceil(buckets.length / MAX_DIST_BUCKETS);
+    const nb = [], ng = grid.map(() => []);
+    for (let i = 0; i < buckets.length; i += g) {
+      const end = Math.min(buckets.length, i + g);
+      nb.push(buckets[i]);
+      for (let r = 0; r < grid.length; r++) {
+        let sum = 0;
+        for (let j = i; j < end; j++) sum += grid[r][j];
+        ng[r].push(sum);
+      }
+    }
+    buckets = nb; grid = ng;
+  }
+
+  if (ts.length > MAX_DIST_DATES) {
+    const g = Math.ceil(ts.length / MAX_DIST_DATES);
+    const nt = [], ng = [];
+    for (let i = 0; i < ts.length; i += g) { nt.push(ts[i]); ng.push(grid[i]); }
+    ts = nt; grid = ng;
+  }
+
+  // Auf ganze Zahlen runden — die Nachkommastellen kosten nur Bandbreite
+  return { ts, buckets, grid: grid.map(r => r.map(v => Math.round(v))) };
+};
+
+const fetchBgDistribution = async () => {
+  for (const path of BG_DIST_PATHS) {
+    try {
+      const url = `${BG_BASE}/${path}${BG_TOKEN ? `?token=${encodeURIComponent(BG_TOKEN)}` : ""}`;
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "VisionX-Analytics/1.0",
+          Accept: "application/json",
+          ...(BG_TOKEN ? { Authorization: `Bearer ${BG_TOKEN}` } : {}),
+        },
+      });
+      if (!res.ok) continue;
+      const json = await res.json();
+      const rows = Array.isArray(json) ? json : (json?.data || json?.values);
+      if (!Array.isArray(rows) || rows.length < 20) continue;
+      const parsed = parseDistribution(rows);
+      if (parsed) return { ...shrinkDistribution(parsed), slug: path };
+    } catch { /* nächster Kandidat */ }
+  }
+  return null;
+};
+
 // ── HANDLER ──────────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   if (!guard(req, res, 1)) return;
@@ -220,6 +376,14 @@ export default async function handler(req, res) {
     }
     res.setHeader("Cache-Control", "public, s-maxage=43200, stale-while-revalidate=86400");
     return res.status(200).json({ data, meta, failed, source: "bgeometrics", tokenSet: Boolean(BG_TOKEN) });
+  }
+
+  // Angebotsverteilung — eigener Zweig, weil das Ergebnis eine Matrix ist
+  if (req.query.action === "distribution") {
+    const dist = await fetchBgDistribution();
+    res.setHeader("Cache-Control", "public, s-maxage=43200, stale-while-revalidate=86400");
+    if (!dist) return res.status(200).json({ distribution: null, tried: BG_DIST_PATHS });
+    return res.status(200).json({ distribution: dist, source: "bgeometrics" });
   }
 
   const ids = String(req.query.metrics || "mvrv,nvt,hash-rate")
