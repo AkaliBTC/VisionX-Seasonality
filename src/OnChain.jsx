@@ -376,6 +376,11 @@ const T_ = {
     liveNote: "Echte UTXO-Kohortendaten von BGeometrics. Der Proxy ist nur noch Rückfallebene.",
     live_: "LIVE", sources: "QUELLEN", daily: "TÄGLICH", weekly: "WÖCHENTLICH",
     noSource: "KEINE QUELLE", failedSlugs: "Ohne Antwort", legend: "VOL",
+    runProbe: "↗ DIAGNOSE ÖFFNEN",
+    hint401: "Der Anbieter verlangt einen Schlüssel. BG_TOKEN in den Vercel Environment Variables setzen.",
+    hint429: "Kontingent erschöpft. Später erneut versuchen oder BG_TOKEN setzen, das hebt das Limit an.",
+    hint404: "Die Endpunkt-Namen stimmen nicht. Die Diagnose zeigt, welche Pfade existieren.",
+    hintNet: "Keine Antwort vom Anbieter — Netzwerkfehler oder Timeout.",
     noSourceNote: "Für diese Ansicht hat keine der hinterlegten Quellen Daten geliefert. Die Slug-Kandidaten stehen in api/onchain.js unter BG_METRICS.",
   },
   en: {
@@ -391,6 +396,11 @@ const T_ = {
     liveNote: "Real UTXO cohort data from BGeometrics. The proxy is only a fallback now.",
     live_: "LIVE", sources: "SOURCES", daily: "DAILY", weekly: "WEEKLY",
     noSource: "NO SOURCE", failedSlugs: "No response", legend: "VOL",
+    runProbe: "↗ OPEN DIAGNOSTICS",
+    hint401: "The provider requires a key. Set BG_TOKEN in the Vercel environment variables.",
+    hint429: "Quota exhausted. Try again later, or set BG_TOKEN to raise the limit.",
+    hint404: "The endpoint names are wrong. The diagnostics show which paths exist.",
+    hintNet: "No response from the provider — network error or timeout.",
     noSourceNote: "None of the configured sources returned data for this view. The slug candidates live in api/onchain.js under BG_METRICS.",
   },
 };
@@ -940,6 +950,7 @@ export default function OnChain({ lang = "de" }) {
   const [utxo, setUtxo] = useState({});     // echte Kohorten-Reihen von BGeometrics
   const [missing, setMissing] = useState([]);  // Slugs, die kein Ergebnis lieferten
   const [dist, setDist] = useState(null);      // echte Angebotsverteilung (Movement Zones)
+  const [bgStatus, setBgStatus] = useState({});  // HTTP-Status je Metrik
   const [snap, setSnap] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -980,7 +991,7 @@ export default function OnChain({ lang = "de" }) {
     if (!isBtc(coin)) { setUtxo({}); return undefined; }
     apiFetch("/api/onchain?action=utxo&metrics=sth-realized-price,supply-in-profit,sopr,sth-mvrv,realized-price,nupl,mvrv,mvrv-zscore,puell-multiple,hashrate")
       .then(r => (r.ok ? r.json() : null))
-      .then(j => { if (alive && j?.data) { setUtxo(j.data); setMissing(j.failed || []); } })
+      .then(j => { if (alive && j) { setUtxo(j.data || {}); setMissing(j.failed || []); setBgStatus(j.status || {}); } })
       .catch(() => { /* Fallback auf Proxy */ });
     return () => { alive = false; };
   }, [coin]);
@@ -1271,11 +1282,29 @@ export default function OnChain({ lang = "de" }) {
                 {noData && isBtc(coin) ? T.noSourceNote : T.btcNote}
               </span>
               {!isBtc(coin) && <button style={btnGhost(false)} onClick={() => setCoin("BTC-USD")}>→ BTC</button>}
-              {missing.length > 0 && (
-                <span style={{ fontFamily: F.mono, fontSize: 9.5, color: C.textFaint }}>
-                  {T.failedSlugs}: {missing.join(", ")}
-                </span>
-              )}
+              {missing.length > 0 && (() => {
+                const codes = [...new Set(missing.map(m => bgStatus[m]).filter(Boolean))];
+                const hint = codes.includes(401) || codes.includes(403) ? T.hint401
+                  : codes.includes(429) ? T.hint429
+                  : codes.includes(404) ? T.hint404
+                  : codes.length ? null : T.hintNet;
+                return (
+                  <>
+                    <span style={{ fontFamily: F.mono, fontSize: 9.5, color: C.textFaint }}>
+                      {T.failedSlugs}: {missing.map(m => bgStatus[m] ? `${m} (${bgStatus[m]})` : m).join(", ")}
+                    </span>
+                    {hint && (
+                      <span style={{ fontFamily: F.ui, fontSize: 10.5, color: "#facc15", maxWidth: 560, textAlign: "center", lineHeight: 1.6 }}>
+                        {hint}
+                      </span>
+                    )}
+                    <a href="/api/onchain?action=probe" target="_blank" rel="noreferrer"
+                      style={{ ...btnGhost(false), textDecoration: "none", fontSize: 8.5 }}>
+                      {T.runProbe}
+                    </a>
+                  </>
+                );
+              })()}
             </div>
           ) : (
             <Chart view={view} px={px} heat={heat} omega={omega} fractal={fractal}
