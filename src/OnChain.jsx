@@ -27,6 +27,9 @@ import { C, F, panel, overline, displayTitle, btnGhost, badge, Ambient } from ".
 
 const GOLD = "#d4af37";
 const STH_WINDOW = 155;          // Short-Term-Holder-Schwelle in Tagen
+const STH_WINDOW_W = 22;         // dieselbe Schwelle in Wochen (155/7)
+const FRACTAL_WIN = 60;          // Volatilitätsfenster, Tage
+const FRACTAL_WIN_W = 26;        // dito in Wochen
 const HEAT_BINS = 190;           // Preisklassen der Kostenbasis-Heatmap (global, log-verteilt)
 const HEAT_FLOOR = 0.04;         // Zellen darunter werden gar nicht gezeichnet
 const HEAT_GAMMA = 1.25;         // >1 = steiler Abfall = mehr Schwarz. Kleiner = flächiger.
@@ -243,14 +246,13 @@ const buildHeat = (ohlc, w = STH_WINDOW, bins = HEAT_BINS) => {
 };
 
 // Ω-Score: Perzentilrang der σ-Abweichung vom Realised-Proxy
-const buildOmega = (px) => {
+const buildOmega = (px, look = 365) => {
   if (!px) return null;
   const { ts, price, realised, upper } = px;
   const dev = price.map((p, i) => {
     const sd = upper[i] - realised[i];
     return sd > 1e-9 ? (p - realised[i]) / sd : 0;
   });
-  const look = 365;
   const score = dev.map((d, i) => {
     const from = Math.max(0, i - look + 1);
     let below = 0, cnt = 0;
@@ -261,16 +263,16 @@ const buildOmega = (px) => {
 };
 
 // Fractal Intensity: True Range gegen die eigene 60-Tage-Verteilung
-const buildFractal = (ohlc) => {
+const buildFractal = (ohlc, WIN = FRACTAL_WIN) => {
   const n = ohlc?.length || 0;
-  if (n < 90) return null;
+  if (n < WIN + 30) return null;
   const tr = new Array(n).fill(0);
   for (let i = 1; i < n; i++) {
     const r = ohlc[i], pc = ohlc[i - 1][4];
     tr[i] = Math.max(r[2] - r[3], Math.abs(r[2] - pc), Math.abs(r[3] - pc)) / pc;
   }
   const ts = [], price = [], intensity = [];
-  const WIN = 60;
+  const LB = Math.max(10, Math.round(WIN / 3));
   for (let i = WIN; i < n; i++) {
     let m = 0;
     for (let k = i - WIN + 1; k <= i; k++) m += tr[k];
@@ -279,9 +281,9 @@ const buildFractal = (ohlc) => {
     for (let k = i - WIN + 1; k <= i; k++) vs += (tr[k] - m) ** 2;
     const sd = Math.sqrt(vs / WIN) || 1e-9;
 
-    let hi20 = -Infinity, lo20 = Infinity;
-    for (let k = i - 20; k < i; k++) { if (ohlc[k][2] > hi20) hi20 = ohlc[k][2]; if (ohlc[k][3] < lo20) lo20 = ohlc[k][3]; }
-    const brk = (ohlc[i][4] > hi20 || ohlc[i][4] < lo20) ? 1.6 : 1;
+    let hiN = -Infinity, loN = Infinity;
+    for (let k = Math.max(0, i - LB); k < i; k++) { if (ohlc[k][2] > hiN) hiN = ohlc[k][2]; if (ohlc[k][3] < loN) loN = ohlc[k][3]; }
+    const brk = (ohlc[i][4] > hiN || ohlc[i][4] < loN) ? 1.6 : 1;
 
     ts.push(ohlc[i][0]);
     price.push(ohlc[i][4]);
@@ -318,7 +320,9 @@ const T_ = {
     above: "KURS DARÜBER", below: "KURS DARUNTER", addresses: "ADRESSEN",
     proxyWarn: "Volumenprofil-Näherung, keine UTXO-Daten. Form belastbar, Niveau nicht.",
     liveNote: "Echte UTXO-Kohortendaten von BGeometrics. Der Proxy ist nur noch Rückfallebene.",
-    live_: "LIVE", sources: "QUELLEN",
+    live_: "LIVE", sources: "QUELLEN", daily: "TÄGLICH", weekly: "WÖCHENTLICH",
+    noSource: "KEINE QUELLE", failedSlugs: "Ohne Antwort",
+    noSourceNote: "Für diese Ansicht hat keine der hinterlegten Quellen Daten geliefert. Die Slug-Kandidaten stehen in api/onchain.js unter BG_METRICS.",
   },
   en: {
     title: "ON-CHAIN", noData: "NO DATA", loading: "LOADING", reset: "↺ ZOOM",
@@ -331,7 +335,9 @@ const T_ = {
     above: "PRICE ABOVE", below: "PRICE BELOW", addresses: "ADDRESSES",
     proxyWarn: "Volume-profile approximation, not UTXO data. The shape holds, the level does not.",
     liveNote: "Real UTXO cohort data from BGeometrics. The proxy is only a fallback now.",
-    live_: "LIVE", sources: "SOURCES",
+    live_: "LIVE", sources: "SOURCES", daily: "DAILY", weekly: "WEEKLY",
+    noSource: "NO SOURCE", failedSlugs: "No response",
+    noSourceNote: "None of the configured sources returned data for this view. The slug candidates live in api/onchain.js under BG_METRICS.",
   },
 };
 
@@ -339,14 +345,20 @@ const T_ = {
 const W = 1480, H = 500, PADL = 68, PADR = 68, PADT = 18, PADB = 34;
 const plotW = W - PADL - PADR, plotH = H - PADT - PADB;
 
+// Sichtfenster begrenzen, aber an beiden Rändern ein halbes Fenster Überlauf
+// zulassen — sonst klebt man beim Zoomen am Anfang und am Ende der Reihe fest.
+const clampWin = (a, span) => {
+  const over = span * 0.5;
+  const lo = -over, hi = 1 + over - span;
+  return { a: Math.min(hi, Math.max(lo, a)), b: Math.min(hi, Math.max(lo, a)) + span };
+};
+
 function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
   const svgRef = useRef(null);
   const canvasRef = useRef(null);
   const dragRef = useRef(null);
   const [win, setWin] = useState({ a: 0, b: 1 });
   const [hoverK, setHoverK] = useState(null);
-
-  useEffect(() => { setWin({ a: 0, b: 1 }); setHoverK(null); }, [view.id, coin]);
 
   // Reihen je Ansicht
   const model = useMemo(() => {
@@ -473,11 +485,15 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
     return null;
   }, [view, px, omega, fractal, chain, T]);
 
+  // Zoom zurücksetzen, wenn Ansicht, Coin oder Datenlänge wechselt
+  useEffect(() => { setWin({ a: 0, b: 1 }); setHoverK(null); }, [view.id, coin, model?.ts?.length]);
+
   // Sichtfenster + Achsenbereiche
   const vp = useMemo(() => {
     if (!model?.ts?.length) return null;
     const n = model.ts.length;
-    const i0 = Math.max(0, Math.floor(win.a * n));
+    // win darf über [0,1] hinausragen; hier auf gültige Indizes zurückschneiden
+    const i0 = Math.max(0, Math.min(n - 2, Math.floor(win.a * n)));
     const i1 = Math.min(n, Math.max(i0 + 3, Math.ceil(win.b * n)));
     const idx = [];
     for (let i = i0; i < i1; i++) idx.push(i);
@@ -536,10 +552,9 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
       const frac = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
       setWin(w => {
         const span = w.b - w.a;
-        const next = Math.min(1, Math.max(0.004, span * (e.deltaY < 0 ? 1 / 1.22 : 1.22)));
+        const next = Math.min(1, Math.max(0.002, span * (e.deltaY < 0 ? 1 / 1.22 : 1.22)));
         const anchor = w.a + span * frac;
-        let a = Math.min(1 - next, Math.max(0, anchor - next * frac));
-        return { a, b: a + next };
+        return clampWin(anchor - next * frac, next);
       });
     };
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -554,8 +569,7 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
     if (dragRef.current) {
       const d = dragRef.current;
       const span = d.b - d.a;
-      const a = Math.min(1 - span, Math.max(0, d.a - ((e.clientX - d.x) / r.width) * span));
-      setWin({ a, b: a + span });
+      setWin(clampWin(d.a - ((e.clientX - d.x) / r.width) * span, span));
       return;
     }
     if (!vp) return;
@@ -746,10 +760,12 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
         {T.reset}
       </button>
 
-      <div style={{ position: "absolute", top: 16, left: 80, fontFamily: F.mono, fontSize: 8.5,
-        color: C.textFaint, letterSpacing: "0.14em", pointerEvents: "none", opacity: 0.55 }}>
-        {T.hint}
-      </div>
+      {hoverI == null && (
+        <div style={{ position: "absolute", top: 16, left: 80, fontFamily: F.mono, fontSize: 8.5,
+          color: C.textFaint, letterSpacing: "0.14em", pointerEvents: "none", opacity: 0.5 }}>
+          {T.hint}
+        </div>
+      )}
     </div>
   );
 }
@@ -758,10 +774,12 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
 export default function OnChain({ lang = "de" }) {
   const T = T_[lang] || T_.de;
   const [coin, setCoin] = useState("BTC-USD");
+  const [tf, setTf] = useState("1d");                  // "1d" | "1wk"
   const [viewId, setViewId] = useState("heat");
   const [ohlc, setOhlc] = useState(null);
   const [raw, setRaw] = useState({});
   const [utxo, setUtxo] = useState({});     // echte Kohorten-Reihen von BGeometrics
+  const [missing, setMissing] = useState([]);  // Slugs, die kein Ergebnis lieferten
   const [snap, setSnap] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -771,12 +789,12 @@ export default function OnChain({ lang = "de" }) {
   useEffect(() => {
     let alive = true;
     setLoading(true); setError(""); setOhlc(null);
-    apiFetch(`/api/history?symbols=${encodeURIComponent(coin)}&interval=1d&range=10y&ohlc=1`)
+    apiFetch(`/api/history?symbols=${encodeURIComponent(coin)}&interval=${tf}&range=max&ohlc=1`)
       .then(r => { if (!r.ok) throw new Error(`API ${r.status}`); return r.json(); })
       .then(json => {
         if (!alive) return;
         const s = json.data?.[coin];
-        if (!s || s.length < 200) {
+        if (!s || s.length < (tf === "1wk" ? 60 : 200)) {
           throw new Error(lang === "en" ? `No usable history for ${coin}` : `Keine brauchbare Historie für ${coin}`);
         }
         setOhlc(s);
@@ -784,7 +802,7 @@ export default function OnChain({ lang = "de" }) {
       .catch(e => alive && setError(e.message))
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
-  }, [coin, lang]);
+  }, [coin, tf, lang]);
 
   useEffect(() => {
     let alive = true;
@@ -800,9 +818,9 @@ export default function OnChain({ lang = "de" }) {
   useEffect(() => {
     let alive = true;
     if (!isBtc(coin)) { setUtxo({}); return undefined; }
-    apiFetch("/api/onchain?action=utxo&metrics=sth-realized-price,lth-realized-price,supply-in-profit,sopr,sth-mvrv,realized-price")
+    apiFetch("/api/onchain?action=utxo&metrics=sth-realized-price,supply-in-profit,sopr,sth-mvrv,realized-price,nupl,mvrv,mvrv-zscore,puell-multiple,hashrate")
       .then(r => (r.ok ? r.json() : null))
-      .then(j => { if (alive && j?.data) setUtxo(j.data); })
+      .then(j => { if (alive && j?.data) { setUtxo(j.data); setMissing(j.failed || []); } })
       .catch(() => { /* Fallback auf Proxy */ });
     return () => { alive = false; };
   }, [coin]);
@@ -821,7 +839,8 @@ export default function OnChain({ lang = "de" }) {
 
   // Echte STH-Reihen auf das Zeitraster der Kursreihe legen. Liegt für einen
   // Tag ein echter Wert vor, ersetzt er den Proxy — sonst bleibt der Proxy.
-  const pxBase = useMemo(() => buildProxies(ohlc), [ohlc]);
+  const wSth = tf === "1wk" ? STH_WINDOW_W : STH_WINDOW;
+  const pxBase = useMemo(() => buildProxies(ohlc, wSth), [ohlc, wSth]);
 
   const realSth = utxo["sth-realized-price"];
   const realProfit = utxo["supply-in-profit"];
@@ -859,46 +878,66 @@ export default function OnChain({ lang = "de" }) {
       realProfit: hitPrf / cover > 0.5,
     };
   }, [pxBase, realSth, realProfit]);
-  const heat = useMemo(() => (viewId === "heat" ? buildHeat(ohlc) : null), [ohlc, viewId]);
-  const omega = useMemo(() => buildOmega(px), [px]);
-  const fractal = useMemo(() => buildFractal(ohlc), [ohlc]);
+  const heat = useMemo(() => (viewId === "heat" ? buildHeat(ohlc, wSth) : null), [ohlc, viewId, wSth]);
+  const omega = useMemo(() => buildOmega(px, tf === "1wk" ? 52 : 365), [px, tf]);
+  const fractal = useMemo(() => buildFractal(ohlc, tf === "1wk" ? FRACTAL_WIN_W : FRACTAL_WIN), [ohlc, tf]);
 
   // Realized Cap, Realized Price, MVRV-Z und Puell aus den freien Reihen ableiten
   const chain = useMemo(() => {
-    const mvrv = raw.mvrv, cap = raw["market-cap"], supply = raw["total-bitcoins"], rev = raw["miners-revenue"];
-    if (!mvrv?.length || !cap?.length) return null;
-    const capByTs = new Map(cap.map(([t, v]) => [t, v]));
-    const supByTs = supply ? new Map(supply.map(([t, v]) => [t, v])) : null;
+    // BGeometrics zuerst — die Reihen sind vollständig und gehen bis 2010
+    // zurück. blockchain.info dient nur noch als Rückfallebene, weil dessen
+    // /charts-Endpoint bei langen Zeiträumen gern in den Timeout läuft.
+    const bgNupl = utxo.nupl;
+    const bgMvrv = utxo.mvrv;
+    const bgZ = utxo["mvrv-zscore"];
+    const bgPuell = utxo["puell-multiple"];
+    const bgRealised = utxo["realized-price"];
 
-    const realisedCap = [], realisedPrice = [], capSeries = [];
-    for (const [t, m] of mvrv) {
-      const c = capByTs.get(t);
-      if (!Number.isFinite(c) || !Number.isFinite(m) || m <= 0) continue;
-      const rc = c / m;
-      realisedCap.push([t, rc]);
-      capSeries.push([t, c]);
-      const s = supByTs?.get(t);
-      if (Number.isFinite(s) && s > 0) realisedPrice.push([t, rc / s]);
+    // MVRV aus NUPL rekonstruieren, falls der direkte Slug nicht antwortet:
+    // NUPL = 1 − 1/MVRV  ⇒  MVRV = 1/(1 − NUPL)
+    let mvrv = bgMvrv || null;
+    if (!mvrv?.length && bgNupl?.length) {
+      mvrv = bgNupl.filter(([, v]) => v < 0.999).map(([t, v]) => [t, 1 / (1 - v)]);
     }
 
-    // MVRV-Z: (Market Cap − Realized Cap) / σ(Market Cap) über die ganze Historie
-    const capVals = capSeries.map(p => p[1]);
-    const mean = capVals.reduce((a, b) => a + b, 0) / (capVals.length || 1);
-    const sd = Math.sqrt(capVals.reduce((a, b) => a + (b - mean) ** 2, 0) / (capVals.length || 1)) || 1;
-    const mvrvZ = capSeries.map((p, i) => [p[0], (p[1] - realisedCap[i][1]) / sd]);
+    const cap = raw["market-cap"], supply = raw["total-bitcoins"], rev = raw["miners-revenue"];
+    let realisedCap = [], realisedPrice = bgRealised || [], mvrvZ = bgZ || [], puell = bgPuell || null;
 
-    // Puell: Miner-Tagesumsatz / eigener 365-Tage-Durchschnitt
-    let puell = null;
-    if (rev?.length > 400) {
-      puell = align(rev, sma(rev, 365)).filter(r => r[2] > 0).map(([t, v, m]) => [t, v / m]);
+    // Fallback-Zweig über blockchain.info, nur wenn BG nichts geliefert hat
+    if (cap?.length && (!mvrv?.length || !mvrvZ.length || !realisedPrice.length)) {
+      const capByTs = new Map(cap.map(([t, v]) => [t, v]));
+      const supByTs = supply ? new Map(supply.map(([t, v]) => [t, v])) : null;
+      const bciMvrv = raw.mvrv;
+      if (bciMvrv?.length) {
+        if (!mvrv?.length) mvrv = bciMvrv;
+        const capSeries = [];
+        for (const [t, m] of bciMvrv) {
+          const c = capByTs.get(t);
+          if (!Number.isFinite(c) || !Number.isFinite(m) || m <= 0) continue;
+          const rc = c / m;
+          realisedCap.push([t, rc]);
+          capSeries.push([t, c]);
+          const sp = supByTs?.get(t);
+          if (!bgRealised?.length && Number.isFinite(sp) && sp > 0) realisedPrice.push([t, rc / sp]);
+        }
+        if (!mvrvZ.length && capSeries.length) {
+          const cv = capSeries.map(p => p[1]);
+          const mean = cv.reduce((a, b) => a + b, 0) / cv.length;
+          const sd = Math.sqrt(cv.reduce((a, b) => a + (b - mean) ** 2, 0) / cv.length) || 1;
+          mvrvZ = capSeries.map((p, i) => [p[0], (p[1] - realisedCap[i][1]) / sd]);
+        }
+      }
+      if (!puell && rev?.length > 400) {
+        puell = align(rev, sma(rev, 365)).filter(r => r[2] > 0).map(([t, v, m]) => [t, v / m]);
+      }
     }
 
     return {
       mvrv, realisedCap, realisedPrice, mvrvZ, puell,
       sopr: utxo.sopr || null,
       sthMvrv: utxo["sth-mvrv"] || null,
-      "hash-rate": raw["hash-rate"],
-      "n-unique-addresses": raw["n-unique-addresses"],
+      "hash-rate": utxo.hashrate || raw["hash-rate"] || null,
+      "n-unique-addresses": utxo["active-addresses"] || raw["n-unique-addresses"] || null,
     };
   }, [raw, utxo]);
 
@@ -951,7 +990,12 @@ export default function OnChain({ lang = "de" }) {
 
   const glass = panel();
   const viewKind = kindOf(view);
-  const blocked = (view.btcOnly && !isBtc(coin)) || (view.needsUtxo && !chain?.[view.id === "sopr" ? "sopr" : "sthMvrv"]);
+  const dataFor = {
+    mvrv: chain?.mvrv, mvrvz: chain?.mvrvZ, puell: chain?.puell,
+    sopr: chain?.sopr, sthmvrv: chain?.sthMvrv, network: chain?.["hash-rate"],
+  };
+  const noData = view.btcOnly && !(dataFor[view.id]?.length);
+  const blocked = (view.btcOnly && !isBtc(coin)) || noData;
 
   return (
     <div style={{ position: "relative", overflow: "hidden", minHeight: "calc(100vh - 76px)" }}>
@@ -975,6 +1019,10 @@ export default function OnChain({ lang = "de" }) {
           <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
             {COINS.map(c => (
               <button key={c.id} style={btnGhost(coin === c.id)} onClick={() => setCoin(c.id)}>{c.label}</button>
+            ))}
+            <span style={{ width: 1, alignSelf: "stretch", background: C.line, margin: "0 4px" }} />
+            {[["1d", T.daily], ["1wk", T.weekly]].map(([id, lbl]) => (
+              <button key={id} style={btnGhost(tf === id)} onClick={() => setTf(id)}>{lbl}</button>
             ))}
             {loading && <span style={{ ...overline(GOLD), fontFamily: F.mono, fontSize: 10, marginLeft: 6 }}>{T.loading}…</span>}
           </div>
@@ -1041,9 +1089,16 @@ export default function OnChain({ lang = "de" }) {
         <div style={{ ...glass, padding: "12px 8px 4px", marginBottom: 16 }}>
           {blocked ? (
             <div style={{ height: 320, display: "flex", flexDirection: "column", gap: 12, alignItems: "center", justifyContent: "center" }}>
-              <span style={badge("#facc15")}>{T.btcOnly}</span>
-              <span style={{ fontFamily: F.ui, fontSize: 11, color: C.textMute }}>{T.btcNote}</span>
-              <button style={btnGhost(false)} onClick={() => setCoin("BTC-USD")}>→ BTC</button>
+              <span style={badge("#facc15")}>{noData && isBtc(coin) ? T.noSource : T.btcOnly}</span>
+              <span style={{ fontFamily: F.ui, fontSize: 11, color: C.textMute, textAlign: "center", maxWidth: 520, lineHeight: 1.6 }}>
+                {noData && isBtc(coin) ? T.noSourceNote : T.btcNote}
+              </span>
+              {!isBtc(coin) && <button style={btnGhost(false)} onClick={() => setCoin("BTC-USD")}>→ BTC</button>}
+              {missing.length > 0 && (
+                <span style={{ fontFamily: F.mono, fontSize: 9.5, color: C.textFaint }}>
+                  {T.failedSlugs}: {missing.join(", ")}
+                </span>
+              )}
             </div>
           ) : (
             <Chart view={view} px={px} heat={heat} omega={omega} fractal={fractal}
