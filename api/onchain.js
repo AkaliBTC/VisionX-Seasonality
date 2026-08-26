@@ -46,21 +46,25 @@ const TIMESPANS = new Set(["30days", "180days", "1year", "2years", "3years", "5y
 const BG_BASE = "https://api.bgeometrics.com/v1";
 const BG_TOKEN = process.env.BG_TOKEN || "";
 
+// Mehrere Slug-Kandidaten je Metrik: der erste, der 200 liefert, gewinnt.
+// So kippt ein einzelner Namensdreher nicht die ganze Ansicht.
 const BG_METRICS = {
-  "sth-realized-price": { path: "sth-realized-price", label: "STH Realized Price", unit: "USD" },
-  "lth-realized-price": { path: "lth-realized-price", label: "LTH Realized Price", unit: "USD" },
-  "realized-price":     { path: "realized-price",     label: "Realized Price",     unit: "USD" },
-  "sth-mvrv":           { path: "sth-mvrv",           label: "STH MVRV",           unit: "ratio" },
-  "lth-mvrv":           { path: "lth-mvrv",           label: "LTH MVRV",           unit: "ratio" },
-  "mvrv-zscore":        { path: "mvrv-zscore",        label: "MVRV Z-Score",       unit: "z" },
-  "sopr":               { path: "sopr",               label: "SOPR",               unit: "ratio" },
-  "nupl":               { path: "nupl",               label: "NUPL",               unit: "ratio" },
-  "supply-in-profit":   { path: "supply-in-profit",   label: "Supply in Profit",   unit: "%" },
-  "puell-multiple":     { path: "puell-multiple",     label: "Puell Multiple",     unit: "ratio" },
-  "sth-risk-index":     { path: "sth-risk-index",     label: "STH Risk Index",     unit: "score" },
-  "cycle-extreme":      { path: "cycle-extreme",      label: "Cycle Extreme",      unit: "score" },
-  "aviv":               { path: "aviv",               label: "AVIV Ratio",         unit: "ratio" },
-  "true-market-mean":   { path: "true-market-mean",   label: "True Market Mean",   unit: "USD" },
+  "sth-realized-price": { paths: ["sth-realized-price", "realized-price-sth", "sth_realized_price"], label: "STH Realized Price", unit: "USD" },
+  "lth-realized-price": { paths: ["lth-realized-price", "realized-price-lth"], label: "LTH Realized Price", unit: "USD" },
+  "realized-price":     { paths: ["realized-price", "realised-price"], label: "Realized Price", unit: "USD" },
+  "sth-mvrv":           { paths: ["sth-mvrv", "mvrv-sth"], label: "STH MVRV", unit: "ratio" },
+  "lth-mvrv":           { paths: ["lth-mvrv", "mvrv-lth"], label: "LTH MVRV", unit: "ratio" },
+  "mvrv":               { paths: ["mvrv-ratio", "mvrv"], label: "MVRV", unit: "ratio" },
+  "mvrv-zscore":        { paths: ["mvrv-zscore", "mvrv-z-score", "mvrv"], label: "MVRV Z-Score", unit: "z" },
+  "sopr":               { paths: ["sopr"], label: "SOPR", unit: "ratio" },
+  "nupl":               { paths: ["nupl"], label: "NUPL", unit: "ratio" },
+  "supply-in-profit":   { paths: ["supply-in-profit", "supply-profit", "utxo-in-profit", "supply_in_profit"], label: "Supply in Profit", unit: "%" },
+  "puell-multiple":     { paths: ["puell-multiple", "puell"], label: "Puell Multiple", unit: "ratio" },
+  "sth-risk-index":     { paths: ["sth-risk-index", "sth-risk"], label: "STH Risk Index", unit: "score" },
+  "cycle-extreme":      { paths: ["cycle-extreme"], label: "Cycle Extreme", unit: "score" },
+  "aviv":               { paths: ["aviv"], label: "AVIV Ratio", unit: "ratio" },
+  "hashrate":           { paths: ["hashrate", "hash-rate"], label: "Hashrate", unit: "H/s" },
+  "active-addresses":   { paths: ["active-addresses", "address-active"], label: "Active Addresses", unit: "addr" },
 };
 
 // BG benennt das Wertfeld je Metrik anders (sthRealizedPrice, sopr, nupl …).
@@ -93,40 +97,52 @@ const bgRow = (row) => {
 const fetchBg = async (id) => {
   const def = BG_METRICS[id];
   if (!def) return null;
-  try {
-    const url = `${BG_BASE}/${def.path}${BG_TOKEN ? `?token=${encodeURIComponent(BG_TOKEN)}` : ""}`;
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "VisionX-Analytics/1.0",
-        Accept: "application/json",
-        ...(BG_TOKEN ? { Authorization: `Bearer ${BG_TOKEN}` } : {}),
-      },
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    const rows = Array.isArray(json) ? json : (json?.data || json?.values);
-    if (!Array.isArray(rows) || rows.length < 10) return null;
-    const out = rows.map(bgRow).filter(Boolean).sort((a, b) => a[0] - b[0]);
-    return out.length > 10 ? out : null;
-  } catch { return null; }
+  for (const path of def.paths) {
+    try {
+      const url = `${BG_BASE}/${path}${BG_TOKEN ? `?token=${encodeURIComponent(BG_TOKEN)}` : ""}`;
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "VisionX-Analytics/1.0",
+          Accept: "application/json",
+          ...(BG_TOKEN ? { Authorization: `Bearer ${BG_TOKEN}` } : {}),
+        },
+      });
+      if (!res.ok) continue;
+      const json = await res.json();
+      const rows = Array.isArray(json) ? json : (json?.data || json?.values);
+      if (!Array.isArray(rows) || rows.length < 10) continue;
+      const out = rows.map(bgRow).filter(Boolean).sort((a, b) => a[0] - b[0]);
+      if (out.length > 10) { out.slug = path; return out; }
+    } catch { /* nächster Kandidat */ }
+  }
+  return null;
 };
 
 // ── ZEITREIHE ────────────────────────────────────────────────────────────────
+// Zwei Hosts, weil api.blockchain.info zeitweise 5xx liefert, und sampled=true
+// bei langen Zeiträumen — ungesampelt sind das ~6000 Punkte pro Chart und der
+// Request läuft in den 30-Sekunden-Timeout der Function.
+const BCI_HOSTS = ["https://blockchain.info", "https://api.blockchain.info"];
+
 const fetchChart = async (id, timespan) => {
   const def = CHARTS[id];
   if (!def) return null;
-  try {
-    const url = `https://api.blockchain.info/charts/${def.chart}`
-      + `?timespan=${timespan}&format=json&sampled=false&cors=true`;
-    const res = await fetch(url, { headers: { "User-Agent": "VisionX-Analytics/1.0" } });
-    if (!res.ok) return null;
-    const json = await res.json();
-    const vals = json?.values;
-    if (!Array.isArray(vals) || vals.length < 10) return null;
-    return vals
-      .filter(v => Number.isFinite(v?.x) && Number.isFinite(v?.y))
-      .map(v => [v.x * 1000, +Number(v.y).toFixed(6)]);
-  } catch { return null; }
+  const sampled = timespan === "all" || timespan === "8years" ? "true" : "false";
+  for (const host of BCI_HOSTS) {
+    try {
+      const url = `${host}/charts/${def.chart}?timespan=${timespan}&format=json&sampled=${sampled}&cors=true`;
+      const res = await fetch(url, { headers: { "User-Agent": "VisionX-Analytics/1.0", Accept: "application/json" } });
+      if (!res.ok) continue;
+      const json = await res.json();
+      const vals = json?.values;
+      if (!Array.isArray(vals) || vals.length < 10) continue;
+      const out = vals
+        .filter(v => Number.isFinite(v?.x) && Number.isFinite(v?.y))
+        .map(v => [v.x * 1000, +Number(v.y).toFixed(6)]);
+      if (out.length > 10) return out;
+    } catch { /* nächster Host */ }
+  }
+  return null;
 };
 
 // ── LIVE-SNAPSHOT ────────────────────────────────────────────────────────────
@@ -196,8 +212,10 @@ export default async function handler(req, res) {
     for (let i = 0; i < want.length; i += 3) {
       await Promise.all(want.slice(i, i + 3).map(async id => {
         const series = await fetchBg(id);
-        if (series) { data[id] = series; meta[id] = BG_METRICS[id]; }
-        else failed.push(id);
+        if (series) {
+          data[id] = Array.from(series);
+          meta[id] = { label: BG_METRICS[id].label, unit: BG_METRICS[id].unit, slug: series.slug };
+        } else failed.push(id);
       }));
     }
     res.setHeader("Cache-Control", "public, s-maxage=43200, stale-while-revalidate=86400");
