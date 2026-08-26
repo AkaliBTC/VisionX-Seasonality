@@ -58,21 +58,9 @@ const VIEWS = [
   { id: "fractal", label: "FRACTALS", kind: "exact", btcOnly: false,
     de: "Volatilitäts-Intensität: True Range gegen die eigene 60-Tage-Verteilung, verstärkt bei Ausbrüchen aus der 20-Tage-Spanne. Ausschläge markieren Regimewechsel, nicht Richtung.",
     en: "Volatility intensity: true range against its own 60-day distribution, amplified on breaks of the 20-day range. Spikes mark regime changes, not direction." },
-  { id: "mvrv", label: "MVRV / NUPL", kind: "exact", btcOnly: true,
-    de: "MVRV mit abgeleitetem NUPL (1 − 1/MVRV) und Realized Price. Die einzige Zyklus-Metrik dieser Sammlung, die exakt und frei verfügbar ist.",
-    en: "MVRV with derived NUPL (1 − 1/MVRV) and realized price. The one cycle metric in this set that is both exact and freely available." },
-  { id: "mvrvz", label: "MVRV Z-SCORE", kind: "exact", btcOnly: true,
-    de: "Abstand von Market Cap zu Realized Cap in Standardabweichungen der Market Cap. Historisch die zuverlässigste Markierung von Zyklus-Hochs und -Tiefs.",
-    en: "Distance between market cap and realized cap in standard deviations of market cap. Historically the most reliable marker of cycle tops and bottoms." },
   { id: "puell", label: "PUELL", kind: "exact", btcOnly: true,
     de: "Miner-Tagesumsatz gegen seinen eigenen 365-Tage-Durchschnitt. Misst Verkaufsdruck von der Angebotsseite.",
     en: "Daily miner revenue against its own 365-day average. Measures sell pressure from the supply side." },
-  { id: "sopr", label: "SOPR", kind: "exact", btcOnly: true, needsUtxo: true,
-    de: "Spent Output Profit Ratio: Verhältnis von Verkaufspreis zu Kaufpreis aller an einem Tag bewegten Coins. Über 1 wird im Schnitt Gewinn realisiert, unter 1 Verlust. Der Durchgang durch 1 ist die klassische Bullenmarkt-Unterstützung.",
-    en: "Spent output profit ratio: sale price over cost basis of every coin moved that day. Above 1 profit is being realised on average, below 1 losses. The cross through 1 is the classic bull-market support." },
-  { id: "sthmvrv", label: "STH-MVRV", kind: "exact", btcOnly: true, needsUtxo: true,
-    de: "MVRV nur für die Kohorte unter 155 Tagen. Reagiert deutlich schneller als das aggregierte MVRV, weil ruhende und verlorene Coins draußen bleiben.",
-    en: "MVRV for the sub-155-day cohort only. Reacts far faster than aggregate MVRV because dormant and lost coins are excluded." },
   { id: "network", label: "NETZWERK", kind: "exact", btcOnly: true,
     de: "Hashrate und aktive Adressen. Fundamentaldaten des Netzwerks, kein Timing-Signal.",
     en: "Hashrate and active addresses. Network fundamentals, not a timing signal." },
@@ -485,32 +473,6 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
       };
     }
     if (!chain) return null;
-    if (view.id === "mvrv") {
-      const s = chain.mvrv;
-      if (!s?.length) return null;
-      const rp = new Map((chain.realisedPrice || []).map(([t, v]) => [t, v]));
-      return {
-        ts: s.map(p => p[0]), log: false,
-        lines: [{ key: "mvrv", vals: s.map(p => p[1]), color: GOLD, w: 1.7 }],
-        levels: [{ v: 1, label: "1 · COST BASIS", color: "#3fcf8e" }, { v: 2, label: "2", color: "#facc15" },
-                 { v: 3, label: "3", color: "#fb923c" }, { v: 3.7, label: "EUPHORIA", color: "#ef4444" }],
-        readout: i => [
-          { label: "MVRV", value: s[i][1].toFixed(2), color: GOLD },
-          { label: "NUPL", value: (1 - 1 / s[i][1]).toFixed(3), color: "#63b6ff" },
-          { label: T.realised, value: usd(rp.get(s[i][0])), color: "#fb923c" },
-        ],
-      };
-    }
-    if (view.id === "mvrvz") {
-      const s = chain.mvrvZ;
-      if (!s?.length) return null;
-      return {
-        ts: s.map(p => p[0]), log: false,
-        lines: [{ key: "z", vals: s.map(p => p[1]), color: "#63b6ff", w: 1.7 }],
-        levels: [{ v: 0.1, label: "BOTTOM ZONE", color: "#22c55e" }, { v: 7, label: "TOP ZONE", color: "#ef4444" }],
-        readout: i => [{ label: "MVRV-Z", value: s[i][1].toFixed(2), color: "#63b6ff" }],
-      };
-    }
     if (view.id === "puell") {
       const s = chain.puell;
       if (!s?.length) return null;
@@ -519,20 +481,6 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
         lines: [{ key: "puell", vals: s.map(p => p[1]), color: "#facc15", w: 1.6 }],
         levels: [{ v: 0.5, label: "MINER CAPITULATION", color: "#22c55e" }, { v: 4, label: "DISTRIBUTION", color: "#ef4444" }],
         readout: i => [{ label: "PUELL", value: s[i][1].toFixed(2), color: "#facc15" }],
-      };
-    }
-    if (view.id === "sopr" || view.id === "sthmvrv") {
-      const s = view.id === "sopr" ? chain.sopr : chain.sthMvrv;
-      if (!s?.length) return null;
-      const isSopr = view.id === "sopr";
-      return {
-        ts: s.map(p => p[0]), log: false,
-        lines: [{ key: view.id, vals: s.map(p => p[1]), color: isSopr ? "#63b6ff" : "#f0622e", w: 1.6 }],
-        levels: [{ v: 1, label: isSopr ? "1 · BREAK-EVEN" : "1 · COST BASIS", color: "#8f8f8f" },
-                 ...(isSopr ? [] : [{ v: 1.35, label: "OVERHEATED", color: "#ef4444" },
-                                     { v: 0.85, label: "CAPITULATION", color: "#22c55e" }])],
-        readout: i => [{ label: isSopr ? "SOPR" : "STH-MVRV", value: s[i][1].toFixed(3),
-          color: isSopr ? "#63b6ff" : "#f0622e" }],
       };
     }
     if (view.id === "network") {
@@ -978,7 +926,7 @@ export default function OnChain({ lang = "de" }) {
   useEffect(() => {
     let alive = true;
     if (!isBtc(coin)) return undefined;
-    apiFetch("/api/onchain?metrics=mvrv,market-cap,total-bitcoins,miners-revenue,hash-rate,n-unique-addresses&timespan=all")
+    apiFetch("/api/onchain?metrics=miners-revenue,hash-rate,n-unique-addresses&timespan=all")
       .then(r => (r.ok ? r.json() : null))
       .then(j => { if (alive && j?.data) setRaw(j.data); })
       .catch(() => { /* Chain-Daten sind optional */ });
@@ -989,7 +937,7 @@ export default function OnChain({ lang = "de" }) {
   useEffect(() => {
     let alive = true;
     if (!isBtc(coin)) { setUtxo({}); return undefined; }
-    apiFetch("/api/onchain?action=utxo&metrics=sth-realized-price,supply-in-profit,sopr,sth-mvrv,realized-price,nupl,mvrv,mvrv-zscore,puell-multiple,hashrate")
+    apiFetch("/api/onchain?action=utxo&metrics=sth-realized-price,supply-in-profit")
       .then(r => (r.ok ? r.json() : null))
       .then(j => { if (alive && j) { setUtxo(j.data || {}); setMissing(j.failed || []); setBgStatus(j.status || {}); } })
       .catch(() => { /* Fallback auf Proxy */ });
@@ -1070,61 +1018,18 @@ export default function OnChain({ lang = "de" }) {
   const fractal = useMemo(() => buildFractal(ohlc, tf === "1wk" ? FRACTAL_WIN_W : FRACTAL_WIN), [ohlc, tf]);
 
   // Realized Cap, Realized Price, MVRV-Z und Puell aus den freien Reihen ableiten
+  // Nur noch das, was die verbliebenen Ansichten brauchen: Puell und Netzwerk.
+  // Beides kommt aus blockchain.info, BGeometrics dient als Aufwertung.
   const chain = useMemo(() => {
-    // BGeometrics zuerst — die Reihen sind vollständig und gehen bis 2010
-    // zurück. blockchain.info dient nur noch als Rückfallebene, weil dessen
-    // /charts-Endpoint bei langen Zeiträumen gern in den Timeout läuft.
-    const bgNupl = utxo.nupl;
-    const bgMvrv = utxo.mvrv;
-    const bgZ = utxo["mvrv-zscore"];
-    const bgPuell = utxo["puell-multiple"];
-    const bgRealised = utxo["realized-price"];
-
-    // MVRV aus NUPL rekonstruieren, falls der direkte Slug nicht antwortet:
-    // NUPL = 1 − 1/MVRV  ⇒  MVRV = 1/(1 − NUPL)
-    let mvrv = bgMvrv || null;
-    if (!mvrv?.length && bgNupl?.length) {
-      mvrv = bgNupl.filter(([, v]) => v < 0.999).map(([t, v]) => [t, 1 / (1 - v)]);
+    const rev = raw["miners-revenue"];
+    let puell = utxo["puell-multiple"] || null;
+    if (!puell && rev?.length > 400) {
+      puell = align(rev, sma(rev, 365)).filter(r => r[2] > 0).map(([t, v, m]) => [t, v / m]);
     }
-
-    const cap = raw["market-cap"], supply = raw["total-bitcoins"], rev = raw["miners-revenue"];
-    let realisedCap = [], realisedPrice = bgRealised || [], mvrvZ = bgZ || [], puell = bgPuell || null;
-
-    // Fallback-Zweig über blockchain.info, nur wenn BG nichts geliefert hat
-    if (cap?.length && (!mvrv?.length || !mvrvZ.length || !realisedPrice.length)) {
-      const capByTs = new Map(cap.map(([t, v]) => [t, v]));
-      const supByTs = supply ? new Map(supply.map(([t, v]) => [t, v])) : null;
-      const bciMvrv = raw.mvrv;
-      if (bciMvrv?.length) {
-        if (!mvrv?.length) mvrv = bciMvrv;
-        const capSeries = [];
-        for (const [t, m] of bciMvrv) {
-          const c = capByTs.get(t);
-          if (!Number.isFinite(c) || !Number.isFinite(m) || m <= 0) continue;
-          const rc = c / m;
-          realisedCap.push([t, rc]);
-          capSeries.push([t, c]);
-          const sp = supByTs?.get(t);
-          if (!bgRealised?.length && Number.isFinite(sp) && sp > 0) realisedPrice.push([t, rc / sp]);
-        }
-        if (!mvrvZ.length && capSeries.length) {
-          const cv = capSeries.map(p => p[1]);
-          const mean = cv.reduce((a, b) => a + b, 0) / cv.length;
-          const sd = Math.sqrt(cv.reduce((a, b) => a + (b - mean) ** 2, 0) / cv.length) || 1;
-          mvrvZ = capSeries.map((p, i) => [p[0], (p[1] - realisedCap[i][1]) / sd]);
-        }
-      }
-      if (!puell && rev?.length > 400) {
-        puell = align(rev, sma(rev, 365)).filter(r => r[2] > 0).map(([t, v, m]) => [t, v / m]);
-      }
-    }
-
     return {
-      mvrv, realisedCap, realisedPrice, mvrvZ, puell,
-      sopr: utxo.sopr || null,
-      sthMvrv: utxo["sth-mvrv"] || null,
-      "hash-rate": utxo.hashrate || raw["hash-rate"] || null,
-      "n-unique-addresses": utxo["active-addresses"] || raw["n-unique-addresses"] || null,
+      puell,
+      "hash-rate": raw["hash-rate"] || null,
+      "n-unique-addresses": raw["n-unique-addresses"] || null,
     };
   }, [raw, utxo]);
 
@@ -1148,14 +1053,6 @@ export default function OnChain({ lang = "de" }) {
       const v = fractal.intensity[fractal.intensity.length - 1];
       return { value: v.toFixed(1), label: "INTENSITY", color: v > 26 ? "#c4b5fd" : "#a78bfa" };
     }
-    if (viewId === "mvrv" && chain?.mvrv?.length) {
-      const v = chain.mvrv[chain.mvrv.length - 1][1];
-      return { value: v.toFixed(2), label: `NUPL ${(1 - 1 / v).toFixed(2)}`, color: v > 3 ? "#ef4444" : v < 1 ? "#22c55e" : GOLD };
-    }
-    if (viewId === "mvrvz" && chain?.mvrvZ?.length) {
-      const v = chain.mvrvZ[chain.mvrvZ.length - 1][1];
-      return { value: v.toFixed(2), label: "MVRV-Z", color: v > 5 ? "#ef4444" : v < 0.5 ? "#22c55e" : "#63b6ff" };
-    }
     if (viewId === "puell" && chain?.puell?.length) {
       const v = chain.puell[chain.puell.length - 1][1];
       return { value: v.toFixed(2), label: "PUELL", color: v > 3 ? "#ef4444" : v < 0.6 ? "#22c55e" : "#facc15" };
@@ -1178,10 +1075,7 @@ export default function OnChain({ lang = "de" }) {
 
   const glass = panel();
   const viewKind = kindOf(view);
-  const dataFor = {
-    mvrv: chain?.mvrv, mvrvz: chain?.mvrvZ, puell: chain?.puell,
-    sopr: chain?.sopr, sthmvrv: chain?.sthMvrv, network: chain?.["hash-rate"],
-  };
+dataFor
   const noData = view.btcOnly && !(dataFor[view.id]?.length);
   const blocked = (view.btcOnly && !isBtc(coin)) || noData;
 
