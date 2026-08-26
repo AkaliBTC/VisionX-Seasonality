@@ -27,7 +27,9 @@ import { C, F, panel, overline, displayTitle, btnGhost, badge, Ambient } from ".
 
 const GOLD = "#d4af37";
 const STH_WINDOW = 155;          // Short-Term-Holder-Schwelle in Tagen
-const HEAT_BINS = 46;            // Preisklassen der Kostenbasis-Heatmap
+const HEAT_BINS = 190;           // Preisklassen der Kostenbasis-Heatmap (global, log-verteilt)
+const HEAT_FLOOR = 0.04;         // Zellen darunter werden gar nicht gezeichnet
+const HEAT_GAMMA = 1.25;         // >1 = steiler Abfall = mehr Schwarz. Kleiner = flächiger.
 
 // ── COINS ────────────────────────────────────────────────────────────────────
 const COINS = [
@@ -167,31 +169,77 @@ const buildProxies = (ohlc, w = STH_WINDOW) => {
   return { ts, price, realised, upper, lower, profit };
 };
 
-// Kostenbasis-Heatmap: pro Tag ein Volumen-Histogramm über Preisklassen
+// Kostenbasis-Heatmap.
+//
+// Drei Dinge sind hier entscheidend für die Optik, alle drei hatte ich vorher
+// falsch:
+//  1. GLOBALE Bin-Kanten. Rechnet jede Spalte ihre eigenen Preisklassen aus,
+//     springen die Kanten von Tag zu Tag und es entsteht Treppen-Streifen.
+//     Deshalb: ein einziges log-verteiltes Raster über die ganze Reihe.
+//  2. GLOBALE Normierung. Pro Spalte auf deren eigenes Maximum zu normieren
+//     heißt, dass jede Spalte einen vollhellen Pixel bekommt — das Bild
+//     leuchtet überall gleich und hat keinen Kontrast mehr.
+//  3. GLÄTTUNG über die Preisachse. Ein rohes Histogramm hat harte Kanten,
+//     eine Kostenbasis-Verteilung ist aber stetig. Gauß-Kernel über die Bins.
+const gaussKernel = (sigma) => {
+  const r = Math.max(1, Math.ceil(sigma * 3));
+  const k = new Float32Array(r * 2 + 1);
+  let sum = 0;
+  for (let i = -r; i <= r; i++) { const v = Math.exp(-(i * i) / (2 * sigma * sigma)); k[i + r] = v; sum += v; }
+  for (let i = 0; i < k.length; i++) k[i] /= sum;
+  return { k, r };
+};
+
 const buildHeat = (ohlc, w = STH_WINDOW, bins = HEAT_BINS) => {
   const n = ohlc?.length || 0;
   if (n < w + 20) return null;
-  const tp = [], vol = [];
+
+  const tp = new Array(n), vol = new Array(n);
+  let gLo = Infinity, gHi = -Infinity;
   for (let i = 0; i < n; i++) {
     const r = ohlc[i];
-    tp.push((r[2] + r[3] + r[4]) / 3);
-    vol.push(Number.isFinite(r[5]) && r[5] > 0 ? r[5] : 1);
+    const v = (r[2] + r[3] + r[4]) / 3;
+    tp[i] = v;
+    vol[i] = Number.isFinite(r[5]) && r[5] > 0 ? r[5] : 1;
+    if (v < gLo) gLo = v;
+    if (v > gHi) gHi = v;
   }
+
+  // Ein log-verteiltes Raster für die gesamte Reihe
+  const logLo = Math.log(gLo * 0.94);
+  const logHi = Math.log(gHi * 1.06);
+  const step = (logHi - logLo) / bins;
+
+  const { k: kern, r: kr } = gaussKernel(2.2);
   const cols = [];
+  const all = [];
+
   for (let i = w - 1; i < n; i++) {
-    let lo = Infinity, hi = -Infinity;
-    for (let k = i - w + 1; k <= i; k++) { if (tp[k] < lo) lo = tp[k]; if (tp[k] > hi) hi = tp[k]; }
-    const step = (hi - lo) / bins || 1;
-    const hist = new Float64Array(bins);
-    for (let k = i - w + 1; k <= i; k++) {
-      const b = Math.min(bins - 1, Math.max(0, Math.floor((tp[k] - lo) / step)));
-      hist[b] += vol[k];
+    const rawHist = new Float32Array(bins);
+    for (let j = i - w + 1; j <= i; j++) {
+      const b = Math.min(bins - 1, Math.max(0, Math.floor((Math.log(tp[j]) - logLo) / step)));
+      rawHist[b] += vol[j];
     }
-    let max = 0;
-    for (let b = 0; b < bins; b++) if (hist[b] > max) max = hist[b];
-    cols.push({ ts: ohlc[i][0], lo, step, hist, max: max || 1 });
+    // Gauß-Glättung über die Preisachse
+    const hist = new Float32Array(bins);
+    for (let b = 0; b < bins; b++) {
+      let acc = 0;
+      for (let d = -kr; d <= kr; d++) {
+        const q = b + d;
+        if (q >= 0 && q < bins) acc += rawHist[q] * kern[d + kr];
+      }
+      hist[b] = acc;
+      if (acc > 0) all.push(acc);
+    }
+    cols.push({ ts: ohlc[i][0], hist });
   }
-  return cols;
+
+  // Globale Skala über das 99. Perzentil statt über das Maximum: ein einzelner
+  // Volumen-Ausreißer soll nicht das ganze Bild dunkel drücken.
+  all.sort((a, b) => a - b);
+  const scale = all[Math.floor(all.length * 0.99)] || all[all.length - 1] || 1;
+
+  return { cols, logLo, step, bins, scale, priceAt: b => Math.exp(logLo + b * step) };
 };
 
 // Ω-Score: Perzentilrang der σ-Abweichung vom Realised-Proxy
@@ -524,20 +572,28 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
     const ctx = cv.getContext("2d");
     ctx.clearRect(0, 0, W, H);
     if (view.id !== "heat" || !heat || !vp) return;
-    const cols = vp.idx.map(i => heat[i]).filter(Boolean);
+    const cols = vp.idx.map(i => heat.cols[i]).filter(Boolean);
     if (!cols.length) return;
+
+    // Bin-Kanten einmal vorrechnen — global, also für alle Spalten gleich
+    const edges = new Float32Array(heat.bins + 1);
+    for (let b = 0; b <= heat.bins; b++) edges[b] = Y(heat.priceAt(b));
+
     const cw = plotW / cols.length;
-    ctx.globalAlpha = 0.86;
     for (let k = 0; k < cols.length; k++) {
-      const col = cols[k];
+      const hist = cols[k].hist;
       const x = PADL + k * cw;
-      for (let b = 0; b < col.hist.length; b++) {
-        const w8 = col.hist[b] / col.max;
-        if (w8 < 0.035) continue;
-        const p0 = col.lo + b * col.step;
-        const y1 = Y(p0 + col.step), y0 = Y(p0);
-        ctx.fillStyle = magma(Math.pow(w8, 0.55));
-        ctx.fillRect(x, y1, Math.max(1, cw + 0.6), Math.max(1, y0 - y1));
+      for (let b = 0; b < heat.bins; b++) {
+        const t = hist[b] / heat.scale;
+        if (t < HEAT_FLOOR) continue;                  // darunter bleibt Schwarz stehen
+        const yTop = edges[b + 1], yBot = edges[b];
+        if (yBot < PADT || yTop > PADT + plotH) continue;
+        // Deckkraft trägt den Abfall (steil, damit viel Schwarz übrig bleibt),
+        // die Farbe läuft trotzdem über die ganze Rampe — sonst wird jede
+        // schwache Zelle doppelt abgedunkelt und das Bild wird matschig.
+        ctx.globalAlpha = Math.min(1, Math.pow(t, HEAT_GAMMA));
+        ctx.fillStyle = magma(0.22 + 0.78 * Math.min(1, Math.pow(t, 0.62)));
+        ctx.fillRect(x, yTop, cw + 0.5, Math.max(0.8, yBot - yTop));
       }
     }
     ctx.globalAlpha = 1;
@@ -554,14 +610,21 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
     .map((i, k) => (Number.isFinite(vals[i]) ? `${k ? "L" : "M"}${X(k).toFixed(1)},${Y(vals[i]).toFixed(1)}` : ""))
     .join("");
 
-  const ticks = Array.from({ length: 6 }, (_, i) => {
-    const t = vp.lo + ((vp.hi - vp.lo) * i) / 5;
-    return { y: PADT + (1 - i / 5) * plotH, v: vp.useLog ? 10 ** t : t };
-  });
-  const rTicks = model.right ? Array.from({ length: 6 }, (_, i) => {
-    const t = vp.rlo + ((vp.rhi - vp.rlo) * i) / 5;
-    return { y: PADT + (1 - i / 5) * plotH, v: model.right.log ? 10 ** t : t };
-  }) : [];
+  // Runde Achsenwerte statt linear geteilter Krummzahlen (133k, 85.9k …)
+  const niceTicks = (lo, hi, useLog, count = 6) => {
+    const a = useLog ? 10 ** lo : lo, b = useLog ? 10 ** hi : hi;
+    const raw = (b - a) / (count - 1);
+    if (!(raw > 0)) return [];
+    const mag = 10 ** Math.floor(Math.log10(raw));
+    const stepN = [1, 2, 2.5, 5, 10].map(m => m * mag).find(v => v >= raw) || 10 * mag;
+    const out = [];
+    for (let v = Math.ceil(a / stepN) * stepN; v <= b; v += stepN) out.push(v);
+    return out;
+  };
+  const ticks = niceTicks(vp.lo, vp.hi, vp.useLog).map(v => ({ y: Y(v), v }));
+  const rTicks = model.right
+    ? niceTicks(vp.rlo, vp.rhi, model.right.log).map(v => ({ y: YR(v), v }))
+    : [];
 
   const hoverI = hoverK != null && vp.idx[hoverK] != null ? vp.idx[hoverK] : null;
   const scatterStep = model.scatter ? Math.max(1, Math.round(vp.idx.length / 420)) : 1;
@@ -586,7 +649,8 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
 
         {ticks.map((t, i) => (
           <g key={`t${i}`}>
-            <line x1={PADL} x2={PADL + plotW} y1={t.y} y2={t.y} stroke={C.lineSoft} strokeDasharray="2 5" />
+            <line x1={PADL} x2={PADL + plotW} y1={t.y} y2={t.y}
+              stroke={view.id === "heat" ? "rgba(255,255,255,0.03)" : C.lineSoft} strokeDasharray="2 5" />
             <text x={PADL - 9} y={t.y + 3.5} textAnchor="end" fill={C.textFaint} style={{ font: `500 9.5px ${F.mono}` }}>
               {model.pct ? `${t.v.toFixed(0)}%` : compact(t.v, 2)}
             </text>
@@ -682,8 +746,8 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
         {T.reset}
       </button>
 
-      <div style={{ position: "absolute", bottom: 8, right: 14, fontFamily: F.mono, fontSize: 9,
-        color: C.textFaint, letterSpacing: "0.14em", pointerEvents: "none" }}>
+      <div style={{ position: "absolute", top: 16, left: 80, fontFamily: F.mono, fontSize: 8.5,
+        color: C.textFaint, letterSpacing: "0.14em", pointerEvents: "none", opacity: 0.55 }}>
         {T.hint}
       </div>
     </div>
