@@ -94,10 +94,16 @@ const bgRow = (row) => {
   return ts != null && val != null ? [ts, val] : null;
 };
 
-const fetchBg = async (id) => {
+// Statuscodes des letzten Laufs, damit 401/404/429 unterscheidbar sind
+const bgStatus = {};
+
+const fetchBg = async (id, useAlternates = true) => {
   const def = BG_METRICS[id];
   if (!def) return null;
-  for (const path of def.paths) {
+  // Jeder Fehlversuch kostet Kontingent — bei zehn Metriken mal vier
+  // Kandidaten wären das vierzig Requests, danach ist das Free-Tier durch.
+  const paths = useAlternates ? def.paths : def.paths.slice(0, 1);
+  for (const path of paths) {
     try {
       const url = `${BG_BASE}/${path}${BG_TOKEN ? `?token=${encodeURIComponent(BG_TOKEN)}` : ""}`;
       const res = await fetch(url, {
@@ -107,6 +113,7 @@ const fetchBg = async (id) => {
           ...(BG_TOKEN ? { Authorization: `Bearer ${BG_TOKEN}` } : {}),
         },
       });
+      bgStatus[id] = res.status;
       if (!res.ok) continue;
       const json = await res.json();
       const rows = Array.isArray(json) ? json : (json?.data || json?.values);
@@ -334,6 +341,41 @@ const fetchBgDistribution = async () => {
   return null;
 };
 
+// ── DIAGNOSE ─────────────────────────────────────────────────────────────────
+// Meldet für eine Handvoll Kandidaten den rohen HTTP-Status plus Anfang des
+// Bodys. 401 heißt Token nötig, 404 falscher Slug, 429 Kontingent erschöpft —
+// drei völlig verschiedene Ursachen, die sich ohne diese Info nicht trennen lassen.
+const BG_HOSTS = [
+  "https://api.bgeometrics.com/v1",
+  "https://bitcoin-data.com/v1",
+  "https://api.bitcoin-data.com/v1",
+];
+
+const probeOne = async (base, path) => {
+  const url = `${base}/${path}${BG_TOKEN ? `?token=${encodeURIComponent(BG_TOKEN)}` : ""}`;
+  const t0 = Date.now();
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "VisionX-Analytics/1.0",
+        Accept: "application/json",
+        ...(BG_TOKEN ? { Authorization: `Bearer ${BG_TOKEN}` } : {}),
+      },
+    });
+    const text = (await res.text()).slice(0, 240);
+    return {
+      url: url.replace(/token=[^&]*/, "token=***"),
+      status: res.status,
+      ms: Date.now() - t0,
+      type: res.headers.get("content-type") || "",
+      retryAfter: res.headers.get("retry-after") || null,
+      sample: text,
+    };
+  } catch (e) {
+    return { url, status: 0, ms: Date.now() - t0, error: String(e?.message || e).slice(0, 160) };
+  }
+};
+
 // ── HANDLER ──────────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   if (!guard(req, res, 1)) return;
@@ -364,24 +406,63 @@ export default async function handler(req, res) {
       .split(",").map(x => x.trim().toLowerCase()).filter(x => BG_METRICS[x]).slice(0, 10);
     if (!want.length) return res.status(400).json({ error: "metrics required" });
 
-    const data = {}, meta = {}, failed = [];
+    const data = {}, meta = {};
+    const take = (id, series) => {
+      data[id] = Array.from(series);
+      meta[id] = { label: BG_METRICS[id].label, unit: BG_METRICS[id].unit, slug: series.slug };
+    };
+
+    // Durchgang 1: nur der Hauptkandidat je Metrik
+    let pending = [];
     for (let i = 0; i < want.length; i += 3) {
       await Promise.all(want.slice(i, i + 3).map(async id => {
-        const series = await fetchBg(id);
-        if (series) {
-          data[id] = Array.from(series);
-          meta[id] = { label: BG_METRICS[id].label, unit: BG_METRICS[id].unit, slug: series.slug };
-        } else failed.push(id);
+        const series = await fetchBg(id, false);
+        if (series) take(id, series); else pending.push(id);
       }));
     }
-    res.setHeader("Cache-Control", "public, s-maxage=43200, stale-while-revalidate=86400");
-    return res.status(200).json({ data, meta, failed, source: "bgeometrics", tokenSet: Boolean(BG_TOKEN) });
+
+    // Durchgang 2: Alternativen nur für die Ausfälle — und nur, wenn im ersten
+    // Durchgang überhaupt etwas geklappt hat. Ist alles gescheitert, liegt es
+    // nicht an den Namen, und weitere Requests verbrennen nur Kontingent.
+    if (Object.keys(data).length) {
+      const retry = pending;
+      pending = [];
+      for (const id of retry) {
+        const series = await fetchBg(id, true);
+        if (series) take(id, series); else pending.push(id);
+      }
+    }
+    const failed = pending;
+
+    // Nur cachen, wenn etwas ankam. Sonst zementiert der Edge-Cache einen
+    // Fehlversuch für zwölf Stunden und jeder Reload zeigt dasselbe Nichts.
+    res.setHeader("Cache-Control", Object.keys(data).length
+      ? "public, s-maxage=43200, stale-while-revalidate=86400"
+      : "no-store");
+    return res.status(200).json({
+      data, meta, failed, status: bgStatus,
+      source: "bgeometrics", tokenSet: Boolean(BG_TOKEN),
+    });
+  }
+
+  // Diagnose: /api/onchain?action=probe
+  if (req.query.action === "probe") {
+    res.setHeader("Cache-Control", "no-store");
+    const paths = String(req.query.paths || "mvrv,sopr,nupl,sth-realized-price")
+      .split(",").map(x => x.trim()).filter(Boolean).slice(0, 4);
+    const results = [];
+    for (const base of BG_HOSTS) {
+      for (const path of paths) results.push(await probeOne(base, path));
+    }
+    return res.status(200).json({ tokenSet: Boolean(BG_TOKEN), results });
   }
 
   // Angebotsverteilung — eigener Zweig, weil das Ergebnis eine Matrix ist
   if (req.query.action === "distribution") {
     const dist = await fetchBgDistribution();
-    res.setHeader("Cache-Control", "public, s-maxage=43200, stale-while-revalidate=86400");
+    res.setHeader("Cache-Control", dist
+      ? "public, s-maxage=43200, stale-while-revalidate=86400"
+      : "no-store");
     if (!dist) return res.status(200).json({ distribution: null, tried: BG_DIST_PATHS });
     return res.status(200).json({ distribution: dist, source: "bgeometrics" });
   }
