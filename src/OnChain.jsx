@@ -30,7 +30,7 @@ const STH_WINDOW = 155;          // Short-Term-Holder-Schwelle in Tagen
 const STH_WINDOW_W = 22;         // dieselbe Schwelle in Wochen (155/7)
 const FRACTAL_WIN = 60;          // Volatilitätsfenster, Tage
 const FRACTAL_WIN_W = 26;        // dito in Wochen
-const HEAT_BINS = 190;           // Preisklassen der Kostenbasis-Heatmap (global, log-verteilt)
+const HEAT_BINS = 440;           // Preisklassen der Kostenbasis-Heatmap (global, log-verteilt)
 const HEAT_FLOOR = 0.015;        // Zellen darunter werden gar nicht gezeichnet
 const HEAT_GAMMA = 0.68;         // <1 = flächiger und heller, >1 = mehr Schwarz
 
@@ -225,7 +225,7 @@ const buildHeat = (ohlc, w = STH_WINDOW, bins = HEAT_BINS) => {
   const logHi = Math.log(gHi * 1.06);
   const step = (logHi - logLo) / bins;
 
-  const { k: kern, r: kr } = gaussKernel(2.2);
+  const { k: kern, r: kr } = gaussKernel(bins / 86);   // Glättung in Preisbreite, nicht in Bins
   const cols = [];
 
   for (let i = w - 1; i < n; i++) {
@@ -252,6 +252,56 @@ const buildHeat = (ohlc, w = STH_WINDOW, bins = HEAT_BINS) => {
   // Schwarz übrig. Die Normierung passiert jetzt beim Zeichnen, über das, was
   // gerade im Bild ist.
   return { cols, logLo, step, bins, priceAt: b => Math.exp(logLo + b * step) };
+};
+
+// Heatmap aus der echten Angebotsverteilung.
+//
+// Liefert dieselbe Struktur wie buildHeat, damit der Renderer nichts davon
+// mitbekommt. Der Unterschied liegt in der Einheit: hier steht BTC-Angebot
+// pro Preisbucket, beim Volumenprofil gehandeltes Volumen pro Preisklasse.
+// Die Buckets kommen in festen Dollarschritten und werden auf das
+// log-verteilte Bin-Raster umgelegt.
+const heatFromDistribution = (dist, bins = HEAT_BINS) => {
+  if (!dist?.ts?.length || !dist?.buckets?.length) return null;
+  const { ts, buckets, grid } = dist;
+
+  // Nur Buckets berücksichtigen, in denen überhaupt Angebot liegt — sonst
+  // spannt eine leere 500k-Klasse die Achse über den ganzen Chart.
+  let lo = Infinity, hi = -Infinity;
+  for (let r = 0; r < grid.length; r++) {
+    const row = grid[r];
+    for (let b = 0; b < buckets.length; b++) {
+      if (row[b] > 0) { if (buckets[b] < lo) lo = buckets[b]; if (buckets[b] > hi) hi = buckets[b]; }
+    }
+  }
+  if (!(lo > 0) || !(hi > lo)) return null;
+
+  const logLo = Math.log(lo * 0.94);
+  const logHi = Math.log(hi * 1.06);
+  const step = (logHi - logLo) / bins;
+
+  // Bucket → Bin einmal vorrechnen
+  const binOf = buckets.map(p =>
+    Math.min(bins - 1, Math.max(0, Math.floor((Math.log(p) - logLo) / step))));
+
+  const { k: kern, r: kr } = gaussKernel(bins / 110);   // Verteilung ist schon glatt
+  const cols = [];
+  for (let r = 0; r < grid.length; r++) {
+    const raw = new Float32Array(bins);
+    const row = grid[r];
+    for (let b = 0; b < buckets.length; b++) if (row[b] > 0) raw[binOf[b]] += row[b];
+    const hist = new Float32Array(bins);
+    for (let b = 0; b < bins; b++) {
+      let acc = 0;
+      for (let d = -kr; d <= kr; d++) {
+        const q = b + d;
+        if (q >= 0 && q < bins) acc += raw[q] * kern[d + kr];
+      }
+      hist[b] = acc;
+    }
+    cols.push({ ts: ts[r], hist });
+  }
+  return { cols, logLo, step, bins, priceAt: b => Math.exp(logLo + b * step), unit: "BTC" };
 };
 
 // Ω-Score: Perzentilrang der σ-Abweichung vom Realised-Proxy
@@ -553,14 +603,21 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
     return PADT + (1 - (t - vp.rlo) / (vp.rhi - vp.rlo || 1)) * plotH;
   }, [vp, model]);
 
-  // Wheel-Zoom auf den Cursor
-  useEffect(() => {
-    const el = svgRef.current;
-    if (!el) return;
+  // Wheel-Zoom über einen Callback-Ref statt über einen Effect.
+  //
+  // Ein useEffect mit [] läuft genau einmal beim Mount — da ist noch kein SVG
+  // da, weil die Komponente ohne Daten früh mit dem Platzhalter zurückkehrt.
+  // Der Listener wurde also nie registriert. Der Callback-Ref feuert dagegen
+  // genau dann, wenn der Knoten tatsächlich in den DOM kommt.
+  const wheelOff = useRef(null);
+  const attachSvg = useCallback(node => {
+    if (wheelOff.current) { wheelOff.current(); wheelOff.current = null; }
+    svgRef.current = node;
+    if (!node) return;
     const onWheel = e => {
-      // Nur greifen, wenn der Zeiger wirklich über der Zeichenfläche ist —
-      // sonst blockiert der Chart das Scrollen der Seite.
-      const r = el.getBoundingClientRect();
+      // Nur greifen, wenn der Zeiger wirklich über der Zeichenfläche steht —
+      // sonst nimmt der Chart der Seite das Scrollen weg.
+      const r = node.getBoundingClientRect();
       if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
       e.preventDefault();
       const frac = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
@@ -571,8 +628,8 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
         return clampWin(anchor - next * frac, next);
       });
     };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
+    node.addEventListener("wheel", onWheel, { passive: false });
+    wheelOff.current = () => node.removeEventListener("wheel", onWheel);
   }, []);
 
   const onDown = e => {
@@ -631,12 +688,16 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
     const yTopLim = PADT, yBotLim = PADT + plotH;
     const edges = new Float32Array(heat.bins + 1);
     for (let b = 0; b <= heat.bins; b++) edges[b] = Y(heat.priceAt(b));
+    // Sichtbaren Bin-Bereich einmal bestimmen, statt bei jeder Spalte alle
+    // 440 Klassen durchzulaufen. edges[] fällt monoton, daher rückwärts suchen.
+    let bLo = 0, bHi = heat.bins - 1;
+    while (bLo < heat.bins - 1 && edges[bLo] < yTopLim) bLo++;
+    while (bHi > 0 && edges[bHi + 1] > yBotLim) bHi--;
+    bLo = Math.max(0, bLo - 1); bHi = Math.min(heat.bins - 1, bHi + 1);
+
     const visible = [];
     for (const hist of cols) {
-      for (let b = 0; b < heat.bins; b++) {
-        if (edges[b] < yTopLim || edges[b + 1] > yBotLim) continue;
-        if (hist[b] > 0) visible.push(hist[b]);
-      }
+      for (let b = bLo; b <= bHi; b++) if (hist[b] > 0) visible.push(hist[b]);
     }
     if (!visible.length) { setHeatScale(null); return; }
     visible.sort((a, b) => a - b);
@@ -647,11 +708,10 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
     for (let k = 0; k < cols.length; k++) {
       const hist = cols[k];
       const x = PADL + k * cw;
-      for (let b = 0; b < heat.bins; b++) {
+      for (let b = bLo; b <= bHi; b++) {
         const t = Math.min(1, hist[b] / scale);
         if (t < HEAT_FLOOR) continue;
         const yTop = edges[b + 1], yBot = edges[b];
-        if (yBot < yTopLim || yTop > yBotLim) continue;
         // Deckkraft trägt den Abfall, die Farbe läuft über die ganze Rampe —
         // sonst wird jede schwache Zelle doppelt abgedunkelt.
         ctx.globalAlpha = Math.min(1, Math.pow(t, HEAT_GAMMA));
@@ -689,6 +749,33 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
     ? niceTicks(vp.rlo, vp.rhi, model.right.log).map(v => ({ y: YR(v), v }))
     : [];
 
+  // Datumsachse an echten Monats-/Jahresgrenzen, gleichmäßig ausgedünnt.
+  // Vorher fünf feste Bruchteile — bei ungleichmäßigen Reihen standen dabei
+  // zwei Labels fast übereinander und eines wirkte wie ein Duplikat.
+  const dateTicks = (() => {
+    const n = vp.idx.length;
+    const span = model.ts[vp.idx[n - 1]] - model.ts[vp.idx[0]];
+    const days = span / 864e5;
+    const monthly = days < 400;
+    const seen = new Set();
+    const out = [];
+    for (let k = 0; k < n; k++) {
+      const d = new Date(model.ts[vp.idx[k]]);
+      const key = monthly ? `${d.getUTCFullYear()}-${d.getUTCMonth()}` : `${d.getUTCFullYear()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ k, label: monthly ? fmtDate(model.ts[vp.idx[k]]) : String(d.getUTCFullYear()) });
+    }
+    if (days < 70) {
+      return [0, 0.5, 1].map(f => {
+        const k = Math.round(f * (n - 1));
+        return { k, label: new Date(model.ts[vp.idx[k]]).toLocaleDateString(lang === "en" ? "en-GB" : "de-DE") };
+      });
+    }
+    const stepT = Math.max(1, Math.ceil(out.length / 7));
+    return out.filter((_, i) => i % stepT === 0);
+  })();
+
   const hoverI = hoverK != null && vp.idx[hoverK] != null ? vp.idx[hoverK] : null;
   const scatterStep = model.scatter ? Math.max(1, Math.round(vp.idx.length / 420)) : 1;
 
@@ -697,7 +784,7 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
       <canvas ref={canvasRef} width={W} height={H}
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }} />
 
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
+      <svg ref={attachSvg} viewBox={`0 0 ${W} ${H}`}
         style={{ position: "relative", width: "100%", display: "block", touchAction: "none",
           cursor: dragRef.current ? "grabbing" : hovering ? "grab" : "crosshair" }}
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}
@@ -798,7 +885,7 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
                   style={{ font: `500 7.5px ${F.mono}`, letterSpacing: "0.1em" }}>{lbl}</text>
               ))}
               <text x={lx + lw / 2} y={lTop - 8} textAnchor="middle" fill={C.textFaint}
-                style={{ font: `700 7px ${F.ui}`, letterSpacing: "0.16em" }}>{T.legend}</text>
+                style={{ font: `700 7px ${F.ui}`, letterSpacing: "0.16em" }}>{heat?.unit || T.legend}</text>
               <text x={lx + lw / 2} y={lTop + lH + 15} textAnchor="middle" fill={C.textFaint}
                 style={{ font: `500 7px ${F.mono}`, letterSpacing: "0.06em" }} opacity="0.7">
                 {compact(heatScale, 0)}
@@ -807,15 +894,13 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
           );
         })()}
 
-        {[0, 0.25, 0.5, 0.75, 1].map(f => {
-          const k = Math.round(f * (vp.idx.length - 1));
-          return (
-            <text key={`x${f}`} x={X(k)} y={H - 11} textAnchor={f === 0 ? "start" : f === 1 ? "end" : "middle"}
-              fill={C.textFaint} style={{ font: `500 9px ${F.mono}`, letterSpacing: "0.1em" }}>
-              {fmtDate(model.ts[vp.idx[k]])}
-            </text>
-          );
-        })}
+        {dateTicks.map(d => (
+          <text key={d.k} x={X(d.k)} y={H - 11}
+            textAnchor={d.k === 0 ? "start" : d.k === vp.idx.length - 1 ? "end" : "middle"}
+            fill={C.textFaint} style={{ font: `500 9px ${F.mono}`, letterSpacing: "0.1em" }}>
+            {d.label}
+          </text>
+        ))}
       </svg>
 
       {hoverI != null && (
@@ -859,6 +944,7 @@ export default function OnChain({ lang = "de" }) {
   const [raw, setRaw] = useState({});
   const [utxo, setUtxo] = useState({});     // echte Kohorten-Reihen von BGeometrics
   const [missing, setMissing] = useState([]);  // Slugs, die kein Ergebnis lieferten
+  const [dist, setDist] = useState(null);      // echte Angebotsverteilung (Movement Zones)
   const [snap, setSnap] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -901,6 +987,18 @@ export default function OnChain({ lang = "de" }) {
       .then(r => (r.ok ? r.json() : null))
       .then(j => { if (alive && j?.data) { setUtxo(j.data); setMissing(j.failed || []); } })
       .catch(() => { /* Fallback auf Proxy */ });
+    return () => { alive = false; };
+  }, [coin]);
+
+  // Angebotsverteilung: separat, weil das Ergebnis eine Matrix ist und
+  // spürbar größer als die Zeitreihen. Kommt nichts, bleibt das Volumenprofil.
+  useEffect(() => {
+    let alive = true;
+    if (!isBtc(coin)) { setDist(null); return undefined; }
+    apiFetch("/api/onchain?action=distribution")
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => { if (alive) setDist(j?.distribution || null); })
+      .catch(() => { /* Fallback auf Volumenprofil */ });
     return () => { alive = false; };
   }, [coin]);
 
@@ -957,7 +1055,11 @@ export default function OnChain({ lang = "de" }) {
       realProfit: hitPrf / cover > 0.5,
     };
   }, [pxBase, realSth, realProfit]);
-  const heat = useMemo(() => (viewId === "heat" ? buildHeat(ohlc, wSth) : null), [ohlc, viewId, wSth]);
+  // Echte Verteilung schlägt Volumenprofil, wenn sie vorliegt
+  const heat = useMemo(() => {
+    if (viewId !== "heat") return null;
+    return heatFromDistribution(dist) || buildHeat(ohlc, wSth);
+  }, [viewId, dist, ohlc, wSth]);
   const omega = useMemo(() => buildOmega(px, tf === "1wk" ? 52 : 365), [px, tf]);
   const fractal = useMemo(() => buildFractal(ohlc, tf === "1wk" ? FRACTAL_WIN_W : FRACTAL_WIN), [ohlc, tf]);
 
@@ -1056,12 +1158,13 @@ export default function OnChain({ lang = "de" }) {
   }, [viewId, omega, px, fractal, chain, T]);
 
   // Eine Ansicht ist nur so lange PROXY, wie keine echten UTXO-Daten anliegen
-  const kindOf = useCallback(v => {
+  const kindOf = useCallback(v => {  // eslint-disable-line react-hooks/exhaustive-deps
     if (v.kind !== "proxy") return "exact";
     if (v.id === "profit") return px?.realProfit ? "live" : "proxy";
-    if (v.id === "realised" || v.id === "heat") return px?.real ? "live" : "proxy";
+    if (v.id === "heat") return heat?.unit === "BTC" || dist ? "live" : "proxy";
+    if (v.id === "realised") return px?.real ? "live" : "proxy";
     return "proxy";
-  }, [px]);
+  }, [px, heat, dist]);
 
   const kindBadge = k => k === "live" ? { text: T.live_, color: "#3fcf8e" }
     : k === "proxy" ? { text: T.proxy, color: "#fb923c" }
