@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Component } from "react";
 import Seasonality from "./Charts";
 import RRG from "./RRG";
 import VIX from "./VIX";
@@ -119,6 +119,70 @@ function ModuleNav({ active, setActive }) {
   );
 }
 
+// ── FEHLERGRENZE ─────────────────────────────────────────────────────────────
+// Ohne die reißt ein Render-Fehler in einem einzigen Modul den kompletten
+// React-Baum ab — die Seite wird weiß und man sieht nirgends, woran es lag.
+// Mit ihr bleibt Kopfzeile und Navigation stehen, und die Meldung samt
+// Stack-Anfang steht auf dem Schirm.
+class ModuleBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { err: null, info: null };
+  }
+
+  static getDerivedStateFromError(err) {
+    return { err };
+  }
+
+  componentDidCatch(err, info) {
+    this.setState({ info });
+    // Auch in der Konsole, mit vollem Stack
+    console.error(`[VisionX] Modul "${this.props.moduleId}" ist abgestürzt:`, err, info);
+  }
+
+  componentDidUpdate(prev) {
+    // Beim Wechsel auf ein anderes Modul zurücksetzen
+    if (prev.moduleId !== this.props.moduleId && this.state.err) {
+      this.setState({ err: null, info: null });
+    }
+  }
+
+  render() {
+    const { err, info } = this.state;
+    if (!err) return this.props.children;
+
+    const stack = String(info?.componentStack || "").trim().split("\n").slice(0, 6).join("\n");
+    const box = {
+      background: "rgba(255,255,255,0.02)", border: "1px solid rgba(239,68,68,0.35)",
+      borderRadius: 12, padding: "18px 22px", marginTop: 14,
+      fontFamily: F.mono, fontSize: 11, color: "#f87171",
+      whiteSpace: "pre-wrap", overflowX: "auto",
+    };
+
+    return (
+      <div style={{ maxWidth: 1000, margin: "0 auto", padding: "40px 34px 60px" }}>
+        <div style={{ ...overline("#f87171"), marginBottom: 10 }}>
+          MODUL {String(this.props.moduleId || "").toUpperCase()} — RENDER-FEHLER
+        </div>
+        <div style={{ fontFamily: F.ui, fontSize: 12, color: C.textDim, lineHeight: 1.7 }}>
+          Der Rest der Anwendung läuft weiter. Meldung unten kopieren — sie sagt genau,
+          welche Zeile gestolpert ist.
+        </div>
+        <div style={box}>{err?.message || String(err)}</div>
+        {stack && (
+          <div style={{ ...box, borderColor: C.line, color: C.textMute }}>{stack}</div>
+        )}
+        <button onClick={() => this.setState({ err: null, info: null })}
+          style={{ marginTop: 14, padding: "9px 16px", borderRadius: 9, cursor: "pointer",
+            background: "rgba(212,175,55,0.1)", border: "1px solid rgba(212,175,55,0.42)",
+            color: "#f8e49b", fontFamily: F.ui, fontSize: 9, fontWeight: 700, letterSpacing: "0.16em" }}>
+          ERNEUT VERSUCHEN
+        </button>
+      </div>
+    );
+  }
+}
+
 export default function App() {
   const [active, setActive] = useState("seasonality");
   const [lang, setLang] = useState(loadLang);
@@ -159,7 +223,9 @@ export default function App() {
       <ModuleNav active={active} setActive={setActive} />
 
       <div key={active} className="vsx-fade">
-        {active === "seasonality" ? <Seasonality nav={null} lang={lang} /> : <M lang={lang} />}
+        <ModuleBoundary moduleId={active}>
+          {active === "seasonality" ? <Seasonality nav={null} lang={lang} /> : <M lang={lang} />}
+        </ModuleBoundary>
       </div>
     </div>
   );
