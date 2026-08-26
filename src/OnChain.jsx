@@ -31,8 +31,8 @@ const STH_WINDOW_W = 22;         // dieselbe Schwelle in Wochen (155/7)
 const FRACTAL_WIN = 60;          // Volatilitätsfenster, Tage
 const FRACTAL_WIN_W = 26;        // dito in Wochen
 const HEAT_BINS = 190;           // Preisklassen der Kostenbasis-Heatmap (global, log-verteilt)
-const HEAT_FLOOR = 0.04;         // Zellen darunter werden gar nicht gezeichnet
-const HEAT_GAMMA = 1.25;         // >1 = steiler Abfall = mehr Schwarz. Kleiner = flächiger.
+const HEAT_FLOOR = 0.015;        // Zellen darunter werden gar nicht gezeichnet
+const HEAT_GAMMA = 0.68;         // <1 = flächiger und heller, >1 = mehr Schwarz
 
 // ── COINS ────────────────────────────────────────────────────────────────────
 const COINS = [
@@ -135,6 +135,18 @@ const compact = (v, d = 1) => {
 const usd = v => (v == null || !Number.isFinite(v)) ? "—" : `$${compact(v, v < 10 ? 3 : 2)}`;
 const fmtDate = ts => new Date(ts).toLocaleDateString("en-US", { month: "short", year: "numeric" });
 
+// Achsenbeschriftung: keine Nachkommastellen, wo keine gebraucht werden
+const axisNum = v => {
+  if (v == null || !Number.isFinite(v)) return "—";
+  const a = Math.abs(v);
+  if (a >= 1e9) return `${+(v / 1e9).toFixed(a >= 1e10 ? 0 : 1)}B`;
+  if (a >= 1e6) return `${+(v / 1e6).toFixed(a >= 1e7 ? 0 : 1)}M`;
+  if (a >= 1e3) return `${+(v / 1e3).toFixed(a >= 1e4 ? 0 : 1)}k`;
+  if (a >= 10) return String(+v.toFixed(0));
+  if (a >= 1) return String(+v.toFixed(1));
+  return String(+v.toFixed(2));
+};
+
 // ── ABLEITUNGEN AUS OHLCV ────────────────────────────────────────────────────
 // Rollierendes Volumenprofil als Ersatz für die UTXO-Kostenbasis: jeder Tag
 // steuert sein Volumen beim Typical Price bei.
@@ -215,7 +227,6 @@ const buildHeat = (ohlc, w = STH_WINDOW, bins = HEAT_BINS) => {
 
   const { k: kern, r: kr } = gaussKernel(2.2);
   const cols = [];
-  const all = [];
 
   for (let i = w - 1; i < n; i++) {
     const rawHist = new Float32Array(bins);
@@ -232,17 +243,15 @@ const buildHeat = (ohlc, w = STH_WINDOW, bins = HEAT_BINS) => {
         if (q >= 0 && q < bins) acc += rawHist[q] * kern[d + kr];
       }
       hist[b] = acc;
-      if (acc > 0) all.push(acc);
     }
     cols.push({ ts: ohlc[i][0], hist });
   }
 
-  // Globale Skala über das 99. Perzentil statt über das Maximum: ein einzelner
-  // Volumen-Ausreißer soll nicht das ganze Bild dunkel drücken.
-  all.sort((a, b) => a - b);
-  const scale = all[Math.floor(all.length * 0.99)] || all[all.length - 1] || 1;
-
-  return { cols, logLo, step, bins, scale, priceAt: b => Math.exp(logLo + b * step) };
+  // KEINE globale Skala mehr. Über eine All-Time-Reihe erschlägt das Volumen
+  // der späten Jahre die frühen komplett — dann bleibt vom halben Chart nur
+  // Schwarz übrig. Die Normierung passiert jetzt beim Zeichnen, über das, was
+  // gerade im Bild ist.
+  return { cols, logLo, step, bins, priceAt: b => Math.exp(logLo + b * step) };
 };
 
 // Ω-Score: Perzentilrang der σ-Abweichung vom Realised-Proxy
@@ -321,7 +330,7 @@ const T_ = {
     proxyWarn: "Volumenprofil-Näherung, keine UTXO-Daten. Form belastbar, Niveau nicht.",
     liveNote: "Echte UTXO-Kohortendaten von BGeometrics. Der Proxy ist nur noch Rückfallebene.",
     live_: "LIVE", sources: "QUELLEN", daily: "TÄGLICH", weekly: "WÖCHENTLICH",
-    noSource: "KEINE QUELLE", failedSlugs: "Ohne Antwort",
+    noSource: "KEINE QUELLE", failedSlugs: "Ohne Antwort", legend: "VOL",
     noSourceNote: "Für diese Ansicht hat keine der hinterlegten Quellen Daten geliefert. Die Slug-Kandidaten stehen in api/onchain.js unter BG_METRICS.",
   },
   en: {
@@ -336,13 +345,13 @@ const T_ = {
     proxyWarn: "Volume-profile approximation, not UTXO data. The shape holds, the level does not.",
     liveNote: "Real UTXO cohort data from BGeometrics. The proxy is only a fallback now.",
     live_: "LIVE", sources: "SOURCES", daily: "DAILY", weekly: "WEEKLY",
-    noSource: "NO SOURCE", failedSlugs: "No response",
+    noSource: "NO SOURCE", failedSlugs: "No response", legend: "VOL",
     noSourceNote: "None of the configured sources returned data for this view. The slug candidates live in api/onchain.js under BG_METRICS.",
   },
 };
 
 // ── CHART ────────────────────────────────────────────────────────────────────
-const W = 1480, H = 500, PADL = 68, PADR = 68, PADT = 18, PADB = 34;
+const W = 1480, H = 500, PADL = 68, PADR = 78, PADT = 18, PADB = 34;
 const plotW = W - PADL - PADR, plotH = H - PADT - PADB;
 
 // Sichtfenster begrenzen, aber an beiden Rändern ein halbes Fenster Überlauf
@@ -359,6 +368,8 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
   const dragRef = useRef(null);
   const [win, setWin] = useState({ a: 0, b: 1 });
   const [hoverK, setHoverK] = useState(null);
+  const [heatScale, setHeatScale] = useState(null);   // Bezugswert der sichtbaren Heatmap
+  const [hovering, setHovering] = useState(false);
 
   // Reihen je Ansicht
   const model = useMemo(() => {
@@ -547,8 +558,11 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
     const el = svgRef.current;
     if (!el) return;
     const onWheel = e => {
-      e.preventDefault();
+      // Nur greifen, wenn der Zeiger wirklich über der Zeichenfläche ist —
+      // sonst blockiert der Chart das Scrollen der Seite.
       const r = el.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+      e.preventDefault();
       const frac = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
       setWin(w => {
         const span = w.b - w.a;
@@ -561,7 +575,11 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  const onDown = e => { dragRef.current = { x: e.clientX, ...win }; e.currentTarget.setPointerCapture(e.pointerId); };
+  const onDown = e => {
+    dragRef.current = { x: e.clientX, ...win, moved: false };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setHoverK(null);                       // beim Schieben kein Readout im Weg
+  };
   const onMove = e => {
     const el = svgRef.current;
     if (!el) return;
@@ -569,6 +587,7 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
     if (dragRef.current) {
       const d = dragRef.current;
       const span = d.b - d.a;
+      d.moved = true;
       setWin(clampWin(d.a - ((e.clientX - d.x) / r.width) * span, span));
       return;
     }
@@ -585,29 +604,59 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
     if (!cv) return;
     const ctx = cv.getContext("2d");
     ctx.clearRect(0, 0, W, H);
-    if (view.id !== "heat" || !heat || !vp) return;
-    const cols = vp.idx.map(i => heat.cols[i]).filter(Boolean);
-    if (!cols.length) return;
+    if (view.id !== "heat" || !heat || !vp) { setHeatScale(null); return; }
+    const raw = vp.idx.map(i => heat.cols[i]).filter(Boolean);
+    if (!raw.length) { setHeatScale(null); return; }
 
-    // Bin-Kanten einmal vorrechnen — global, also für alle Spalten gleich
+    // Bei All-Time-Daten liegen mehr Spalten an als der Chart Pixel hat.
+    // Ungefiltert zeichnet man dann zehntausende überlappende Rechtecke —
+    // langsam und optisch Matsch. Also auf Pixelbreite verdichten.
+    const target = Math.min(raw.length, Math.round(plotW));
+    const group = Math.ceil(raw.length / target);
+    const cols = [];
+    for (let i = 0; i < raw.length; i += group) {
+      if (group === 1) { cols.push(raw[i].hist); continue; }
+      const acc = new Float32Array(heat.bins);
+      let cnt = 0;
+      for (let j = i; j < Math.min(raw.length, i + group); j++, cnt++) {
+        const h = raw[j].hist;
+        for (let b = 0; b < heat.bins; b++) acc[b] += h[b];
+      }
+      for (let b = 0; b < heat.bins; b++) acc[b] /= cnt || 1;
+      cols.push(acc);
+    }
+
+    // Skala aus dem SICHTBAREN Ausschnitt: 99. Perzentil der Zellen, die im
+    // aktuellen Y-Bereich liegen. Damit reagiert der Kontrast auf Zoom und Pan.
+    const yTopLim = PADT, yBotLim = PADT + plotH;
     const edges = new Float32Array(heat.bins + 1);
     for (let b = 0; b <= heat.bins; b++) edges[b] = Y(heat.priceAt(b));
+    const visible = [];
+    for (const hist of cols) {
+      for (let b = 0; b < heat.bins; b++) {
+        if (edges[b] < yTopLim || edges[b + 1] > yBotLim) continue;
+        if (hist[b] > 0) visible.push(hist[b]);
+      }
+    }
+    if (!visible.length) { setHeatScale(null); return; }
+    visible.sort((a, b) => a - b);
+    const scale = visible[Math.floor(visible.length * 0.99)] || visible[visible.length - 1] || 1;
+    setHeatScale(scale);
 
     const cw = plotW / cols.length;
     for (let k = 0; k < cols.length; k++) {
-      const hist = cols[k].hist;
+      const hist = cols[k];
       const x = PADL + k * cw;
       for (let b = 0; b < heat.bins; b++) {
-        const t = hist[b] / heat.scale;
-        if (t < HEAT_FLOOR) continue;                  // darunter bleibt Schwarz stehen
+        const t = Math.min(1, hist[b] / scale);
+        if (t < HEAT_FLOOR) continue;
         const yTop = edges[b + 1], yBot = edges[b];
-        if (yBot < PADT || yTop > PADT + plotH) continue;
-        // Deckkraft trägt den Abfall (steil, damit viel Schwarz übrig bleibt),
-        // die Farbe läuft trotzdem über die ganze Rampe — sonst wird jede
-        // schwache Zelle doppelt abgedunkelt und das Bild wird matschig.
+        if (yBot < yTopLim || yTop > yBotLim) continue;
+        // Deckkraft trägt den Abfall, die Farbe läuft über die ganze Rampe —
+        // sonst wird jede schwache Zelle doppelt abgedunkelt.
         ctx.globalAlpha = Math.min(1, Math.pow(t, HEAT_GAMMA));
-        ctx.fillStyle = magma(0.22 + 0.78 * Math.min(1, Math.pow(t, 0.62)));
-        ctx.fillRect(x, yTop, cw + 0.5, Math.max(0.8, yBot - yTop));
+        ctx.fillStyle = magma(0.18 + 0.82 * Math.pow(t, 0.6));
+        ctx.fillRect(x, yTop, cw + 0.6, Math.max(0.8, yBot - yTop));
       }
     }
     ctx.globalAlpha = 1;
@@ -650,14 +699,22 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
 
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
         style={{ position: "relative", width: "100%", display: "block", touchAction: "none",
-          cursor: dragRef.current ? "grabbing" : "crosshair" }}
+          cursor: dragRef.current ? "grabbing" : hovering ? "grab" : "crosshair" }}
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}
-        onPointerLeave={() => { onUp(); setHoverK(null); }}>
+        onPointerEnter={() => setHovering(true)}
+        onPointerLeave={() => { onUp(); setHoverK(null); setHovering(false); }}>
 
         <defs>
           <linearGradient id="ocArea" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#2f8f5b" stopOpacity="0.62" />
             <stop offset="100%" stopColor="#2f8f5b" stopOpacity="0.05" />
+          </linearGradient>
+          {/* Magma-Rampe für die Heatmap-Legende, oben heiß, unten kalt */}
+          <linearGradient id="ocMagma" x1="0" y1="1" x2="0" y2="0">
+            {[0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1].map(t => (
+              <stop key={t} offset={`${t * 100}%`} stopColor={magma(0.18 + 0.82 * Math.pow(t, 0.6))}
+                stopOpacity={Math.min(1, Math.pow(Math.max(t, 0.02), HEAT_GAMMA))} />
+            ))}
           </linearGradient>
         </defs>
 
@@ -666,13 +723,13 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
             <line x1={PADL} x2={PADL + plotW} y1={t.y} y2={t.y}
               stroke={view.id === "heat" ? "rgba(255,255,255,0.03)" : C.lineSoft} strokeDasharray="2 5" />
             <text x={PADL - 9} y={t.y + 3.5} textAnchor="end" fill={C.textFaint} style={{ font: `500 9.5px ${F.mono}` }}>
-              {model.pct ? `${t.v.toFixed(0)}%` : compact(t.v, 2)}
+              {model.pct ? `${t.v.toFixed(0)}%` : axisNum(t.v)}
             </text>
           </g>
         ))}
         {rTicks.map((t, i) => (
           <text key={`r${i}`} x={PADL + plotW + 9} y={t.y + 3.5} fill={C.textFaint} style={{ font: `500 9.5px ${F.mono}` }}>
-            {usd(t.v)}
+            ${axisNum(t.v)}
           </text>
         ))}
 
@@ -727,6 +784,28 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
           <line x1={X(hoverK)} x2={X(hoverK)} y1={PADT} y2={PADT + plotH}
             stroke={C.goldDim} strokeWidth="0.8" strokeDasharray="3 4" />
         )}
+
+        {/* Legende: Skala ist relativ zum sichtbaren Ausschnitt, nicht absolut */}
+        {view.id === "heat" && heatScale != null && (() => {
+          const lx = PADL + plotW + 16, lw = 9;
+          const lTop = PADT + plotH * 0.18, lH = plotH * 0.64;
+          return (
+            <g>
+              <rect x={lx} y={lTop} width={lw} height={lH} fill="url(#ocMagma)" rx="2" />
+              <rect x={lx} y={lTop} width={lw} height={lH} fill="none" stroke={C.line} rx="2" />
+              {[[0, "MAX"], [0.5, "50%"], [1, "0"]].map(([f, lbl]) => (
+                <text key={lbl} x={lx + lw + 5} y={lTop + lH * f + 3.2} fill={C.textFaint}
+                  style={{ font: `500 7.5px ${F.mono}`, letterSpacing: "0.1em" }}>{lbl}</text>
+              ))}
+              <text x={lx + lw / 2} y={lTop - 8} textAnchor="middle" fill={C.textFaint}
+                style={{ font: `700 7px ${F.ui}`, letterSpacing: "0.16em" }}>{T.legend}</text>
+              <text x={lx + lw / 2} y={lTop + lH + 15} textAnchor="middle" fill={C.textFaint}
+                style={{ font: `500 7px ${F.mono}`, letterSpacing: "0.06em" }} opacity="0.7">
+                {compact(heatScale, 0)}
+              </text>
+            </g>
+          );
+        })()}
 
         {[0, 0.25, 0.5, 0.75, 1].map(f => {
           const k = Math.round(f * (vp.idx.length - 1));
