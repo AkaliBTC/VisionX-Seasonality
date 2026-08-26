@@ -682,9 +682,19 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
     );
   }
 
-  const linePath = vals => vp.idx
-    .map((i, k) => (Number.isFinite(vals[i]) ? `${k ? "L" : "M"}${X(k).toFixed(1)},${Y(vals[i]).toFixed(1)}` : ""))
-    .join("");
+  // Bei einer Lücke neu ansetzen (M) statt sie zu überbrücken (L). Vorher
+  // konnte nach einem ungültigen Wert ein L auf einen M-losen Pfad folgen —
+  // der Browser verwirft dann den Rest des Pfades.
+  const linePath = vals => {
+    let out = "", pen = false;
+    for (let k = 0; k < vp.idx.length; k++) {
+      const v = vals[vp.idx[k]];
+      if (!Number.isFinite(v)) { pen = false; continue; }
+      out += `${pen ? "L" : "M"}${X(k).toFixed(1)},${Y(v).toFixed(1)}`;
+      pen = true;
+    }
+    return out;
+  };
 
   // Runde Achsenwerte statt linear geteilter Krummzahlen (133k, 85.9k …)
   const niceTicks = (lo, hi, useLog, count = 6) => {
@@ -727,6 +737,25 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
     }
     const stepT = Math.max(1, Math.ceil(out.length / 7));
     return out.filter((_, i) => i % stepT === 0);
+  })();
+
+  // Zusammenhängende Abschnitte der Flächenreihe — an Lücken wird getrennt
+  const areaSegments = (() => {
+    if (!model.area) return [];
+    const segs = [];
+    let cur = [];
+    vp.idx.forEach((i, k) => {
+      const v = model.area.vals[i];
+      if (!Number.isFinite(v)) {
+        if (cur.length > 1) segs.push(cur);
+        cur = [];
+        return;
+      }
+      const y = Math.max(PADT, Math.min(PADT + plotH, Y(v)));
+      cur.push({ x: X(k), y });
+    });
+    if (cur.length > 1) segs.push(cur);
+    return segs;
   })();
 
   const hoverI = hoverK != null && vp.idx[hoverK] != null ? vp.idx[hoverK] : null;
@@ -784,10 +813,14 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
           );
         })}
 
-        {model.area && (
-          <path fill="url(#ocArea)" stroke={model.area.color} strokeWidth="1"
-            d={`${vp.idx.map((i, k) => `${k ? "L" : "M"}${X(k).toFixed(1)},${Y(model.area.vals[i]).toFixed(1)}`).join("")}L${X(vp.idx.length - 1).toFixed(1)},${PADT + plotH}L${PADL},${PADT + plotH}Z`} />
-        )}
+        {/* Fläche stückweise: ein einzelner ungültiger Wert darf nicht dazu
+            führen, dass der Browser den Pfad abbricht und der Rest als ein
+            großer Block über den halben Chart läuft. */}
+        {model.area && areaSegments.map((seg, si) => (
+          <path key={`a${si}`} fill="url(#ocArea)" stroke={model.area.color} strokeWidth="1"
+            d={`${seg.map((pt, k) => `${k ? "L" : "M"}${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join("")}`
+              + `L${seg[seg.length - 1].x.toFixed(1)},${PADT + plotH}L${seg[0].x.toFixed(1)},${PADT + plotH}Z`} />
+        ))}
 
         {model.bars && vp.idx.map((i, k) => {
           const v = model.bars.vals[i];
@@ -801,7 +834,16 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
 
         {model.right && (
           <path fill="none" stroke={model.right.color} strokeWidth="1.2" strokeLinejoin="round"
-            d={vp.idx.map((i, k) => `${k ? "L" : "M"}${X(k).toFixed(1)},${YR(model.right.vals[i]).toFixed(1)}`).join("")} />
+            d={(() => {
+              let out = "", pen = false;
+              for (let k = 0; k < vp.idx.length; k++) {
+                const v = model.right.vals[vp.idx[k]];
+                if (!Number.isFinite(v) || v <= 0) { pen = false; continue; }
+                out += `${pen ? "L" : "M"}${X(k).toFixed(1)},${YR(v).toFixed(1)}`;
+                pen = true;
+              }
+              return out;
+            })()} />
         )}
 
         {model.lines?.map(l => (
@@ -978,35 +1020,63 @@ export default function OnChain({ lang = "de" }) {
 
   const px = useMemo(() => {
     if (!pxBase) return null;
-    if (!realSth?.length && !realProfit?.length) return { ...pxBase, real: false };
+    const n = pxBase.ts.length;
+    if (!n) return { ...pxBase, real: false, realProfit: false };
+
     const dayKey = t => new Date(t).toISOString().slice(0, 10);
-    const sthMap = new Map((realSth || []).map(([t, v]) => [dayKey(t), v]));
-    const prfMap = new Map((realProfit || []).map(([t, v]) => [dayKey(t), v]));
 
-    let hitSth = 0, hitPrf = 0;
-    const realised = pxBase.realised.slice();
-    const upper = pxBase.upper.slice();
-    const lower = pxBase.lower.slice();
-    const profit = pxBase.profit.slice();
-
-    pxBase.ts.forEach((t, i) => {
-      const k = dayKey(t);
-      const rv = sthMap.get(k);
-      if (Number.isFinite(rv)) {
-        // Bandbreite aus dem Proxy übernehmen, Mitte durch den echten Wert ersetzen
-        const halfBand = pxBase.upper[i] - pxBase.realised[i];
-        realised[i] = rv; upper[i] = rv + halfBand; lower[i] = rv - halfBand;
-        hitSth++;
+    // Echte Reihe auf das Zeitraster der Kursreihe legen.
+    //
+    // ALLES ODER NICHTS. Vorher habe ich echte Werte punktweise über die
+    // Proxy-Reihe gelegt und die Lücken mit dem Proxy stehen lassen. Genau da
+    // entsteht die harte Kante im Chart: links Proxy, rechts echte Daten, und
+    // beide liegen auf völlig verschiedenen Niveaus. Entweder die echte Reihe
+    // deckt den Zeitraum ab, dann gilt sie komplett — oder es bleibt beim Proxy.
+    const project = (series) => {
+      if (!series?.length) return null;
+      const map = new Map(series.map(([t, v]) => [dayKey(t), v]));
+      const out = new Array(n);
+      let hits = 0, last = null;
+      for (let i = 0; i < n; i++) {
+        const v = map.get(dayKey(pxBase.ts[i]));
+        if (Number.isFinite(v)) { out[i] = v; last = v; hits++; }
+        else out[i] = last;                       // kleine Lücken fortschreiben
       }
-      const pv = prfMap.get(k);
-      if (Number.isFinite(pv)) { profit[i] = pv <= 1.5 ? pv * 100 : pv; hitPrf++; }
-    });
+      // Mindestabdeckung: darunter ist die Reihe für diesen Zeitraum unbrauchbar
+      if (hits / n < 0.8 || out.some(v => !Number.isFinite(v))) return null;
+      return out;
+    };
 
-    const cover = pxBase.ts.length || 1;
+    // Einheit EINMAL über die ganze Reihe bestimmen, nicht pro Punkt.
+    // Der alte Test `v <= 1.5 ? v * 100 : v` hat bei Prozentwerten jeden
+    // Messpunkt unter 1,5 % mit 100 multipliziert — aus 1,2 % wurden 120 %.
+    const toPercent = (arr) => {
+      const max = arr.reduce((m, v) => (v > m ? v : m), -Infinity);
+      if (!(max > 0)) return null;
+      const f = max <= 1.5 ? 100 : max <= 100.5 ? 1 : null;
+      if (f == null) return null;                 // weder Anteil noch Prozent
+      return arr.map(v => Math.max(0, Math.min(100, v * f)));
+    };
+
+    const sth = project(realSth);
+    const prfRaw = project(realProfit);
+    const prf = prfRaw ? toPercent(prfRaw) : null;
+
+    let { realised, upper, lower, profit } = pxBase;
+    if (sth) {
+      // Mitte durch die echte Kohorten-Kostenbasis ersetzen, Bandbreite aus
+      // dem Volumenprofil beibehalten — die liefert BG nicht mit.
+      realised = sth;
+      upper = sth.map((v, i) => v + (pxBase.upper[i] - pxBase.realised[i]));
+      lower = sth.map((v, i) => v - (pxBase.upper[i] - pxBase.realised[i]));
+    }
+    if (prf) profit = prf;
+
     return {
-      ...pxBase, realised, upper, lower, profit,
-      real: hitSth / cover > 0.5,
-      realProfit: hitPrf / cover > 0.5,
+      ...pxBase, realised, upper, lower,
+      profit: profit.map(v => (Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0)),
+      real: Boolean(sth),
+      realProfit: Boolean(prf),
     };
   }, [pxBase, realSth, realProfit]);
   // Echte Verteilung schlägt Volumenprofil, wenn sie vorliegt
