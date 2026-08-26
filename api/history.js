@@ -49,7 +49,7 @@ const fetchBinance = async (symbol, interval, ohlc = false) => {
   try {
     const base = symbol.replace(/-USD$/, "");
     const iv = interval === "1wk" ? "1w" : "1d";
-    const url = `https://data-api.binance.vision/api/v3/klines?symbol=${base}USDT&interval=${iv}&limit=750`;
+    const url = `https://data-api.binance.vision/api/v3/klines?symbol=${base}USDT&interval=${iv}&limit=1000`;
     const res = await fetch(url);
     if (!res.ok) return null;
     const rows = await res.json();
