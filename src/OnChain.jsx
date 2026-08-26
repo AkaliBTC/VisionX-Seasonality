@@ -1075,7 +1075,10 @@ export default function OnChain({ lang = "de" }) {
 
   const glass = panel();
   const viewKind = kindOf(view);
-dataFor
+  const dataFor = {
+    puell: chain?.puell,
+    network: chain?.["hash-rate"],
+  };
   const noData = view.btcOnly && !(dataFor[view.id]?.length);
   const blocked = (view.btcOnly && !isBtc(coin)) || noData;
 
