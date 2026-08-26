@@ -45,18 +45,45 @@ const fetchYahoo = async (symbol, range, interval, ohlc = false) => {
 
 // Krypto: Binance Public Data Mirror (data-api.binance.vision — kein Geo-Block
 // auf US-Vercel-Regionen). "-USD"-Symbole werden als ‹BASE›USDT geladen.
-const fetchBinance = async (symbol, interval, ohlc = false) => {
+const fetchBinance = async (symbol, interval, ohlc = false, full = false) => {
   try {
     const base = symbol.replace(/-USD$/, "");
     const iv = interval === "1wk" ? "1w" : "1d";
-    const url = `https://data-api.binance.vision/api/v3/klines?symbol=${base}USDT&interval=${iv}&limit=1000`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const rows = await res.json();
+    const host = "https://data-api.binance.vision/api/v3/klines";
+    let rows = [];
+
+    if (!full) {
+      const res = await fetch(`${host}?symbol=${base}USDT&interval=${iv}&limit=1000`);
+      if (!res.ok) return null;
+      rows = await res.json();
+    } else {
+      // Volle Historie: Binance gibt max. 1000 Kerzen pro Request, also
+      // vorwärts blättern. BTCUSDT beginnt im August 2017, daily sind das
+      // rund vier Runden — der Edge-Cache trägt das danach 12 Stunden.
+      let startTime = Date.UTC(2017, 0, 1);
+      for (let round = 0; round < 14; round++) {
+        const res = await fetch(`${host}?symbol=${base}USDT&interval=${iv}&startTime=${startTime}&limit=1000`);
+        if (!res.ok) break;
+        const batch = await res.json();
+        if (!Array.isArray(batch) || !batch.length) break;
+        rows = rows.concat(batch);
+        if (batch.length < 1000) break;
+        startTime = batch[batch.length - 1][0] + 1;
+      }
+    }
+
     if (!Array.isArray(rows) || rows.length < 30) return null;
-    return ohlc
-      ? rows.map(r => [r[0], parseFloat(r[1]), parseFloat(r[2]), parseFloat(r[3]), parseFloat(r[4]), parseFloat(r[5]) || 0]).filter(r => r.slice(0,5).every(Number.isFinite))
-      : rows.map(r => [r[0], parseFloat(r[4])]).filter(([, c]) => Number.isFinite(c));
+    const seen = new Set();
+    const out = [];
+    for (const r of rows) {
+      if (seen.has(r[0])) continue;
+      seen.add(r[0]);
+      const row = ohlc
+        ? [r[0], parseFloat(r[1]), parseFloat(r[2]), parseFloat(r[3]), parseFloat(r[4]), parseFloat(r[5]) || 0]
+        : [r[0], parseFloat(r[4])];
+      if (row.slice(1, ohlc ? 5 : 2).every(Number.isFinite)) out.push(row);
+    }
+    return out.length > 30 ? out.sort((a, b) => a[0] - b[0]) : null;
   } catch { return null; }
 };
 
@@ -104,7 +131,8 @@ export default async function handler(req, res) {
   const symbols = String(req.query.symbols || "")
     .split(",").map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 30);
   const interval = req.query.interval === "1wk" ? "1wk" : "1d";
-  const range = /^\d+(y|mo)$/.test(req.query.range || "") ? req.query.range : "2y";
+  const full = req.query.range === "max";
+  const range = full ? "max" : (/^\d+(y|mo)$/.test(req.query.range || "") ? req.query.range : "2y");
   const ohlc = req.query.ohlc === "1";
 
   if (!symbols.length) return res.status(400).json({ error: "symbols required" });
@@ -123,7 +151,7 @@ export default async function handler(req, res) {
   for (let i = 0; i < symbols.length; i += 6) {
     await Promise.all(symbols.slice(i, i + 6).map(async sym => {
       let series = null;
-      if (/-USD$/.test(sym)) series = await fetchBinance(sym, interval, ohlc);
+      if (/-USD$/.test(sym)) series = await fetchBinance(sym, interval, ohlc, full);
       if (!series) series = await fetchYahoo(sym, range, interval, ohlc);
       if (!series) series = await fetchTwelveData(sym, interval, ohlc);
       if (!series) series = await fetchCmc(sym, ohlc);
