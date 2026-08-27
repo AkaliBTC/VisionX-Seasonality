@@ -58,6 +58,9 @@ const VIEWS = [
   { id: "fractal", label: "FRACTALS", kind: "exact", btcOnly: false,
     de: "Volatilitäts-Intensität: True Range gegen die eigene 60-Tage-Verteilung, verstärkt bei Ausbrüchen aus der 20-Tage-Spanne. Ausschläge markieren Regimewechsel, nicht Richtung.",
     en: "Volatility intensity: true range against its own 60-day distribution, amplified on breaks of the 20-day range. Spikes mark regime changes, not direction." },
+  { id: "zecrisk", label: "ZEC RISK", kind: "exact", btcOnly: true,
+    de: "Warnsignal für BTC aus dem Zcash-Momentum. Läuft ZEC in kurzer Zeit senkrecht nach oben, während BTC steht, ging das historisch größeren BTC-Ausverkäufen voraus. Kombiniert absolutes ZEC-Momentum mit dem Momentum des Verhältnisses ZEC/BTC, beides perzentiliert gegen die eigene Zweijahresverteilung.",
+    en: "A BTC warning signal derived from Zcash momentum. When ZEC goes vertical while BTC stalls, that historically preceded larger BTC selloffs. Combines absolute ZEC momentum with the momentum of the ZEC/BTC ratio, both ranked against their own two-year distribution." },
   { id: "puell", label: "PUELL", kind: "exact", btcOnly: true,
     de: "Miner-Tagesumsatz gegen seinen eigenen 365-Tage-Durchschnitt. Misst Verkaufsdruck von der Angebotsseite.",
     en: "Daily miner revenue against its own 365-day average. Measures sell pressure from the supply side." },
@@ -287,6 +290,77 @@ const heatFromDistribution = (dist, bins = HEAT_BINS) => {
   return { cols, logLo, step, bins, priceAt: b => Math.exp(logLo + b * step), unit: "BTC" };
 };
 
+// ZEC-Risikoindikator.
+//
+// Nachbau des CryptoQuant-Charts von Maartun. Die Originalformel ist nicht
+// veröffentlicht — das hier ist eine eigene Konstruktion nach dem beschriebenen
+// Mechanismus, keine Kopie. Die Idee: läuft ZEC in kurzer Zeit senkrecht nach
+// oben, während BTC steht, war das historisch ein Warnsignal für BTC.
+//
+// Zwei Bausteine, beide über ihre eigene Zweijahresverteilung perzentiliert:
+//   1. absolutes ZEC-Momentum über W Tage
+//   2. Momentum des Verhältnisses ZEC/BTC über dieselbe Strecke
+// Baustein 2 trennt "ZEC läuft" von "der ganze Markt läuft" — nur ersteres ist
+// das Signal. Beide gleich gewichtet, Ergebnis 0..100.
+const buildZecRisk = (zec, btc, weekly = false) => {
+  if (!zec?.length || !btc?.length) return null;
+
+  const key = t => new Date(t).toISOString().slice(0, 10);
+  const bMap = new Map(btc.map(r => [key(r[0]), r[4]]));
+  const ts = [], zp = [], bp = [];
+  for (const r of zec) {
+    const b = bMap.get(key(r[0]));
+    if (Number.isFinite(b) && b > 0 && Number.isFinite(r[4]) && r[4] > 0) {
+      ts.push(r[0]); zp.push(r[4]); bp.push(b);
+    }
+  }
+  const W = weekly ? 4 : 30;            // Momentumfenster
+  const LOOK = weekly ? 104 : 730;      // Vergleichszeitraum für den Rang
+  if (ts.length < W + 60) return null;
+
+  const rocZ = [], rocR = [];
+  for (let i = 0; i < ts.length; i++) {
+    if (i < W) { rocZ.push(null); rocR.push(null); continue; }
+    rocZ.push(zp[i] / zp[i - W] - 1);
+    rocR.push((zp[i] / bp[i]) / (zp[i - W] / bp[i - W]) - 1);
+  }
+
+  // Perzentilrang gegen die eigene jüngere Vergangenheit
+  const rank = (arr, i) => {
+    const v = arr[i];
+    if (!Number.isFinite(v)) return null;
+    let below = 0, cnt = 0;
+    for (let k = Math.max(0, i - LOOK + 1); k <= i; k++) {
+      const u = arr[k];
+      if (!Number.isFinite(u)) continue;
+      if (u < v) below++;
+      cnt++;
+    }
+    return cnt > 20 ? (below / cnt) * 100 : null;
+  };
+
+  const outTs = [], score = [], price = [], zecPx = [], mom = [];
+  for (let i = 0; i < ts.length; i++) {
+    const a = rank(rocZ, i), b = rank(rocR, i);
+    if (a == null || b == null) continue;
+    outTs.push(ts[i]);
+    score.push(0.5 * a + 0.5 * b);
+    price.push(bp[i]);
+    zecPx.push(zp[i]);
+    mom.push(rocZ[i]);
+  }
+  return outTs.length > 30 ? { ts: outTs, score, price, zecPx, mom, W } : null;
+};
+
+const ZEC_ZONES = [
+  { lo: 92, label: "EXTREM",   labelEn: "EXTREME",  color: "#ef4444" },
+  { lo: 80, label: "ERHÖHT",   labelEn: "ELEVATED", color: "#fb923c" },
+  { lo: 60, label: "WARM",     labelEn: "WARM",     color: "#facc15" },
+  { lo: 35, label: "NEUTRAL",  labelEn: "NEUTRAL",  color: "#8f8f8f" },
+  { lo: -1, label: "RUHIG",    labelEn: "CALM",     color: "#22c55e" },
+];
+const zecZone = v => ZEC_ZONES.find(z => v >= z.lo) || ZEC_ZONES[ZEC_ZONES.length - 1];
+
 // Ω-Score: Perzentilrang der σ-Abweichung vom Realised-Proxy
 const buildOmega = (px, look = 365) => {
   if (!px) return null;
@@ -405,7 +479,7 @@ const clampWin = (a, span) => {
   return { a: Math.min(hi, Math.max(lo, a)), b: Math.min(hi, Math.max(lo, a)) + span };
 };
 
-function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
+function Chart({ view, px, heat, omega, fractal, chain, zecRisk, coin, lang, T }) {
   const svgRef = useRef(null);
   const canvasRef = useRef(null);
   const dragRef = useRef(null);
@@ -473,6 +547,28 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
       };
     }
     if (!chain) return null;
+    if (view.id === "zecrisk") {
+      const z = zecRisk;
+      if (!z?.ts?.length) return null;
+      const L = lang === "en";
+      return {
+        ts: z.ts, log: false, pct: true,
+        right: { vals: z.price, color: "#ffffff", log: true },
+        area: { vals: z.score, color: "#a855f7", min: 0, max: 100 },
+        levels: [{ v: 92, label: L ? "EXTREME" : "EXTREM", color: "#ef4444" },
+                 { v: 80, label: L ? "ELEVATED" : "ERHÖHT", color: "#fb923c" },
+                 { v: 35, label: L ? "CALM" : "RUHIG", color: "#22c55e" }],
+        readout: i => {
+          const zn = zecZone(z.score[i]);
+          return [
+            { label: "RISK", value: z.score[i].toFixed(1), color: zn.color },
+            { label: "", value: L ? zn.labelEn : zn.label, color: zn.color },
+            { label: `ZEC ${z.W}${L ? "d" : "T"}`, value: `${z.mom[i] > 0 ? "+" : ""}${(z.mom[i] * 100).toFixed(0)}%`, color: "#c4b5fd" },
+            { label: "BTC", value: usd(z.price[i]), color: "#fff" },
+          ];
+        },
+      };
+    }
     if (view.id === "puell") {
       const s = chain.puell;
       if (!s?.length) return null;
@@ -497,7 +593,7 @@ function Chart({ view, px, heat, omega, fractal, chain, coin, lang, T }) {
       };
     }
     return null;
-  }, [view, px, omega, fractal, chain, T]);
+  }, [view, px, omega, fractal, chain, zecRisk, lang, T]);
 
   // Zoom zurücksetzen, wenn Ansicht, Coin oder Datenlänge wechselt
   useEffect(() => { setWin({ a: 0, b: 1 }); setHoverK(null); }, [view.id, coin, model?.ts?.length]);
@@ -940,6 +1036,7 @@ export default function OnChain({ lang = "de" }) {
   const [utxo, setUtxo] = useState({});     // echte Kohorten-Reihen von BGeometrics
   const [missing, setMissing] = useState([]);  // Slugs, die kein Ergebnis lieferten
   const [dist, setDist] = useState(null);      // echte Angebotsverteilung (Movement Zones)
+  const [zecOhlc, setZecOhlc] = useState(null); // ZEC-Kurse für den Risikoindikator
   const [bgStatus, setBgStatus] = useState({});  // HTTP-Status je Metrik
   const [snap, setSnap] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -985,6 +1082,19 @@ export default function OnChain({ lang = "de" }) {
       .catch(() => { /* Fallback auf Proxy */ });
     return () => { alive = false; };
   }, [coin]);
+
+  // ZEC-Kurse: nur für den Risikoindikator, deshalb eigener Abruf. Der eigene
+  // Coin-Umschalter bleibt davon unberührt — ZEC ist hier Eingangsgröße für ein
+  // BTC-Signal, keine handelbare Auswahl.
+  useEffect(() => {
+    let alive = true;
+    if (!isBtc(coin)) { setZecOhlc(null); return undefined; }
+    apiFetch(`/api/history?symbols=ZEC-USD&interval=${tf}&range=max&ohlc=1`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => { if (alive) setZecOhlc(j?.data?.["ZEC-USD"] || null); })
+      .catch(() => { /* Ansicht meldet dann selbst, dass Daten fehlen */ });
+    return () => { alive = false; };
+  }, [coin, tf]);
 
   // Angebotsverteilung: separat, weil das Ergebnis eine Matrix ist und
   // spürbar größer als die Zeitreihen. Kommt nichts, bleibt das Volumenprofil.
@@ -1086,6 +1196,7 @@ export default function OnChain({ lang = "de" }) {
   }, [viewId, dist, ohlc, wSth]);
   const omega = useMemo(() => buildOmega(px, tf === "1wk" ? 52 : 365), [px, tf]);
   const fractal = useMemo(() => buildFractal(ohlc, tf === "1wk" ? FRACTAL_WIN_W : FRACTAL_WIN), [ohlc, tf]);
+  const zecRisk = useMemo(() => buildZecRisk(zecOhlc, ohlc, tf === "1wk"), [zecOhlc, ohlc, tf]);
 
   // Realized Cap, Realized Price, MVRV-Z und Puell aus den freien Reihen ableiten
   // Nur noch das, was die verbliebenen Ansichten brauchen: Puell und Netzwerk.
@@ -1119,6 +1230,11 @@ export default function OnChain({ lang = "de" }) {
       const r = px.realised[px.realised.length - 1];
       return { value: usd(r), label: p > r ? T.above : T.below, color: p > r ? "#3fcf8e" : "#f0506e" };
     }
+    if (viewId === "zecrisk" && zecRisk?.score?.length) {
+      const v = zecRisk.score[zecRisk.score.length - 1];
+      const z = zecZone(v);
+      return { value: v.toFixed(1), label: lang === "en" ? z.labelEn : z.label, color: z.color };
+    }
     if (viewId === "fractal" && fractal?.intensity?.length) {
       const v = fractal.intensity[fractal.intensity.length - 1];
       return { value: v.toFixed(1), label: "INTENSITY", color: v > 26 ? "#c4b5fd" : "#a78bfa" };
@@ -1128,7 +1244,7 @@ export default function OnChain({ lang = "de" }) {
       return { value: v.toFixed(2), label: "PUELL", color: v > 3 ? "#ef4444" : v < 0.6 ? "#22c55e" : "#facc15" };
     }
     return null;
-  }, [viewId, omega, px, fractal, chain, T]);
+  }, [viewId, omega, px, fractal, chain, zecRisk, lang, T]);
 
   // Eine Ansicht ist nur so lange PROXY, wie keine echten UTXO-Daten anliegen
   const kindOf = useCallback(v => {
@@ -1148,6 +1264,7 @@ export default function OnChain({ lang = "de" }) {
   const dataFor = {
     puell: chain?.puell,
     network: chain?.["hash-rate"],
+    zecrisk: zecRisk?.ts,
   };
   const noData = view.btcOnly && !(dataFor[view.id]?.length);
   const blocked = (view.btcOnly && !isBtc(coin)) || noData;
@@ -1275,7 +1392,7 @@ export default function OnChain({ lang = "de" }) {
             </div>
           ) : (
             <Chart view={view} px={px} heat={heat} omega={omega} fractal={fractal}
-              chain={chain} coin={coin} lang={lang} T={T} />
+              chain={chain} zecRisk={zecRisk} coin={coin} lang={lang} T={T} />
           )}
         </div>
 
