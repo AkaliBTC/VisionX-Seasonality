@@ -704,28 +704,28 @@ export default function Cycle({ lang = "de" }) {
 
         {/* BODEN-RELEVANZ */}
         {troughs.length > 0 && (() => {
-          const unit = t.bars[CYCLE_TFS[cycleTf].resample];
+          const unit = T.bars[CYCLE_TFS[cycleTf].resample];
           const tier = troughTier(lastTrough.score);
           return (
             <div style={{ ...glass, flex: "1 1 340px", minWidth: 320, padding: "18px 22px 16px", borderColor: `${tier.color}33` }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
-                <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.18em", color: "#fdfdfd" }}>{t.troughs}</span>
+                <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.18em", color: "#fdfdfd" }}>{T.troughs}</span>
                 <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.14em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>SPY · {CYCLE_TFS[cycleTf].label}</span>
               </div>
-              <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, color: "#666", marginBottom: 14, lineHeight: 1.6 }}>{t.troughSub}</div>
+              <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, color: "#666", marginBottom: 14, lineHeight: 1.6 }}>{T.troughSub}</div>
 
               {/* Letzter Boden hervorgehoben */}
               <div style={{ padding: "13px 16px", borderRadius: 12, background: `${tier.color}0d`, border: `1px solid ${tier.color}33`, marginBottom: 12 }}>
                 <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 11, marginBottom: 9 }}>
-                  <span style={{ fontSize: 7.5, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.2em", color: "#777" }}>{t.trLast}</span>
+                  <span style={{ fontSize: 7.5, fontFamily: "'Montserrat', sans-serif", fontWeight: 700, letterSpacing: "0.2em", color: "#777" }}>{T.trLast}</span>
                   <span style={{ ...badge(tier.color) }}>{tier[lang]}</span>
                   <span style={{ marginLeft: "auto", fontFamily: "'DM Mono', monospace", fontSize: 19, fontWeight: 600, color: tier.color }}>{lastTrough.score}</span>
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 18, fontFamily: "'DM Mono', monospace", fontSize: 10.5 }}>
                   <span style={{ color: "#c9c9c9" }}>{new Date(lastTrough.t).toLocaleDateString(lang === "en" ? "en-US" : "de-DE", { day: "2-digit", month: "short", year: "numeric" })}</span>
-                  <span style={{ color: "#ef4444" }}>{t.trDepth} {(lastTrough.depth * 100).toFixed(1)}%</span>
-                  <span style={{ color: "#22c55e" }}>{t.trRally} +{(lastTrough.rally * 100).toFixed(0)}%</span>
-                  <span style={{ color: "#666" }}>{lastTrough.barsSince} {unit} {t.trSince}</span>
+                  <span style={{ color: "#ef4444" }}>{T.trDepth} {(lastTrough.depth * 100).toFixed(1)}%</span>
+                  <span style={{ color: "#22c55e" }}>{T.trRally} +{(lastTrough.rally * 100).toFixed(0)}%</span>
+                  <span style={{ color: "#666" }}>{lastTrough.barsSince} {unit} {T.trSince}</span>
                 </div>
               </div>
 
@@ -750,7 +750,7 @@ export default function Cycle({ lang = "de" }) {
               </div>
 
               <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, color: "#4a4a4a", marginTop: 12, lineHeight: 1.7 }}>
-                {t.trHint}
+                {T.trHint}
               </div>
             </div>
           );

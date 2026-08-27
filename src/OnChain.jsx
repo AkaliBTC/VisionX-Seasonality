@@ -1131,7 +1131,7 @@ export default function OnChain({ lang = "de" }) {
   }, [viewId, omega, px, fractal, chain, T]);
 
   // Eine Ansicht ist nur so lange PROXY, wie keine echten UTXO-Daten anliegen
-  const kindOf = useCallback(v => {  // eslint-disable-line react-hooks/exhaustive-deps
+  const kindOf = useCallback(v => {
     if (v.kind !== "proxy") return "exact";
     if (v.id === "profit") return px?.realProfit ? "live" : "proxy";
     if (v.id === "heat") return heat?.unit === "BTC" || dist ? "live" : "proxy";
