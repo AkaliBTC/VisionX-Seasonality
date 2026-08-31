@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { apiFetch } from "./access";
+import { MARKETS, hasMarket, marketSectors, marketMembers, buildComposite, compositeId, SECTOR_LABELS } from "./markets";
 import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
 import { createPortal } from "react-dom";
 import { SPX_BY_SECTOR } from "./constituents";
@@ -31,6 +32,10 @@ const SECTOR_META = [
 // Holdings kommen aus der zentralen Konstituenten-Liste (voller S&P 500)
 const SECTORS = SECTOR_META.map(s => ({ ...s, holdings: SPX_BY_SECTOR[s.etf] || [] }));
 
+// Stabile Referenz für leere Listen — verhindert, dass ein neues [] bei jedem
+// Render die Memo-Ketten und damit den Datenabruf neu auslöst.
+const EMPTY_ARR = [];
+
 
 // ── PRESETS ──────────────────────────────────────────────────────────────────
 const PRESETS = [
@@ -39,7 +44,7 @@ const PRESETS = [
     members: SECTORS.map(s => ({ symbol: s.etf, label: s.etf })),
   },
   {
-    id: "countries", label: "COUNTRIES", bench: "SPY", drillable: false, packKey: "COUNTRIES",
+    id: "countries", label: "COUNTRIES", bench: "SPY", drillable: true, country: true, packKey: "COUNTRIES",
     // Die 30 wirtschaftlich relevantesten Märkte mit liquidem USD-ETF
     members: [
       // Europa
@@ -686,6 +691,9 @@ const RRG_T = {
     daily: "Täglich", weekly: "Wöchentlich", tails: "Tails", relative: "Relativ", absolute: "Absolut",
     packManager: "PACK MANAGER", reset: "Zurücksetzen", add: "+ HINZU",
     drillHint: "Sektor anklicken → Drilldown mit Holdings +", scrollZoom: "Scrollen = Zoom",
+    market: "MARKT", allCountries: "ALLE LÄNDER",
+    drillHintCountry: "Land anklicken → Sektoren gegen den lokalen Leitindex",
+    drillHintSector: "Sektor anklicken → Einzeltitel",
     tipTails: "Tails ein-/ausblenden", tipPack: "VisionX-Pack-Titel ein-/ausblenden",
     tipRemove: "Titel entfernen", tipZoomIn: "Vergrößern", tipZoomOut: "Verkleinern", tipZoomReset: "Zoom zurücksetzen",
     tipNorm: "Querschnitts-Normierung: jeder Titel gegen seine Peer-Group, spreizt das Feld über alle Quadranten",
@@ -705,6 +713,9 @@ const RRG_T = {
     daily: "Daily", weekly: "Weekly", tails: "Tails", relative: "Relative", absolute: "Absolute",
     packManager: "PACK MANAGER", reset: "Reset", add: "+ ADD",
     drillHint: "Click a sector → drilldown with holdings +", scrollZoom: "Scroll = zoom",
+    market: "MARKET", allCountries: "ALL COUNTRIES",
+    drillHintCountry: "Click a country → sectors vs the local index",
+    drillHintSector: "Click a sector → single names",
     tipTails: "Show/hide tails", tipPack: "Show/hide VisionX pack names",
     tipRemove: "Remove name", tipZoomIn: "Zoom in", tipZoomOut: "Zoom out", tipZoomReset: "Reset zoom",
     tipNorm: "Cross-sectional normalisation: each name against its peer group, spreads the field across all quadrants",
@@ -724,6 +735,7 @@ export default function RRG({ lang = "de" }) {
   const T = RRG_T[lang] || RRG_T.de;
   const [presetId, setPresetId] = useState("sectors");
   const [drill, setDrill] = useState(null);
+  const [country, setCountry] = useState(null);   // Ebene 2/3: EWG, INDA, …
   const [interval_, setInterval_] = useState("1d");
   const [tailLen, setTailLen] = useState(5);
   const [showTails, setShowTails] = useState(true);
@@ -799,17 +811,42 @@ export default function RRG({ lang = "de" }) {
   useEffect(() => { if (playing && offset <= 0) setPlaying(false); }, [playing, offset]);
 
   const preset = PRESETS.find(p => p.id === presetId);
-  const drillSector = drill ? SECTORS.find(s => s.etf === drill) : null;
-  const viewKey = drill ? `${presetId}:${drill}` : presetId;
 
-  const benchSym = drill ? (benchMode === "SECTOR" ? drill : preset.bench) : preset.bench;
-  const benchLabel = benchSym.replace("-USD", "");
+  // Länder-Drill: Ebene 1 Länder-ETFs → Ebene 2 Sektor-Composites → Ebene 3 Aktien
+  const market = country ? MARKETS[country] : null;
+  const countrySectors = useMemo(() => (country ? marketSectors(country) : EMPTY_ARR), [country]);
+  const countryMembers = useMemo(() => (country ? marketMembers(country) : EMPTY_ARR), [country]);
+  const countrySector = useMemo(
+    () => (market && drill ? countrySectors.find(x => x.key === drill) || null : null),
+    [market, drill, countrySectors]
+  );
+
+  // US-Pfad bleibt wie gehabt: drill ist dort direkt der SPDR-ETF
+  const drillSector = (!market && drill) ? SECTORS.find(s => s.etf === drill) : null;
+
+  const viewKey = [presetId, country, drill].filter(Boolean).join(":");
+
+  // Lokaler Leitindex, sobald ein Land gewählt ist. Sonst Preset-Benchmark.
+  // Ohne das misst man bei ausländischen Titeln zur Hälfte den Wechselkurs.
+  const benchSym = market
+    ? market.bench
+    : (drill ? (benchMode === "SECTOR" ? drill : preset.bench) : preset.bench);
+  const benchLabel = market ? market.benchLabel : benchSym.replace("-USD", "");
 
   const universe = useMemo(() => {
     const rm = new Set(removed[viewKey] || []);
     const custom = customAdd[viewKey] || [];
     let base;
-    if (drill) {
+    if (market && drill) {
+      // Ebene 3: Einzeltitel des gewählten Landessektors
+      base = (countrySector?.members || []).map(h => ({ symbol: h, label: h.replace(/\.[A-Z]+$/, ""), vsx: false }));
+    } else if (market) {
+      // Ebene 2: Sektor-Composites des Landes. Pseudo-Symbole wie "EWG#XLK",
+      // die Reihen dazu entstehen weiter unten aus den Mitgliedskursen.
+      base = countrySectors.map(sec => ({
+        symbol: compositeId(country, sec.key), label: sec.key, name: sec.name, composite: true, vsx: false,
+      }));
+    } else if (drill) {
       const packTitles = vsxPack ? (pack[drill] || []) : [];
       base = [
         ...drillSector.holdings.filter(h => !packTitles.includes(h)).map(h => ({ symbol: h, label: h, vsx: false })),
@@ -836,12 +873,18 @@ export default function RRG({ lang = "de" }) {
     const known = new Set(base.map(b => b.symbol));
     custom.forEach(c => { if (!known.has(c)) base.push({ symbol: c, label: c.replace("-USD", ""), vsx: false, custom: true }); });
     return base.filter(b => !rm.has(b.symbol) && b.symbol !== benchSym);
-  }, [preset, drill, drillSector, viewKey, customAdd, removed, benchSym, vsxPack, pack, cmcUniverse]);
+  }, [preset, drill, drillSector, market, country, countrySector, countrySectors, viewKey, customAdd, removed, benchSym, vsxPack, pack, cmcUniverse]);
 
-  const neededSymbols = useMemo(
-    () => [...new Set([benchSym, ...universe.map(u => u.symbol)])],
-    [benchSym, universe]
-  );
+  const neededSymbols = useMemo(() => {
+    // Ein Composite ist kein abrufbares Symbol — statt seiner müssen die
+    // Mitglieder geladen werden. Alles andere geht direkt an die API.
+    const out = new Set([benchSym]);
+    for (const u of universe) {
+      if (u.composite) countryMembers.forEach(m => out.add(m));
+      else out.add(u.symbol);
+    }
+    return [...out].filter(sym => !sym.includes("#"));
+  }, [benchSym, universe, countryMembers]);
 
   useEffect(() => {
     let alive = true;
@@ -889,17 +932,29 @@ export default function RRG({ lang = "de" }) {
   }, [raw, benchSym, interval_]);
 
   // Volle Serien je Symbol
+  // Composites aus den geladenen Mitgliedskursen rechnen und wie normale
+  // Reihen behandeln. Ab hier weiß der Rest des Moduls nichts mehr davon.
+  const rawPlus = useMemo(() => {
+    if (!market) return raw;
+    const out = { ...raw };
+    for (const sec of countrySectors) {
+      const series = buildComposite(sec.members, raw);
+      if (series) out[compositeId(country, sec.key)] = series;
+    }
+    return out;
+  }, [raw, market, country, countrySectors]);
+
   const fullItems = useMemo(() => {
     if (!benchSeries) return [];
     const prep = s => interval_ === "1wk" ? toWeekly(s) : s;
     return universe.map((u, i) => {
-      if (!raw[u.symbol]) return null;
-      const full = computeFull(prep(raw[u.symbol]), benchSeries, params);
+      if (!rawPlus[u.symbol]) return null;
+      const full = computeFull(prep(rawPlus[u.symbol]), benchSeries, params);
       if (!full) return null;
       const color = u.vsx ? GOLD : (SECTOR_COLORS[u.symbol] || PALETTE[i % PALETTE.length]);
       return { ...u, color, full };
     }).filter(Boolean);
-  }, [raw, universe, interval_, benchSeries, params.window, params.momWindow]);
+  }, [rawPlus, universe, interval_, benchSeries, params.window, params.momWindow]);
 
   // ── SKALIERUNG ───────────────────────────────────────────────────────────
   // "abs":  rohe RS-Performance (100 = Basiswert geschlagen) — nachrechenbar,
@@ -1054,7 +1109,9 @@ export default function RRG({ lang = "de" }) {
             <div style={{ ...displayTitle(31) }}>{T.title}</div>
           </div>
           <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.28em", color: "#b99c64", textTransform: "uppercase" }}>
-            {drill ? `${drill} · ${drillSector.name}` : preset.label}
+            {market
+              ? `${market.code} · ${drill ? `${drill} · ${SECTOR_LABELS[drill]}` : (lang === "en" ? market.nameEn : market.name)}`
+              : drill ? `${drill} · ${drillSector.name}` : preset.label}
           </div>
           {headDate && (
             <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5, color: "#555", letterSpacing: "0.1em" }}>
@@ -1071,7 +1128,7 @@ export default function RRG({ lang = "de" }) {
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 9, marginBottom: 8 }}>
           {PRESETS.map(p => (
             <button key={p.id} style={pill(presetId === p.id && !drill)}
-              onClick={() => { setPresetId(p.id); setDrill(null); setHovered(null); setOffset(0); setPlaying(false); }}>
+              onClick={() => { setPresetId(p.id); setDrill(null); setCountry(null); setHovered(null); setOffset(0); setPlaying(false); }}>
               {p.label}
             </button>
           ))}
@@ -1083,6 +1140,47 @@ export default function RRG({ lang = "de" }) {
             <span style={{ fontSize: 8 }}>◆</span> {T.packManager}
           </button>
         </div>
+        {presetId === "countries" && (
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 8, letterSpacing: "0.2em", color: "#666", fontFamily: "'Montserrat', sans-serif", fontWeight: 700 }}>
+              {T.market}
+            </span>
+            <select value={country || ""}
+              onChange={e => {
+                const v = e.target.value || null;
+                setCountry(v); setDrill(null); setHovered(null); setOffset(0); setPlaying(false);
+              }}
+              style={{ ...pill(Boolean(country)), padding: "7px 12px", fontSize: 9.5, letterSpacing: "0.1em",
+                cursor: "pointer", appearance: "none", minWidth: 190 }}>
+              <option value="">{T.allCountries}</option>
+              {Object.entries(MARKETS).map(([etf, m]) => (
+                <option key={etf} value={etf}>
+                  {m.code} · {lang === "en" ? m.nameEn : m.name} ({m.benchLabel})
+                </option>
+              ))}
+            </select>
+
+            {country && (
+              <>
+                <div style={divider} />
+                {countrySectors.map(sec => (
+                  <button key={sec.key} title={`${sec.name} · ${sec.members.length}`}
+                    style={{ ...pill(drill === sec.key), padding: "6.5px 12px", fontSize: 9, letterSpacing: "0.12em",
+                      color: drill === sec.key ? "#f8e49b" : (SECTOR_COLORS[sec.key] ? `${SECTOR_COLORS[sec.key]}aa` : "#777") }}
+                    onClick={() => { setDrill(d => d === sec.key ? null : sec.key); setHovered(null); setOffset(0); setPlaying(false); }}>
+                    {sec.key}
+                  </button>
+                ))}
+                <div style={divider} />
+                <button style={{ ...pill(false), fontSize: 9 }}
+                  onClick={() => { setCountry(null); setDrill(null); setOffset(0); setPlaying(false); }}>
+                  ← {T.allCountries}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         {presetId === "sectors" && (
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 10 }}>
             {SECTORS.map(s => (
@@ -1124,7 +1222,7 @@ export default function RRG({ lang = "de" }) {
             title={T.tipNorm}>{T.relative}</button>
           <button style={pill(scaleMode === "abs")} onClick={() => setScaleMode("abs")}
             title={T.tipAbs}>{T.absolute}</button>
-          {drill && (
+          {drill && !market && (
             <>
               <div style={divider} />
               <button style={pill(benchMode === "SECTOR")} onClick={() => setBenchMode("SECTOR")}>vs {drill}</button>
@@ -1208,17 +1306,26 @@ export default function RRG({ lang = "de" }) {
               <RRGChart key={viewKey + interval_} items={items} hovered={hovered} setHovered={setHovered} tailLen={tailLen} ext={chartExt} showTails={showTails} T={T}
                 xLabel={scaleMode === "norm" ? "RELATIVE STRENGTH · 1 YEAR (PEER-NORMALISED) →" : "RS vs BASIS · 1 YEAR →"}
                 yLabel={scaleMode === "norm" ? "RELATIVE STRENGTH · 1 QUARTER (PEER-NORMALISED) →" : "RS vs BASIS · 1 QUARTER →"}
-                onNodeClick={preset.drillable && !drill
-                  ? (it) => { setDrill(it.symbol); setBenchMode("SECTOR"); setHovered(null); setOffset(0); setPlaying(false); }
+                onNodeClick={
+                  // Länderpfad: erst ins Land, dann in den Sektor
+                  preset.country && !country
+                    ? (it) => { if (!hasMarket(it.symbol)) return;
+                        setCountry(it.symbol); setDrill(null); setHovered(null); setOffset(0); setPlaying(false); }
+                  : preset.country && country && !drill
+                    ? (it) => { const sec = it.symbol.split("#")[1];
+                        if (sec) { setDrill(sec); setHovered(null); setOffset(0); setPlaying(false); } }
+                  : preset.drillable && !preset.country && !drill
+                    ? (it) => { setDrill(it.symbol); setBenchMode("SECTOR"); setHovered(null); setOffset(0); setPlaying(false); }
                   : null} />
             ) : !loading && !error ? (
               <div style={{ padding: 110, textAlign: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.3em", color: "#262626" }}>{T.noData}</div>
             ) : (
               <div style={{ padding: 110, textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.22em", color: "#3d3d3d" }}>{T.fetching} {neededSymbols.length} {T.symbols}…</div>
             )}
-            {preset.drillable && !drill && items.length > 0 && (
+            {items.length > 0 && (preset.country ? (country ? !drill : true) : (preset.drillable && !drill)) && (
               <div style={{ textAlign: "center", fontSize: 8.5, color: "#4d4d4d", letterSpacing: "0.2em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600, textTransform: "uppercase", padding: "4px 0 8px" }}>
-                {T.drillHint} <span style={{ color: GOLD }}>VSX Pack</span> · {T.scrollZoom}
+                {preset.country ? (country ? T.drillHintSector : T.drillHintCountry) : T.drillHint}
+                {!preset.country && <> <span style={{ color: GOLD }}>VSX Pack</span></>} · {T.scrollZoom}
               </div>
             )}
           </div>
