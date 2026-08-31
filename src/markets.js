@@ -231,21 +231,317 @@ const AU = {
   XLRE: ["GMG.AX", "SCG.AX", "SGP.AX", "MGR.AX", "DXS.AX", "VCX.AX", "CHC.AX", "GPT.AX"],
 };
 
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  ZWEITE GRUPPE · restliche Länder aus dem COUNTRIES-Preset
+//
+//  Abdeckung hier bewusst geringer: "core" statt "full". Für diese Märkte kann
+//  ich keine vollständige Indexmitgliedschaft belegen, ohne Ticker zu erfinden.
+//  Was drin steht, sind die schwergewichtigen, liquiden Namen — für Sektor-
+//  Composites tragfähig, aber eben nicht der komplette Index. Im Dropdown sind
+//  diese Märkte entsprechend markiert.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── SCHWEDEN · OMXS30 ────────────────────────────────────────────────────────
+const SE = {
+  XLK: ["ERIC-B.ST", "HEXA-B.ST", "NIBE-B.ST"],
+  XLF: ["SEB-A.ST", "SHB-A.ST", "SWED-A.ST", "NDA-SE.ST", "INVE-B.ST", "EQT.ST"],
+  XLV: ["AZN.ST", "GETI-B.ST", "ELUX-B.ST"],
+  XLY: ["HM-B.ST", "EVO.ST"],
+  XLP: ["ESSITY-B.ST"],
+  XLI: ["ATCO-A.ST", "ATCO-B.ST", "VOLV-B.ST", "SAND.ST", "ALFA.ST", "SKF-B.ST",
+        "SECU-B.ST", "ASSA-B.ST", "EPI-A.ST", "INDT.ST"],
+  XLB: ["BOL.ST", "SSAB-A.ST", "SCA-B.ST", "HOLM-B.ST"],
+  XLC: ["TELIA.ST", "TEL2-B.ST"],
+  XLRE: ["CAST.ST", "FABG.ST", "BALD-B.ST"],
+};
+
+// ── NORWEGEN · OBX ───────────────────────────────────────────────────────────
+const NO = {
+  XLF: ["DNB.OL", "STB.OL", "GJF.OL"],
+  XLV: ["ORK.OL"],
+  XLP: ["MOWI.OL", "SALM.OL", "LSG.OL", "BAKKA.OL"],
+  XLE: ["EQNR.OL", "AKRBP.OL", "VAR.OL", "SUBC.OL", "TGS.OL", "FRO.OL"],
+  XLI: ["KOG.OL", "TOM.OL", "AKSO.OL"],
+  XLB: ["NHY.OL", "YAR.OL", "ELK.OL"],
+  XLC: ["TEL.OL", "SCHA.OL"],
+};
+
+// ── BELGIEN · BEL 20 ─────────────────────────────────────────────────────────
+const BE = {
+  XLK: ["MELE.BR"],
+  XLF: ["KBC.BR", "AGS.BR", "GBLB.BR"],
+  XLV: ["UCB.BR", "ARGX.BR"],
+  XLY: ["DIE.BR"],
+  XLP: ["ABI.BR", "COLR.BR", "LOTB.BR"],
+  XLI: ["BEKB.BR", "AZE.BR", "DEME.BR"],
+  XLB: ["SOLB.BR", "UMI.BR"],
+  XLC: ["PROX.BR"],
+  XLRE: ["WDP.BR", "COFB.BR", "AED.BR"],
+};
+
+// ── IRLAND · ISEQ 20 ─────────────────────────────────────────────────────────
+const IE = {
+  XLF: ["BIRG.IR", "A5G.IR"],
+  XLV: ["UPR.IR"],
+  XLY: ["FLTR.IR", "DHG.IR", "GL9.IR"],
+  XLP: ["GVR.IR", "KRZ.IR"],
+  XLI: ["RY4C.IR", "KRX.IR", "GRP.IR"],
+  XLB: ["CRG.IR", "SK3.IR"],
+  XLRE: ["IRES.IR"],
+};
+
+// ── POLEN · WIG20 ────────────────────────────────────────────────────────────
+const PL = {
+  XLK: ["CDR.WA", "ALE.WA"],
+  XLF: ["PKO.WA", "PEO.WA", "SPL.WA", "MBK.WA", "ALR.WA", "PZU.WA"],
+  XLV: ["DNP.WA"],
+  XLY: ["LPP.WA", "CCC.WA"],
+    XLE: ["PKN.WA"],
+  XLI: ["BDX.WA"],
+  XLB: ["KGH.WA"],
+  XLU: ["PGE.WA", "TPE.WA"],
+  XLC: ["CPS.WA", "OPL.WA"],
+};
+
+// ── CHINA / HONGKONG · HSI + HSCEI ───────────────────────────────────────────
+const CN = {
+  XLK: ["0700.HK", "9988.HK", "3690.HK", "9618.HK", "1810.HK", "0992.HK", "0981.HK", "1024.HK", "9999.HK"],
+  XLF: ["1398.HK", "0939.HK", "3988.HK", "1288.HK", "2318.HK", "2628.HK", "0388.HK", "3968.HK", "1299.HK"],
+  XLV: ["1093.HK", "1177.HK", "2269.HK", "6160.HK"],
+  XLY: ["1211.HK", "2015.HK", "0175.HK", "2331.HK", "1929.HK", "6690.HK"],
+  XLP: ["0322.HK", "0288.HK", "2319.HK"],
+  XLE: ["0857.HK", "0386.HK", "0883.HK", "1088.HK"],
+  XLI: ["1766.HK", "0669.HK", "0392.HK"],
+  XLB: ["0914.HK", "2600.HK", "0347.HK"],
+  XLU: ["0836.HK", "0902.HK", "0003.HK", "0006.HK"],
+  XLC: ["0941.HK", "0762.HK", "0728.HK"],
+  XLRE: ["0016.HK", "0823.HK", "1109.HK", "0688.HK", "1997.HK"],
+};
+
+// ── HONGKONG · HSI-Kern (lokale Werte) ───────────────────────────────────────
+const HK = {
+  XLK: ["0700.HK", "0992.HK", "0285.HK", "0981.HK"],
+  XLF: ["0388.HK", "0011.HK", "0005.HK", "2388.HK", "1299.HK", "0023.HK"],
+  XLV: ["1093.HK", "1177.HK"],
+  XLY: ["0027.HK", "1929.HK"],
+  XLP: ["0322.HK", "0288.HK"],
+  XLI: ["0019.HK", "0316.HK", "0669.HK", "0293.HK"],
+  XLB: ["0914.HK"],
+  XLU: ["0002.HK", "0003.HK", "0006.HK", "0836.HK"],
+  XLC: ["0941.HK", "0728.HK"],
+  XLRE: ["0016.HK", "0823.HK", "0017.HK", "0101.HK", "1113.HK", "0688.HK", "1997.HK"],
+};
+
+// ── SÜDKOREA · KOSPI 200 ─────────────────────────────────────────────────────
+const KR = {
+  XLK: ["005930.KS", "000660.KS", "042700.KS", "009150.KS", "011070.KS", "035420.KS", "035720.KS"],
+  XLF: ["105560.KS", "055550.KS", "086790.KS", "316140.KS", "032830.KS", "138040.KS"],
+  XLV: ["207940.KS", "068270.KS", "128940.KS", "000100.KS"],
+  XLY: ["005380.KS", "000270.KS", "012330.KS", "161390.KS", "090430.KS"],
+  XLP: ["097950.KS", "271560.KS", "033780.KS"],
+  XLE: ["096770.KS", "010950.KS"],
+  XLI: ["009540.KS", "010140.KS", "042660.KS", "000720.KS", "047050.KS"],
+  XLB: ["005490.KS", "051910.KS", "010130.KS", "011170.KS", "004020.KS", "006400.KS"],
+  XLU: ["015760.KS", "036460.KS"],
+  XLC: ["030200.KS", "017670.KS", "032640.KS"],
+};
+
+// ── TAIWAN · TAIEX ───────────────────────────────────────────────────────────
+const TW = {
+  XLK: ["2330.TW", "2454.TW", "2317.TW", "2382.TW", "3711.TW", "2308.TW", "3034.TW",
+        "2379.TW", "3008.TW", "2357.TW", "2409.TW", "3037.TW", "2303.TW", "2408.TW"],
+  XLF: ["2881.TW", "2882.TW", "2886.TW", "2891.TW", "2884.TW", "2892.TW", "2880.TW", "2887.TW"],
+  XLV: ["1707.TW", "4142.TW"],
+  XLY: ["2912.TW", "9910.TW", "2207.TW"],
+  XLP: ["1216.TW", "1301.TW"],
+  XLE: ["6505.TW"],
+  XLI: ["2603.TW", "2609.TW", "2615.TW", "2618.TW", "2610.TW"],
+  XLB: ["1303.TW", "1326.TW", "2002.TW", "1101.TW", "1102.TW"],
+  XLU: ["9904.TW"],
+  XLC: ["3045.TW", "4904.TW", "4977.TW"],
+};
+
+// ── SINGAPUR · STI ───────────────────────────────────────────────────────────
+const SG = {
+  XLF: ["D05.SI", "O39.SI", "U11.SI", "S68.SI"],
+  XLV: ["Y92.SI"],
+  XLY: ["C09.SI", "G13.SI"],
+  XLP: ["F34.SI", "V03.SI"],
+  XLE: ["BN4.SI"],
+  XLI: ["Z74.SI", "C6L.SI", "S63.SI", "BS6.SI", "U96.SI"],
+  XLU: ["AJBU.SI"],
+    XLRE: ["C38U.SI", "A17U.SI", "M44U.SI", "J69U.SI", "ME8U.SI", "N2IU.SI", "C07.SI", "U14.SI"],
+};
+
+// ── INDONESIEN · IDX30 ───────────────────────────────────────────────────────
+const ID = {
+  XLF: ["BBCA.JK", "BBRI.JK", "BMRI.JK", "BBNI.JK", "ARTO.JK", "BRIS.JK"],
+  XLV: ["KLBF.JK", "SIDO.JK", "MIKA.JK"],
+  XLY: ["ASII.JK", "MAPI.JK", "ACES.JK"],
+  XLP: ["UNVR.JK", "ICBP.JK", "INDF.JK", "AMRT.JK", "CPIN.JK"],
+  XLE: ["PGAS.JK", "ADRO.JK", "PTBA.JK", "MEDC.JK", "ITMG.JK"],
+  XLI: ["UNTR.JK", "JSMR.JK"],
+  XLB: ["INTP.JK", "SMGR.JK", "ANTM.JK", "INCO.JK", "BRPT.JK", "TPIA.JK"],
+  XLU: ["POWR.JK"],
+  XLC: ["TLKM.JK", "EXCL.JK", "TOWR.JK", "TBIG.JK"],
+  XLRE: ["BSDE.JK", "PWON.JK", "CTRA.JK"],
+};
+
+// ── THAILAND · SET50 ─────────────────────────────────────────────────────────
+const TH = {
+  XLK: ["DELTA.BK"],
+  XLF: ["SCB.BK", "KBANK.BK", "BBL.BK", "KTB.BK", "TTB.BK", "TISCO.BK"],
+  XLV: ["BDMS.BK", "BH.BK", "BCH.BK"],
+  XLY: ["CPALL.BK", "CRC.BK", "HMPRO.BK", "MINT.BK", "CENTEL.BK"],
+  XLP: ["CPF.BK", "TU.BK", "OSP.BK"],
+  XLE: ["PTT.BK", "PTTEP.BK", "TOP.BK", "IRPC.BK", "BCP.BK", "OR.BK"],
+  XLI: ["AOT.BK", "BEM.BK", "BTS.BK"],
+  XLB: ["SCC.BK", "PTTGC.BK", "IVL.BK", "SCGP.BK"],
+  XLU: ["GULF.BK", "GPSC.BK", "EGCO.BK", "RATCH.BK", "BGRIM.BK"],
+  XLC: ["ADVANC.BK", "TRUE.BK", "INTUCH.BK"],
+  XLRE: ["LH.BK", "AP.BK", "CPN.BK", "WHA.BK"],
+};
+
+// ── MALAYSIA · KLCI ──────────────────────────────────────────────────────────
+const MY = {
+  XLF: ["1155.KL", "1295.KL", "1023.KL", "5819.KL", "1066.KL", "6888.KL"],
+  XLV: ["7113.KL", "5168.KL", "101.KL"],
+  XLY: ["4715.KL", "5285.KL"],
+  XLP: ["4707.KL", "3689.KL", "2445.KL"],
+  XLE: ["5681.KL", "5183.KL", "5347.KL"],
+  XLI: ["5014.KL", "3816.KL", "6947.KL"],
+  XLB: ["4197.KL", "2291.KL", "5185.KL"],
+  XLU: ["6033.KL"],
+  XLC: ["6012.KL", "4863.KL"],
+  XLRE: ["5296.KL", "8583.KL"],
+};
+
+// ── BRASILIEN · IBOVESPA ─────────────────────────────────────────────────────
+const BR = {
+  XLK: ["TOTS3.SA"],
+  XLF: ["ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "SANB11.SA", "B3SA3.SA", "BBSE3.SA", "BPAC11.SA"],
+  XLV: ["RDOR3.SA", "HAPV3.SA", "FLRY3.SA", "HYPE3.SA"],
+  XLY: ["LREN3.SA", "MGLU3.SA", "RENT3.SA", "CVCB3.SA", "AZUL4.SA", "RAIL3.SA"],
+  XLP: ["ABEV3.SA", "JBSS3.SA", "BRFS3.SA", "RAIZ4.SA", "SMTO3.SA", "ASAI3.SA"],
+  XLE: ["PETR4.SA", "PETR3.SA", "PRIO3.SA", "UGPA3.SA", "CSAN3.SA"],
+  XLI: ["WEGE3.SA", "EMBR3.SA", "CCRO3.SA"],
+  XLB: ["VALE3.SA", "GGBR4.SA", "CSNA3.SA", "SUZB3.SA", "KLBN11.SA", "BRAP4.SA"],
+  XLU: ["ELET3.SA", "ELET6.SA", "CMIG4.SA", "CPFE3.SA", "EQTL3.SA", "ENGI11.SA", "SBSP3.SA"],
+  XLC: ["VIVT3.SA", "TIMS3.SA"],
+  XLRE: ["MRVE3.SA", "CYRE3.SA", "MULT3.SA"],
+};
+
+// ── MEXIKO · IPC ─────────────────────────────────────────────────────────────
+const MX = {
+  XLF: ["GFNORTEO.MX", "BBAJIOO.MX", "GENTERA.MX", "Q.MX", "BOLSAA.MX"],
+  XLV: ["LABB.MX"],
+  XLY: ["WALMEX.MX", "LIVEPOLC-1.MX", "ALSEA.MX", "CHDRAUIB.MX"],
+  XLP: ["FEMSAUBD.MX", "KOFUBL.MX", "GRUMAB.MX", "BIMBOA.MX", "LALAB.MX"],
+  XLE: ["ALPEKA.MX"],
+  XLI: ["GAPB.MX", "ASURB.MX", "OMAB.MX", "GCARSOA1.MX", "ALFAA.MX"],
+  XLB: ["CEMEXCPO.MX", "GMEXICOB.MX", "PE&OLES.MX", "ORBIA.MX"],
+  XLC: ["AMXB.MX", "TLEVISACPO.MX"],
+  XLRE: ["FUNO11.MX", "VESTA.MX"],
+};
+
+// ── SAUDI-ARABIEN · TASI ─────────────────────────────────────────────────────
+const SA = {
+  XLF: ["1120.SR", "1180.SR", "1010.SR", "1060.SR", "1050.SR", "1150.SR", "8010.SR"],
+  XLV: ["4013.SR", "4002.SR", "4004.SR"],
+  XLY: ["4190.SR", "4161.SR", "4003.SR"],
+  XLP: ["2280.SR", "6001.SR", "2050.SR"],
+  XLE: ["2222.SR", "2380.SR", "2030.SR"],
+  XLI: ["4110.SR", "2040.SR"],
+  XLB: ["2010.SR", "1211.SR", "2020.SR", "2290.SR", "1301.SR", "3030.SR", "2060.SR"],
+  XLU: ["5110.SR", "2082.SR", "4200.SR"],
+  XLC: ["7010.SR", "7020.SR", "7030.SR"],
+  XLRE: ["4300.SR", "4020.SR"],
+};
+
+// ── ISRAEL · TA-35 ───────────────────────────────────────────────────────────
+const IL = {
+  XLK: ["NICE.TA", "NVMI.TA", "CAMT.TA", "ELTR.TA"],
+  XLF: ["POLI.TA", "LUMI.TA", "DSCT.TA", "MZTF.TA", "FIBI.TA", "PHOE.TA", "CLIS.TA"],
+  XLV: ["TEVA.TA"],
+  XLY: ["FOX.TA", "SAE.TA"],
+  XLP: ["STRS.TA", "OSEM.TA"],
+  XLE: ["NWMD.TA", "DLEKG.TA"],
+  XLI: ["ESLT.TA", "ORA.TA", "SHOM.TA"],
+  XLB: ["ICL.TA"],
+  XLC: ["BEZQ.TA"],
+  XLRE: ["AZRG.TA", "MLSR.TA", "BIG.TA", "AMOT.TA"],
+};
+
+// ── SÜDAFRIKA · JSE Top 40 ───────────────────────────────────────────────────
+const ZA = {
+  XLK: ["PRX.JO", "NPN.JO", "KRO.JO"],
+  XLF: ["FSR.JO", "SBK.JO", "ABG.JO", "NED.JO", "CPI.JO", "SLM.JO", "DSY.JO", "OMU.JO", "INL.JO"],
+  XLV: ["APN.JO", "NTC.JO", "LHC.JO"],
+  XLY: ["SHP.JO", "TFG.JO", "MRP.JO", "CLS.JO", "TRU.JO"],
+  XLP: ["BTI.JO", "AVI.JO", "TBS.JO"],
+  XLE: ["SOL.JO"],
+  XLI: ["BVT.JO", "BAW.JO"],
+  XLB: ["AGL.JO", "BHG.JO", "AMS.JO", "IMP.JO", "SSW.JO", "GFI.JO", "ANG.JO", "HAR.JO", "EXX.JO"],
+  XLC: ["MTN.JO", "VOD.JO"],
+  XLRE: ["GRT.JO", "RDF.JO", "HYP.JO"],
+};
+
+// ── TÜRKEI · BIST 30 ─────────────────────────────────────────────────────────
+const TR = {
+  XLK: ["ASELS.IS", "LOGO.IS"],
+  XLF: ["AKBNK.IS", "GARAN.IS", "ISCTR.IS", "YKBNK.IS", "VAKBN.IS", "HALKB.IS", "TSKB.IS"],
+  XLV: ["ECILC.IS"],
+  XLY: ["FROTO.IS", "TOASO.IS", "ARCLK.IS", "BIMAS.IS", "MGROS.IS", "TTRAK.IS"],
+  XLP: ["ULKER.IS", "CCOLA.IS", "AEFES.IS"],
+  XLE: ["TUPRS.IS", "PETKM.IS"],
+  XLI: ["THYAO.IS", "PGSUS.IS", "ENKAI.IS", "OYAKC.IS"],
+  XLB: ["EREGL.IS", "KRDMD.IS", "SISE.IS", "KOZAL.IS", "HEKTS.IS"],
+  XLU: ["AKSEN.IS", "ZOREN.IS"],
+  XLC: ["TCELL.IS", "TTKOM.IS"],
+};
+
+// ── VEREINIGTE ARABISCHE EMIRATE ─────────────────────────────────────────────
+// Kein Sektorblock: Yahoo-Symbole für ADX und DFM sind uneinheitlich und ich
+// kann sie nicht sicher belegen. Der Markt bleibt Ebene 1 (ETF), ohne Drill.
+
 // ── LÄNDERREGISTER ───────────────────────────────────────────────────────────
 // etf     — der ETF, unter dem das Land im Länder-RRG läuft (Ebene 1)
 // bench   — lokaler Leitindex, gegen den die Sektoren gemessen werden (Ebene 2/3)
+// coverage: "full" = Indexmitgliedschaft weitgehend vollständig
+//           "core" = liquide Schwergewichte, kein kompletter Index
 export const MARKETS = {
-  EWG:  { code: "GER", name: "Deutschland",   nameEn: "Germany",       bench: "^GDAXI",     benchLabel: "DAX 40",     sectors: DE },
-  EWQ:  { code: "FRA", name: "Frankreich",    nameEn: "France",        bench: "^FCHI",      benchLabel: "CAC 40",     sectors: FR },
-  EWU:  { code: "UK",  name: "Großbritannien", nameEn: "United Kingdom", bench: "^FTSE",    benchLabel: "FTSE 100",   sectors: UK },
-  EWL:  { code: "SUI", name: "Schweiz",       nameEn: "Switzerland",   bench: "^SSMI",      benchLabel: "SMI",        sectors: CH },
-  EWN:  { code: "NED", name: "Niederlande",   nameEn: "Netherlands",   bench: "^AEX",       benchLabel: "AEX",        sectors: NL },
-  EWI:  { code: "ITA", name: "Italien",       nameEn: "Italy",         bench: "FTSEMIB.MI", benchLabel: "FTSE MIB",   sectors: IT },
-  EWP:  { code: "ESP", name: "Spanien",       nameEn: "Spain",         bench: "^IBEX",      benchLabel: "IBEX 35",    sectors: ES },
-  INDA: { code: "IND", name: "Indien",        nameEn: "India",         bench: "^NSEI",      benchLabel: "NIFTY 50",   sectors: IN },
-  EWJ:  { code: "JPN", name: "Japan",         nameEn: "Japan",         bench: "^N225",      benchLabel: "Nikkei 225", sectors: JP },
-  EWC:  { code: "CAN", name: "Kanada",        nameEn: "Canada",        bench: "^GSPTSE",    benchLabel: "S&P/TSX",    sectors: CA },
-  EWA:  { code: "AUS", name: "Australien",    nameEn: "Australia",     bench: "^AXJO",      benchLabel: "ASX 200",    sectors: AU },
+  EWG:  { code: "GER", name: "Deutschland",    nameEn: "Germany",        bench: "^GDAXI",     benchLabel: "DAX 40",      coverage: "full", sectors: DE },
+  EWQ:  { code: "FRA", name: "Frankreich",     nameEn: "France",         bench: "^FCHI",      benchLabel: "CAC 40",      coverage: "full", sectors: FR },
+  EWU:  { code: "UK",  name: "Großbritannien", nameEn: "United Kingdom", bench: "^FTSE",      benchLabel: "FTSE 100",    coverage: "full", sectors: UK },
+  EWL:  { code: "SUI", name: "Schweiz",        nameEn: "Switzerland",    bench: "^SSMI",      benchLabel: "SMI",         coverage: "full", sectors: CH },
+  EWN:  { code: "NED", name: "Niederlande",    nameEn: "Netherlands",    bench: "^AEX",       benchLabel: "AEX",         coverage: "full", sectors: NL },
+  EWI:  { code: "ITA", name: "Italien",        nameEn: "Italy",          bench: "FTSEMIB.MI", benchLabel: "FTSE MIB",    coverage: "full", sectors: IT },
+  EWP:  { code: "ESP", name: "Spanien",        nameEn: "Spain",          bench: "^IBEX",      benchLabel: "IBEX 35",     coverage: "full", sectors: ES },
+  INDA: { code: "IND", name: "Indien",         nameEn: "India",          bench: "^NSEI",      benchLabel: "NIFTY 50",    coverage: "full", sectors: IN },
+  EWJ:  { code: "JPN", name: "Japan",          nameEn: "Japan",          bench: "^N225",      benchLabel: "Nikkei 225",  coverage: "core", sectors: JP },
+  EWC:  { code: "CAN", name: "Kanada",         nameEn: "Canada",         bench: "^GSPTSE",    benchLabel: "S&P/TSX",     coverage: "full", sectors: CA },
+  EWA:  { code: "AUS", name: "Australien",     nameEn: "Australia",      bench: "^AXJO",      benchLabel: "ASX 200",     coverage: "core", sectors: AU },
+
+  EWD:  { code: "SWE", name: "Schweden",       nameEn: "Sweden",         bench: "^OMX",       benchLabel: "OMXS30",      coverage: "core", sectors: SE },
+  NORW: { code: "NOR", name: "Norwegen",       nameEn: "Norway",         bench: "^OSEAX",     benchLabel: "OSEAX",       coverage: "core", sectors: NO },
+  EWK:  { code: "BEL", name: "Belgien",        nameEn: "Belgium",        bench: "^BFX",       benchLabel: "BEL 20",      coverage: "core", sectors: BE },
+  EIRL: { code: "IRL", name: "Irland",         nameEn: "Ireland",        bench: "^ISEQ",      benchLabel: "ISEQ 20",     coverage: "core", sectors: IE },
+  EPOL: { code: "POL", name: "Polen",          nameEn: "Poland",         bench: "WIG20.WA",   benchLabel: "WIG20",       coverage: "core", sectors: PL },
+  MCHI: { code: "CHN", name: "China",          nameEn: "China",          bench: "^HSCE",      benchLabel: "HSCEI",       coverage: "core", sectors: CN },
+  EWH:  { code: "HK",  name: "Hongkong",       nameEn: "Hong Kong",      bench: "^HSI",       benchLabel: "Hang Seng",   coverage: "core", sectors: HK },
+  EWY:  { code: "KOR", name: "Südkorea",       nameEn: "South Korea",    bench: "^KS11",      benchLabel: "KOSPI",       coverage: "core", sectors: KR },
+  EWT:  { code: "TWN", name: "Taiwan",         nameEn: "Taiwan",         bench: "^TWII",      benchLabel: "TAIEX",       coverage: "core", sectors: TW },
+  EWS:  { code: "SGP", name: "Singapur",       nameEn: "Singapore",      bench: "^STI",       benchLabel: "STI",         coverage: "core", sectors: SG },
+  EIDO: { code: "IDN", name: "Indonesien",     nameEn: "Indonesia",      bench: "^JKSE",      benchLabel: "IDX Comp.",   coverage: "core", sectors: ID },
+  THD:  { code: "THA", name: "Thailand",       nameEn: "Thailand",       bench: "^SET.BK",    benchLabel: "SET",         coverage: "core", sectors: TH },
+  EWM:  { code: "MYS", name: "Malaysia",       nameEn: "Malaysia",       bench: "^KLSE",      benchLabel: "KLCI",        coverage: "core", sectors: MY },
+  EWZ:  { code: "BRA", name: "Brasilien",      nameEn: "Brazil",         bench: "^BVSP",      benchLabel: "Ibovespa",    coverage: "core", sectors: BR },
+  EWW:  { code: "MEX", name: "Mexiko",         nameEn: "Mexico",         bench: "^MXX",       benchLabel: "IPC",         coverage: "core", sectors: MX },
+  KSA:  { code: "SAU", name: "Saudi-Arabien",  nameEn: "Saudi Arabia",   bench: "^TASI.SR",   benchLabel: "TASI",        coverage: "core", sectors: SA },
+  EIS:  { code: "ISR", name: "Israel",         nameEn: "Israel",         bench: "^TA125.TA",  benchLabel: "TA-125",      coverage: "core", sectors: IL },
+  EZA:  { code: "ZAF", name: "Südafrika",      nameEn: "South Africa",   bench: "^J203.JO",   benchLabel: "JSE All Share", coverage: "core", sectors: ZA },
+  TUR:  { code: "TUR", name: "Türkei",         nameEn: "Turkey",         bench: "XU100.IS",   benchLabel: "BIST 100",    coverage: "core", sectors: TR },
 };
 
 export const hasMarket = etf => Boolean(MARKETS[etf]);

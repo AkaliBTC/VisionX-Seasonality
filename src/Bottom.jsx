@@ -33,8 +33,6 @@ const ALL_HOLDINGS = SPX_ALL;
 const PRESETS = {
   "SECTOR ETFS": ALL_SECTOR_ETFS,
   "S&P 500": SPX_ALL,
-  "DAX 40": DAX40,
-  "DAX + MDAX": DE_ALL,
   "VSX STOCKS": VSX_STOCKS,
   "VSX CRYPTO": VSX_CRYPTO,
   "VSX COMMODITIES": VSX_COMMODITY_SYMBOLS,
@@ -45,6 +43,22 @@ const PRESETS = {
 
 // Von CoinMarketCap geladene Universen (Top N nach Marktkapitalisierung)
 const CMC_PRESETS = { "CMC TOP 25": 25, "CMC TOP 50": 50, "CMC TOP 100": 100 };
+
+// Alle wählbaren Universen in einer Liste, nach Gruppen sortiert.
+// Präfixe: "c:" Ländermarkt · "cmc:" Live von CoinMarketCap · sonst Preset
+const UNIVERSE_OPTIONS = (t, lang) => [
+  { value: null, label: t.universe, group: "" },
+  ...Object.keys(PRESETS).map(name => ({ value: name, label: name, group: t.grpCore })),
+  ...Object.entries(MARKETS).map(([etf, m]) => ({
+    value: `c:${etf}`, code: m.code,
+    label: lang === "en" ? m.nameEn : m.name,
+    hint: m.benchLabel, group: t.grpCountry,
+    tag: m.coverage === "core" ? "CORE" : null, tagColor: "#7a6a3a",
+  })),
+  ...Object.entries(CMC_PRESETS).map(([name, lim]) => ({
+    value: `cmc:${lim}`, label: name, group: t.grpCrypto,
+  })),
+];
 
 // Symbol → Sektor (für Filter und Anzeige)
 const SECTOR_OF = {};
@@ -348,6 +362,7 @@ const T = {
     ma: "vs MA200", vol: "Vol-Spike", z: "Z-Score", pos: "52W-Pos", streak: "Rote Tage",
     signals: "SIGNALE", summary: "RESÜMEE", turning: "STABILISIERT",
     sector: "Sektor", allSectors: "ALLE", filter: "SEKTOR-FILTER", tf: "TIMEFRAME", market: "LÄNDERMARKT",
+    universe: "UNIVERSUM WÄHLEN", grpCore: "Basis", grpCountry: "Ländermärkte", grpCrypto: "Krypto (live)",
     d1: "1D", d4: "4D", w2: "2W", m1: "1M", combined: "KOMB.", align: "Confluence",
     alignHint: "Übereinstimmung aller Zeitebenen — hohe Werte heißen: 1D, 4D, 2W und 1M zeigen dasselbe Bild",
     weights: "Gewichtung 4D 40 % · 1D 25 % · 2W 20 % · 1M 15 %", onlyTurning: "NUR STABILISIERT",
@@ -366,6 +381,7 @@ const T = {
     ma: "vs MA200", vol: "Vol Spike", z: "Z-Score", pos: "52W Pos", streak: "Down Days",
     signals: "SIGNALS", summary: "SUMMARY", turning: "STABILISING",
     sector: "Sector", allSectors: "ALL", filter: "SECTOR FILTER", tf: "TIMEFRAME", market: "COUNTRY MARKET",
+    universe: "SELECT UNIVERSE", grpCore: "Core", grpCountry: "Country markets", grpCrypto: "Crypto (live)",
     d1: "1D", d4: "4D", w2: "2W", m1: "1M", combined: "COMB.", align: "Confluence",
     alignHint: "Agreement across all timeframes — high values mean 1D, 4D, 2W and 1M show the same picture",
     weights: "Weighting 4D 40% · 1D 25% · 2W 20% · 1M 15%", onlyTurning: "TURNING ONLY",
@@ -395,6 +411,7 @@ export default function Bottom({ lang = "de" }) {
   const [detail, setDetail] = useState(null);
   const [secFilter, setSecFilter] = useState(null);      // null = alle
   const [country, setCountry] = useState(null);          // gewählter Ländermarkt
+  const [universe, setUniverse] = useState(null);        // aktives Auswahlfeld-Element
   const [tfView, setTfView] = useState("combined");      // "combined" | "d4" | "d1"
   const [onlyTurning, setOnlyTurning] = useState(false);
   const [cmcMeta, setCmcMeta] = useState({});
@@ -563,27 +580,23 @@ export default function Bottom({ lang = "de" }) {
             </div>
             <button style={pill(true)} onClick={addTickers}>{t.add}</button>
             <div style={{ width: 1, height: 22, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)" }} />
-            {Object.entries(PRESETS).map(([name, syms]) => (
-              <button key={name} style={pill(false)} onClick={() => { setFailed([]); setCountry(null); setList([...syms]); }}>{name}</button>
-            ))}
-            <Dropdown value={country} placeholder={t.market} width={196}
-              options={[
-                { value: null, label: t.market },
-                ...Object.entries(MARKETS).map(([etf, m]) => ({
-                  value: etf, code: m.code,
-                  label: lang === "en" ? m.nameEn : m.name,
-                  hint: m.benchLabel,
-                })),
-              ]}
+
+            {/* EIN Auswahlfeld für alles. Vorher standen hier vierzehn Buttons
+                neben einem Dropdown — zwei Bedienmuster für dieselbe Aufgabe. */}
+            <Dropdown value={universe} placeholder={t.universe} width={250} search
+              options={UNIVERSE_OPTIONS(t, lang)}
               onChange={v => {
-                setCountry(v); setSecFilter(null); setFailed([]); setDetail(null);
-                setList(v ? marketMembers(v) : []);
+                setUniverse(v); setSecFilter(null); setFailed([]); setDetail(null);
+                if (!v) { setList([]); setCountry(null); return; }
+                if (v.startsWith("cmc:")) { setCountry(null); loadCmc(+v.slice(4)); return; }
+                if (v.startsWith("c:")) { const etf = v.slice(2); setCountry(etf); setList(marketMembers(etf)); return; }
+                setCountry(null); setList([...(PRESETS[v] || [])]);
               }} />
-            {Object.entries(CMC_PRESETS).map(([name, lim]) => (
-              <button key={name} style={{ ...pill(false), borderColor: "rgba(212,175,55,0.25)", color: "#b99c64" }}
-                onClick={() => loadCmc(lim)} title="Universum live von CoinMarketCap">◆ {name}</button>
-            ))}
-            <button style={pill(false)} onClick={() => { setList([]); setFailed([]); setDetail(null); setCountry(null); setSecFilter(null); }}>{t.clear}</button>
+
+            <button style={pill(false)}
+              onClick={() => { setList([]); setFailed([]); setDetail(null); setCountry(null); setUniverse(null); setSecFilter(null); }}>
+              {t.clear}
+            </button>
           </div>
         </div>
 

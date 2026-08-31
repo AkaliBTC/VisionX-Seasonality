@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · DESIGN SYSTEM
 //  Design-Sprache aus dem VSX Portfolio Tracker übernommen:
@@ -212,31 +213,76 @@ export function Ambient({ tint = "rgba(99,182,255,0.03)" }) {
 // Ein natives <select> lässt sich nicht stylen — die Optionsliste kommt vom
 // Betriebssystem, weiß mit Systemschrift, und goldener Text darauf ist
 // unlesbar. Deshalb ein eigenes Popover.
-export function Dropdown({ value, options, onChange, placeholder, width = 230 }) {
+export function Dropdown({ value, options, onChange, placeholder, width = 230, search = false }) {
   const [open, setOpen] = useState(false);
-  const boxRef = useRef(null);
+  const [q, setQ] = useState("");
+  const [rect, setRect] = useState(null);
+  const btnRef = useRef(null);
+  const popRef = useRef(null);
+
+  // Position beim Öffnen messen. Das Popover hängt per Portal am <body>, damit
+  // es nicht am overflow eines Panels abgeschnitten wird — genau das ist im
+  // Bottom Radar passiert, wo die Liste an der Panelkante endete.
+  useLayoutEffect(() => {
+    if (!open || !btnRef.current) return;
+    const r = btnRef.current.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom;
+    setRect({
+      left: Math.min(r.left, window.innerWidth - (width + 60)),
+      top: below > 300 ? r.bottom + 6 : null,
+      bottom: below > 300 ? null : window.innerHeight - r.top + 6,
+      maxH: Math.max(200, Math.min(420, below > 300 ? below - 24 : r.top - 24)),
+    });
+  }, [open, width]);
 
   useEffect(() => {
     if (!open) return undefined;
-    const onDown = e => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    const onDown = e => {
+      if (btnRef.current?.contains(e.target) || popRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
     const onKey = e => { if (e.key === "Escape") setOpen(false); };
+    const close = () => setOpen(false);
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
   }, [open]);
 
+  useEffect(() => { if (!open) setQ(""); }, [open]);
+
   const current = options.find(o => o.value === value);
+  const needle = q.trim().toLowerCase();
+  const shown = needle
+    ? options.filter(o => `${o.code || ""} ${o.label} ${o.hint || ""}`.toLowerCase().includes(needle))
+    : options;
+
+  const rowStyle = active => ({
+    display: "flex", alignItems: "baseline", gap: 9, padding: "8px 11px",
+    borderRadius: 7, cursor: "pointer",
+    background: active ? "rgba(212,175,55,0.14)" : "transparent",
+    color: active ? "#f8e49b" : "#c9c9c9",
+    fontFamily: F.ui, fontSize: 9.5, fontWeight: 600, letterSpacing: "0.1em",
+  });
+
+  let lastGroup = null;
 
   return (
-    <div ref={boxRef} style={{ position: "relative", display: "inline-block" }}>
-      <button onClick={() => setOpen(o => !o)}
+    <>
+      <button ref={btnRef} onClick={() => setOpen(o => !o)}
         style={{
           display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
           minWidth: width, padding: "7px 12px", borderRadius: 9, cursor: "pointer",
           background: value ? "linear-gradient(135deg, rgba(212,175,55,0.16), rgba(212,175,55,0.05))" : "rgba(255,255,255,0.02)",
           border: `1px solid ${value ? "rgba(212,175,55,0.5)" : "rgba(255,255,255,0.09)"}`,
           color: value ? "#f8e49b" : "#8a8a8a",
-          fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em",
+          fontFamily: F.ui, fontSize: 9, fontWeight: 700, letterSpacing: "0.14em",
           textTransform: "uppercase", textAlign: "left",
         }}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -245,42 +291,62 @@ export function Dropdown({ value, options, onChange, placeholder, width = 230 })
         <span style={{ fontSize: 7, opacity: 0.7, transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }}>▼</span>
       </button>
 
-      {open && (
-        <div style={{
-          position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 90,
-          minWidth: width + 30, maxHeight: 340, overflowY: "auto",
-          background: "rgba(14,14,14,0.97)", backdropFilter: "blur(18px)",
+      {open && rect && createPortal(
+        <div ref={popRef} style={{
+          position: "fixed", left: rect.left, top: rect.top ?? undefined, bottom: rect.bottom ?? undefined,
+          zIndex: 9999, minWidth: width + 40, maxHeight: rect.maxH, overflowY: "auto",
+          background: "rgba(13,13,13,0.98)", backdropFilter: "blur(20px)",
           border: "1px solid rgba(212,175,55,0.22)", borderRadius: 11,
-          boxShadow: "0 18px 46px rgba(0,0,0,0.7)", padding: 5,
+          boxShadow: "0 20px 50px rgba(0,0,0,0.75)", padding: 5,
         }} className="vsx-scroll">
-          {options.map(o => {
+          {search && (
+            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="…"
+              style={{ width: "100%", boxSizing: "border-box", margin: "2px 0 6px",
+                background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: 7, padding: "7px 10px", color: "#f8e49b", outline: "none",
+                fontFamily: F.mono, fontSize: 10, letterSpacing: "0.08em" }} />
+          )}
+          {shown.length === 0 && (
+            <div style={{ padding: "10px 11px", fontFamily: F.mono, fontSize: 10, color: "#5a5a5a" }}>—</div>
+          )}
+          {shown.map(o => {
             const active = o.value === value;
+            const head = o.group && o.group !== lastGroup ? o.group : null;
+            lastGroup = o.group || lastGroup;
             return (
-              <div key={o.value ?? "__none"} role="button"
-                onClick={() => { onChange(o.value); setOpen(false); }}
-                style={{
-                  display: "flex", alignItems: "baseline", gap: 9, padding: "8px 11px",
-                  borderRadius: 7, cursor: "pointer",
-                  background: active ? "rgba(212,175,55,0.14)" : "transparent",
-                  color: active ? "#f8e49b" : "#c9c9c9",
-                  fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, fontWeight: 600, letterSpacing: "0.1em",
-                }}
-                onMouseEnter={e => { if (!active) e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
-                onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}>
-                <span style={{ minWidth: 30, color: active ? C.gold : "#7f7f7f", fontFamily: "'DM Mono', monospace", fontSize: 9 }}>
-                  {o.code || ""}
-                </span>
-                <span style={{ flex: 1, textTransform: "uppercase" }}>{o.label}</span>
-                {o.hint && (
-                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 8.5, color: "#5f5f5f", letterSpacing: "0.04em" }}>
-                    {o.hint}
-                  </span>
+              <div key={o.value ?? `__none_${o.label}`}>
+                {head && (
+                  <div style={{ padding: "9px 11px 5px", fontFamily: F.ui, fontSize: 7.5, fontWeight: 700,
+                    letterSpacing: "0.22em", color: "#5f5f5f", textTransform: "uppercase" }}>
+                    {head}
+                  </div>
                 )}
+                <div role="button" onClick={() => { onChange(o.value); setOpen(false); }}
+                  style={rowStyle(active)}
+                  onMouseEnter={e => { if (!active) e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
+                  onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}>
+                  {o.code !== undefined && (
+                    <span style={{ minWidth: 30, color: active ? C.gold : "#7f7f7f", fontFamily: F.mono, fontSize: 9 }}>
+                      {o.code}
+                    </span>
+                  )}
+                  <span style={{ flex: 1, textTransform: "uppercase" }}>{o.label}</span>
+                  {o.hint && (
+                    <span style={{ fontFamily: F.mono, fontSize: 8.5, color: "#5f5f5f", letterSpacing: "0.04em" }}>
+                      {o.hint}
+                    </span>
+                  )}
+                  {o.tag && (
+                    <span style={{ fontFamily: F.mono, fontSize: 7.5, color: o.tagColor || "#7a6a3a",
+                      border: `1px solid ${o.tagColor || "#7a6a3a"}55`, borderRadius: 4, padding: "1px 4px" }}>
+                      {o.tag}
+                    </span>
+                  )}
+                </div>
               </div>
             );
           })}
-        </div>
-      )}
-    </div>
+        </div>, document.body)}
+    </>
   );
 }

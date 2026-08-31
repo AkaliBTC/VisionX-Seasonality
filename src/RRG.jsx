@@ -692,6 +692,7 @@ const RRG_T = {
     packManager: "PACK MANAGER", reset: "Zurücksetzen", add: "+ HINZU",
     drillHint: "Sektor anklicken → Drilldown mit Holdings +", scrollZoom: "Scrollen = Zoom",
     market: "MARKT", allCountries: "ALLE LÄNDER",
+    universe: "UNIVERSUM WÄHLEN", grpCore: "Basis", grpCountry: "Ländermärkte",
     drillHintCountry: "Land anklicken → Sektoren gegen den lokalen Leitindex",
     drillHintSector: "Sektor anklicken → Einzeltitel",
     tipTails: "Tails ein-/ausblenden", tipPack: "VisionX-Pack-Titel ein-/ausblenden",
@@ -714,6 +715,7 @@ const RRG_T = {
     packManager: "PACK MANAGER", reset: "Reset", add: "+ ADD",
     drillHint: "Click a sector → drilldown with holdings +", scrollZoom: "Scroll = zoom",
     market: "MARKET", allCountries: "ALL COUNTRIES",
+    universe: "SELECT UNIVERSE", grpCore: "Core", grpCountry: "Country markets",
     drillHintCountry: "Click a country → sectors vs the local index",
     drillHintSector: "Click a sector → single names",
     tipTails: "Show/hide tails", tipPack: "Show/hide VisionX pack names",
@@ -1124,14 +1126,23 @@ export default function RRG({ lang = "de" }) {
           </div>
         </div>
 
-        {/* PRESETS */}
+        {/* UNIVERSUM — ein Auswahlfeld statt Buttonreihe plus Dropdown */}
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 9, marginBottom: 8 }}>
-          {PRESETS.map(p => (
-            <button key={p.id} style={pill(presetId === p.id && !drill)}
-              onClick={() => { setPresetId(p.id); setDrill(null); setCountry(null); setHovered(null); setOffset(0); setPlaying(false); }}>
-              {p.label}
-            </button>
-          ))}
+          <Dropdown value={country ? `c:${country}` : presetId} placeholder={T.universe} width={252} search
+            options={[
+              ...PRESETS.map(p => ({ value: p.id, label: p.label, group: T.grpCore })),
+              ...Object.entries(MARKETS).map(([etf, m]) => ({
+                value: `c:${etf}`, code: m.code,
+                label: lang === "en" ? m.nameEn : m.name,
+                hint: m.benchLabel, group: T.grpCountry,
+                tag: m.coverage === "core" ? "CORE" : null, tagColor: "#7a6a3a",
+              })),
+            ]}
+            onChange={v => {
+              setDrill(null); setHovered(null); setOffset(0); setPlaying(false);
+              if (v && v.startsWith("c:")) { setPresetId("countries"); setCountry(v.slice(2)); }
+              else { setPresetId(v); setCountry(null); }
+            }} />
           <div style={{ flex: 1 }} />
           <button onClick={() => setShowManager(true)}
             style={{ ...pill(false), display: "flex", alignItems: "center", gap: 7, color: "#b99c64", borderColor: "rgba(212,175,55,0.25)" }}
@@ -1140,40 +1151,22 @@ export default function RRG({ lang = "de" }) {
             <span style={{ fontSize: 8 }}>◆</span> {T.packManager}
           </button>
         </div>
-        {presetId === "countries" && (
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <span style={{ fontSize: 8, letterSpacing: "0.2em", color: "#666", fontFamily: "'Montserrat', sans-serif", fontWeight: 700 }}>
-              {T.market}
-            </span>
-            <Dropdown value={country} placeholder={T.allCountries} width={218}
-              options={[
-                { value: null, label: T.allCountries },
-                ...Object.entries(MARKETS).map(([etf, m]) => ({
-                  value: etf, code: m.code,
-                  label: lang === "en" ? m.nameEn : m.name,
-                  hint: m.benchLabel,
-                })),
-              ]}
-              onChange={v => { setCountry(v); setDrill(null); setHovered(null); setOffset(0); setPlaying(false); }} />
-
-            {country && (
-              <>
-                <div style={divider} />
-                {countrySectors.map(sec => (
-                  <button key={sec.key} title={`${sec.name} · ${sec.members.length}`}
-                    style={{ ...pill(drill === sec.key), padding: "6.5px 12px", fontSize: 9, letterSpacing: "0.12em",
-                      color: drill === sec.key ? "#f8e49b" : (SECTOR_COLORS[sec.key] ? `${SECTOR_COLORS[sec.key]}aa` : "#777") }}
-                    onClick={() => { setDrill(d => d === sec.key ? null : sec.key); setHovered(null); setOffset(0); setPlaying(false); }}>
-                    {sec.key}
-                  </button>
-                ))}
-                <div style={divider} />
-                <button style={{ ...pill(false), fontSize: 9 }}
-                  onClick={() => { setCountry(null); setDrill(null); setOffset(0); setPlaying(false); }}>
-                  ← {T.allCountries}
-                </button>
-              </>
-            )}
+        {/* SEKTOREN DES LANDES */}
+        {country && (
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 10 }}>
+            {countrySectors.map(sec => (
+              <button key={sec.key} title={`${sec.name} · ${sec.members.length}`}
+                style={{ ...pill(drill === sec.key), padding: "6.5px 12px", fontSize: 9, letterSpacing: "0.12em",
+                  color: drill === sec.key ? "#f8e49b" : (SECTOR_COLORS[sec.key] ? `${SECTOR_COLORS[sec.key]}aa` : "#777") }}
+                onClick={() => { setDrill(d => d === sec.key ? null : sec.key); setHovered(null); setOffset(0); setPlaying(false); }}>
+                {sec.key}
+              </button>
+            ))}
+            <div style={divider} />
+            <button style={{ ...pill(false), fontSize: 9 }}
+              onClick={() => { setCountry(null); setDrill(null); setOffset(0); setPlaying(false); }}>
+              ← {T.allCountries}
+            </button>
           </div>
         )}
 
