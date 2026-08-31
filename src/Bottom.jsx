@@ -412,6 +412,7 @@ export default function Bottom({ lang = "de" }) {
   const [secFilter, setSecFilter] = useState(null);      // null = alle
   const [country, setCountry] = useState(null);          // gewählter Ländermarkt
   const [universe, setUniverse] = useState(null);        // aktives Auswahlfeld-Element
+  const [names, setNames] = useState({});                // Symbol → Klarname (aus der API)
   const [tfView, setTfView] = useState("combined");      // "combined" | "d4" | "d1"
   const [onlyTurning, setOnlyTurning] = useState(false);
   const [cmcMeta, setCmcMeta] = useState({});
@@ -458,6 +459,15 @@ export default function Bottom({ lang = "de" }) {
           if (!alive) return;
           Object.assign(cacheRef.current, json.data || {});
           setRaw({ ...cacheRef.current });
+          // Klarnamen übernehmen — bei numerischen Tickern (Japan, Korea,
+          // Taiwan) ist das Symbol allein wertlos.
+          if (json.names && Object.keys(json.names).length) {
+            setNames(prev => {
+              const next = { ...prev };
+              for (const [k, v] of Object.entries(json.names)) if (v && !next[k]) next[k] = v;
+              return next;
+            });
+          }
           const bad = json.failed || [];
           if (bad.length) {
             setFailed(f => [...new Set([...f, ...bad])]);
@@ -476,7 +486,7 @@ export default function Bottom({ lang = "de" }) {
     // Anzeige folgt der gewählten Zeitebene
     const view = tfView === "combined" ? a : (a[tfView] || a);
     const score = tfView === "combined" ? a.score : (view.score ?? a.score);
-    return { symbol: s, ...a, ...view, score, phase: phaseFor(score), sector: SECTOR_OF[s] || null, cmc: cmcMeta[s] || null, adxVal: view.adx?.adx ?? null };
+    return { symbol: s, name: names[s] || cmcMeta[s]?.name || null, ...a, ...view, score, phase: phaseFor(score), sector: SECTOR_OF[s] || null, cmc: cmcMeta[s] || null, adxVal: view.adx?.adx ?? null };
   }).filter(Boolean), [list, raw, tfView, cmcMeta]);
 
   const filtered = useMemo(() => rows.filter(r =>
@@ -498,7 +508,7 @@ export default function Bottom({ lang = "de" }) {
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
-    const get = d => d[sort.key];
+    const get = d => (sort.key === "symbol" ? sortName(d) : d[sort.key]);
     arr.sort((a, b) => {
       const x = get(a), y = get(b);
       if (typeof x === "string") return x.localeCompare(y);
@@ -508,9 +518,12 @@ export default function Bottom({ lang = "de" }) {
     });
     if (sort.dir === "desc") arr.reverse();
     return arr;
-  }, [filtered, sort]);
+  }, [filtered, sort, names]);
 
   const setSortKey = k => setSort(s => s.key === k ? { key: k, dir: s.dir === "desc" ? "asc" : "desc" } : { key: k, dir: k === "symbol" ? "asc" : "desc" });
+  // Beim Sortieren nach "Symbol" den angezeigten Namen verwenden — sonst
+  // sortiert man bei japanischen Tickern nach Zahlen, die niemand liest.
+  const sortName = r => (r.name || r.symbol).toLowerCase();
 
   const addTickers = () => {
     const parts = input.split(/[\s,;]+/).map(s => s.trim().toUpperCase().replace(/[^A-Z0-9.\-^]/g, "")).filter(Boolean);
@@ -695,7 +708,17 @@ export default function Bottom({ lang = "de" }) {
                 {sorted.map(d => (
                   <tr key={d.symbol} onClick={() => setDetail(d)} style={{ borderTop: "1px solid rgba(255,255,255,0.05)", cursor: "pointer" }}>
                     <td style={{ padding: "9px 10px", color: "#f8e49b", fontWeight: 700, whiteSpace: "nowrap" }}>
-                      {d.symbol.replace("-USD", "")}
+                      {d.name ? (
+                        <span style={{ display: "inline-flex", alignItems: "baseline", gap: 7 }}>
+                          <span style={{ fontFamily: "'Montserrat', sans-serif", fontWeight: 600, letterSpacing: "0.04em",
+                            maxWidth: 190, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {d.name}
+                          </span>
+                          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5, color: "#6a6a6a", letterSpacing: "0.06em" }}>
+                            [{d.symbol.replace("-USD", "")}]
+                          </span>
+                        </span>
+                      ) : d.symbol.replace("-USD", "")}
                       {VSX_LABELS[d.symbol] && <span style={{ marginLeft: 7, fontSize: 8.5, color: "#5a5a5a", fontFamily: "'Montserrat', sans-serif", fontWeight: 400 }}>{VSX_LABELS[d.symbol]}</span>}
                       {d.turning && <span title={t.turning} style={{ marginLeft: 7, fontSize: 8, color: "#22c55e" }}>▲</span>}
                     </td>
@@ -778,7 +801,14 @@ export default function Bottom({ lang = "de" }) {
         {detail && (
           <div style={{ ...glass, marginTop: 16, padding: "20px 24px 18px" }}>
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14, marginBottom: 14 }}>
-              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 24, letterSpacing: "0.14em", color: "#fdfdfd" }}>{detail.symbol.replace("-USD", "")}</span>
+              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 24, letterSpacing: "0.14em", color: "#fdfdfd" }}>
+                {detail.name || detail.symbol.replace("-USD", "")}
+              </span>
+              {detail.name && (
+                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#6a6a6a", letterSpacing: "0.06em" }}>
+                  [{detail.symbol.replace("-USD", "")}]
+                </span>
+              )}
               <span style={{ width: 14, height: 14, borderRadius: "50%", background: detail.phase?.color, boxShadow: `0 0 11px ${detail.phase?.color}` }} />
               <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, letterSpacing: "0.16em", color: detail.phase?.color }}>{detail.phase?.[lang].label}</span>
               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 13, color: "#e8e8e8" }}>{detail.score}<span style={{ color: "#555", fontSize: 10 }}>/100</span></span>

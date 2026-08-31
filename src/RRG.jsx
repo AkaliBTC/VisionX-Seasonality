@@ -841,7 +841,13 @@ export default function RRG({ lang = "de" }) {
     let base;
     if (market && drill) {
       // Ebene 3: Einzeltitel des gewählten Landessektors
-      base = (countrySector?.members || []).map(h => ({ symbol: h, label: h.replace(/\.[A-Z]+$/, ""), vsx: false }));
+      base = (countrySector?.members || []).map(h => {
+        // Bei numerischen Tickern (Japan, Korea, Taiwan) sagt das Symbol nichts.
+        // Sobald die API einen Klarnamen geliefert hat, steht der im Chart.
+        const nm = names[h];
+        const short = nm ? nm.replace(/\s+(Co|Corp|Corporation|Inc|Ltd|Limited|Holdings?|Group|AG|SA|SE|NV|PLC)\.?,?$/i, "").trim() : null;
+        return { symbol: h, label: short ? short.slice(0, 18) : h.replace(/\.[A-Z]+$/, ""), name: nm || null, vsx: false };
+      });
     } else if (market) {
       // Ebene 2: Sektor-Composites des Landes. Pseudo-Symbole wie "EWG#XLK",
       // die Reihen dazu entstehen weiter unten aus den Mitgliedskursen.
@@ -875,7 +881,7 @@ export default function RRG({ lang = "de" }) {
     const known = new Set(base.map(b => b.symbol));
     custom.forEach(c => { if (!known.has(c)) base.push({ symbol: c, label: c.replace("-USD", ""), vsx: false, custom: true }); });
     return base.filter(b => !rm.has(b.symbol) && b.symbol !== benchSym);
-  }, [preset, drill, drillSector, market, country, countrySector, countrySectors, viewKey, customAdd, removed, benchSym, vsxPack, pack, cmcUniverse]);
+  }, [preset, drill, drillSector, market, country, countrySector, countrySectors, viewKey, customAdd, removed, benchSym, vsxPack, pack, cmcUniverse, names]);
 
   const neededSymbols = useMemo(() => {
     // Ein Composite ist kein abrufbares Symbol — statt seiner müssen die
