@@ -242,16 +242,19 @@ export function Dropdown({ value, options, onChange, placeholder, width = 230, s
       setOpen(false);
     };
     const onKey = e => { if (e.key === "Escape") setOpen(false); };
-    const close = () => setOpen(false);
+    // Scrollen INNERHALB der Liste darf nicht schließen — vorher hat der
+    // Handler jedes Scroll-Ereignis abgefangen, auch das eigene.
+    const onScroll = e => { if (popRef.current?.contains(e.target)) return; setOpen(false); };
+    const onResize = () => setOpen(false);
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
-    window.addEventListener("resize", close);
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onScroll, true);
     return () => {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", close);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onScroll, true);
     };
   }, [open]);
 
@@ -298,6 +301,7 @@ export function Dropdown({ value, options, onChange, placeholder, width = 230, s
           background: "rgba(13,13,13,0.98)", backdropFilter: "blur(20px)",
           border: "1px solid rgba(212,175,55,0.22)", borderRadius: 11,
           boxShadow: "0 20px 50px rgba(0,0,0,0.75)", padding: 5,
+          overscrollBehavior: "contain",   // am Listenende nicht auf die Seite durchreichen
         }} className="vsx-scroll">
           {search && (
             <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="…"
