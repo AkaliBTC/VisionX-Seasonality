@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { apiFetch } from "./access";
 import { MARKETS, hasMarket, marketSectors, marketMembers, buildComposite, compositeId, SECTOR_LABELS } from "./markets";
-import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
+import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient, Dropdown } from "./ui";
 import { createPortal } from "react-dom";
 import { SPX_BY_SECTOR } from "./constituents";
 
@@ -1145,20 +1145,16 @@ export default function RRG({ lang = "de" }) {
             <span style={{ fontSize: 8, letterSpacing: "0.2em", color: "#666", fontFamily: "'Montserrat', sans-serif", fontWeight: 700 }}>
               {T.market}
             </span>
-            <select value={country || ""}
-              onChange={e => {
-                const v = e.target.value || null;
-                setCountry(v); setDrill(null); setHovered(null); setOffset(0); setPlaying(false);
-              }}
-              style={{ ...pill(Boolean(country)), padding: "7px 12px", fontSize: 9.5, letterSpacing: "0.1em",
-                cursor: "pointer", appearance: "none", minWidth: 190 }}>
-              <option value="">{T.allCountries}</option>
-              {Object.entries(MARKETS).map(([etf, m]) => (
-                <option key={etf} value={etf}>
-                  {m.code} · {lang === "en" ? m.nameEn : m.name} ({m.benchLabel})
-                </option>
-              ))}
-            </select>
+            <Dropdown value={country} placeholder={T.allCountries} width={218}
+              options={[
+                { value: null, label: T.allCountries },
+                ...Object.entries(MARKETS).map(([etf, m]) => ({
+                  value: etf, code: m.code,
+                  label: lang === "en" ? m.nameEn : m.name,
+                  hint: m.benchLabel,
+                })),
+              ]}
+              onChange={v => { setCountry(v); setDrill(null); setHovered(null); setOffset(0); setPlaying(false); }} />
 
             {country && (
               <>

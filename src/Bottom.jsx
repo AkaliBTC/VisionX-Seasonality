@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { apiFetch } from "./access";
-import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
+import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient, Dropdown } from "./ui";
 import {
   VSX_STOCKS, VSX_STOCK_SECTOR, VSX_CRYPTO,
   VSX_COMMODITY_SYMBOLS, VSX_FOREX_SYMBOLS, VSX_INDEX_SYMBOLS, VSX_ETFS, VSX_LABELS,
 } from "./vsxTickers";
 import { SPX_BY_SECTOR, SPX_ALL, SPX_SECTOR_OF, DAX40, MDAX, DE_ALL, DE_SECTOR_OF } from "./constituents";
+import { MARKETS, marketMembers, marketSectors } from "./markets";
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · BOTTOM RADAR
@@ -54,6 +55,14 @@ Object.entries(SECTORS).forEach(([etf, s]) => {
 Object.entries(SPX_SECTOR_OF).forEach(([sym, sec]) => { if (!SECTOR_OF[sym]) SECTOR_OF[sym] = sec; });
 Object.entries(DE_SECTOR_OF).forEach(([sym, sec]) => { if (!SECTOR_OF[sym]) SECTOR_OF[sym] = sec; });
 Object.entries(VSX_STOCK_SECTOR).forEach(([sym, sec]) => { if (!SECTOR_OF[sym]) SECTOR_OF[sym] = sec; });
+
+// Ländermärkte: jeder Titel bekommt sein SPDR-Kürzel, damit der bestehende
+// Sektorfilter unverändert auch für DAX, NIFTY, Nikkei & Co. greift.
+Object.values(MARKETS).forEach(m => {
+  Object.entries(m.sectors).forEach(([sec, syms]) => {
+    syms.forEach(sym => { if (!SECTOR_OF[sym]) SECTOR_OF[sym] = sec; });
+  });
+});
 
 const SECTOR_COLORS = {
   XLK: "#63b6ff", XLF: "#22c55e", XLV: "#f472b6", XLY: "#a855f7",
@@ -338,7 +347,7 @@ const T = {
     score: "Score", phase: "Phase", price: "Kurs", dd: "Drawdown", rsi: "RSI-9",
     ma: "vs MA200", vol: "Vol-Spike", z: "Z-Score", pos: "52W-Pos", streak: "Rote Tage",
     signals: "SIGNALE", summary: "RESÜMEE", turning: "STABILISIERT",
-    sector: "Sektor", allSectors: "ALLE", filter: "SEKTOR-FILTER", tf: "TIMEFRAME",
+    sector: "Sektor", allSectors: "ALLE", filter: "SEKTOR-FILTER", tf: "TIMEFRAME", market: "LÄNDERMARKT",
     d1: "1D", d4: "4D", w2: "2W", m1: "1M", combined: "KOMB.", align: "Confluence",
     alignHint: "Übereinstimmung aller Zeitebenen — hohe Werte heißen: 1D, 4D, 2W und 1M zeigen dasselbe Bild",
     weights: "Gewichtung 4D 40 % · 1D 25 % · 2W 20 % · 1M 15 %", onlyTurning: "NUR STABILISIERT",
@@ -356,7 +365,7 @@ const T = {
     score: "Score", phase: "Phase", price: "Price", dd: "Drawdown", rsi: "RSI-9",
     ma: "vs MA200", vol: "Vol Spike", z: "Z-Score", pos: "52W Pos", streak: "Down Days",
     signals: "SIGNALS", summary: "SUMMARY", turning: "STABILISING",
-    sector: "Sector", allSectors: "ALL", filter: "SECTOR FILTER", tf: "TIMEFRAME",
+    sector: "Sector", allSectors: "ALL", filter: "SECTOR FILTER", tf: "TIMEFRAME", market: "COUNTRY MARKET",
     d1: "1D", d4: "4D", w2: "2W", m1: "1M", combined: "COMB.", align: "Confluence",
     alignHint: "Agreement across all timeframes — high values mean 1D, 4D, 2W and 1M show the same picture",
     weights: "Weighting 4D 40% · 1D 25% · 2W 20% · 1M 15%", onlyTurning: "TURNING ONLY",
@@ -385,6 +394,7 @@ export default function Bottom({ lang = "de" }) {
   const [sort, setSort] = useState({ key: "score", dir: "desc" });
   const [detail, setDetail] = useState(null);
   const [secFilter, setSecFilter] = useState(null);      // null = alle
+  const [country, setCountry] = useState(null);          // gewählter Ländermarkt
   const [tfView, setTfView] = useState("combined");      // "combined" | "d4" | "d1"
   const [onlyTurning, setOnlyTurning] = useState(false);
   const [cmcMeta, setCmcMeta] = useState({});
@@ -554,13 +564,26 @@ export default function Bottom({ lang = "de" }) {
             <button style={pill(true)} onClick={addTickers}>{t.add}</button>
             <div style={{ width: 1, height: 22, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)" }} />
             {Object.entries(PRESETS).map(([name, syms]) => (
-              <button key={name} style={pill(false)} onClick={() => { setFailed([]); setList([...syms]); }}>{name}</button>
+              <button key={name} style={pill(false)} onClick={() => { setFailed([]); setCountry(null); setList([...syms]); }}>{name}</button>
             ))}
+            <Dropdown value={country} placeholder={t.market} width={196}
+              options={[
+                { value: null, label: t.market },
+                ...Object.entries(MARKETS).map(([etf, m]) => ({
+                  value: etf, code: m.code,
+                  label: lang === "en" ? m.nameEn : m.name,
+                  hint: m.benchLabel,
+                })),
+              ]}
+              onChange={v => {
+                setCountry(v); setSecFilter(null); setFailed([]); setDetail(null);
+                setList(v ? marketMembers(v) : []);
+              }} />
             {Object.entries(CMC_PRESETS).map(([name, lim]) => (
               <button key={name} style={{ ...pill(false), borderColor: "rgba(212,175,55,0.25)", color: "#b99c64" }}
                 onClick={() => loadCmc(lim)} title="Universum live von CoinMarketCap">◆ {name}</button>
             ))}
-            <button style={pill(false)} onClick={() => { setList([]); setFailed([]); setDetail(null); }}>{t.clear}</button>
+            <button style={pill(false)} onClick={() => { setList([]); setFailed([]); setDetail(null); setCountry(null); setSecFilter(null); }}>{t.clear}</button>
           </div>
         </div>
 

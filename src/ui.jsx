@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from "react";
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · DESIGN SYSTEM
 //  Design-Sprache aus dem VSX Portfolio Tracker übernommen:
@@ -203,6 +204,83 @@ export function Ambient({ tint = "rgba(99,182,255,0.03)" }) {
         background: "radial-gradient(circle, rgba(212,175,55,0.055), transparent 62%)", filter: "blur(60px)" }} />
       <div style={{ position: "absolute", bottom: -340, left: "-12%", width: 940, height: 940, borderRadius: "50%",
         background: `radial-gradient(circle, ${tint}, transparent 62%)`, filter: "blur(70px)" }} />
+    </div>
+  );
+}
+
+// ── DROPDOWN ─────────────────────────────────────────────────────────────────
+// Ein natives <select> lässt sich nicht stylen — die Optionsliste kommt vom
+// Betriebssystem, weiß mit Systemschrift, und goldener Text darauf ist
+// unlesbar. Deshalb ein eigenes Popover.
+export function Dropdown({ value, options, onChange, placeholder, width = 230 }) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = e => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    const onKey = e => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+
+  const current = options.find(o => o.value === value);
+
+  return (
+    <div ref={boxRef} style={{ position: "relative", display: "inline-block" }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+          minWidth: width, padding: "7px 12px", borderRadius: 9, cursor: "pointer",
+          background: value ? "linear-gradient(135deg, rgba(212,175,55,0.16), rgba(212,175,55,0.05))" : "rgba(255,255,255,0.02)",
+          border: `1px solid ${value ? "rgba(212,175,55,0.5)" : "rgba(255,255,255,0.09)"}`,
+          color: value ? "#f8e49b" : "#8a8a8a",
+          fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em",
+          textTransform: "uppercase", textAlign: "left",
+        }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {current ? current.label : placeholder}
+        </span>
+        <span style={{ fontSize: 7, opacity: 0.7, transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }}>▼</span>
+      </button>
+
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 90,
+          minWidth: width + 30, maxHeight: 340, overflowY: "auto",
+          background: "rgba(14,14,14,0.97)", backdropFilter: "blur(18px)",
+          border: "1px solid rgba(212,175,55,0.22)", borderRadius: 11,
+          boxShadow: "0 18px 46px rgba(0,0,0,0.7)", padding: 5,
+        }} className="vsx-scroll">
+          {options.map(o => {
+            const active = o.value === value;
+            return (
+              <div key={o.value ?? "__none"} role="button"
+                onClick={() => { onChange(o.value); setOpen(false); }}
+                style={{
+                  display: "flex", alignItems: "baseline", gap: 9, padding: "8px 11px",
+                  borderRadius: 7, cursor: "pointer",
+                  background: active ? "rgba(212,175,55,0.14)" : "transparent",
+                  color: active ? "#f8e49b" : "#c9c9c9",
+                  fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, fontWeight: 600, letterSpacing: "0.1em",
+                }}
+                onMouseEnter={e => { if (!active) e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
+                onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}>
+                <span style={{ minWidth: 30, color: active ? C.gold : "#7f7f7f", fontFamily: "'DM Mono', monospace", fontSize: 9 }}>
+                  {o.code || ""}
+                </span>
+                <span style={{ flex: 1, textTransform: "uppercase" }}>{o.label}</span>
+                {o.hint && (
+                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 8.5, color: "#5f5f5f", letterSpacing: "0.04em" }}>
+                    {o.hint}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
