@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { apiFetch } from "./access";
-import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
+import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient, Modal } from "./ui";
 import { evaluate, lightFor, LIGHTS, CATEGORY_LIST, benchFor } from "./scoring";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -321,7 +321,7 @@ export default function Fundamentals({ lang = "de" }) {
           </div>
           {loading && <span style={{ fontSize: 10, color: GOLD, fontFamily: "'DM Mono', monospace", letterSpacing: "0.14em" }}>LOADING…</span>}
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            <button style={pill(false)} onClick={exportCsv}>{L.csv}</button>
+            <button className="vsx-btn" style={pill(false)} onClick={exportCsv}>{L.csv}</button>
           </div>
         </div>
         <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11, color: "#b99c64", letterSpacing: "0.04em", marginBottom: 16 }}>
@@ -330,7 +330,7 @@ export default function Fundamentals({ lang = "de" }) {
         </div>
 
         {/* EINGABE */}
-        <div style={{ ...glass, padding: "14px 18px 12px", marginBottom: 14 }}>
+        <div className="vsx-lift" style={{ ...glass, padding: "14px 18px 12px", marginBottom: 14 }}>
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
             <div style={{ position: "relative", flex: "1 1 300px" }}>
               <input value={input} onChange={e => setInput(e.target.value.toUpperCase())}
@@ -347,10 +347,10 @@ export default function Fundamentals({ lang = "de" }) {
                 fontFamily: "'Montserrat', sans-serif", fontSize: 7.5, fontWeight: 700, letterSpacing: "0.16em",
                 color: "#4a4a4a", pointerEvents: "none" }}>↵ ENTER</span>
             </div>
-            <button style={pill(true)} onClick={addTickers}>+ ADD</button>
+            <button className="vsx-btn" style={pill(true)} onClick={addTickers}>+ ADD</button>
             <div style={{ width: 1, height: 22, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)" }} />
-            <button style={pill(false)} onClick={() => setList([...DEFAULT_LIST])}>{L.defaults}</button>
-            <button style={pill(false)} onClick={() => { setList([]); setFailed([]); setDetail(null); }}>{L.clearAll}</button>
+            <button className="vsx-btn" style={pill(false)} onClick={() => setList([...DEFAULT_LIST])}>{L.defaults}</button>
+            <button className="vsx-btn" style={pill(false)} onClick={() => { setList([]); setFailed([]); setDetail(null); }}>{L.clearAll}</button>
             {loading && (
               <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8,
                 fontFamily: "'DM Mono', monospace", fontSize: 9.5, color: GOLD, letterSpacing: "0.14em" }}>
@@ -390,10 +390,10 @@ export default function Fundamentals({ lang = "de" }) {
         </div>
 
         {error && (
-          <div style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "14px 18px", marginBottom: 14, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#f87171" }}>{error}</div>
+          <div className="vsx-lift" style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "14px 18px", marginBottom: 14, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#f87171" }}>{error}</div>
         )}
         {failed.length > 0 && (
-          <div style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12,
+          <div className="vsx-lift" style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12,
             display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
             <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700,
               letterSpacing: "0.18em", color: "#facc15" }}>{L.notFound}</span>
@@ -410,7 +410,7 @@ export default function Fundamentals({ lang = "de" }) {
 
         {/* AMPEL-RESÜMEE */}
         {rows.length > 0 && (
-          <div style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 18, padding: "14px 20px", marginBottom: 14 }}>
+          <div className="vsx-lift" style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 18, padding: "14px 20px", marginBottom: 14 }}>
             <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.2em", color: "#fdfdfd" }}>{L.resume}</span>
             {[LIGHTS.green, LIGHTS.yellow, LIGHTS.red, LIGHTS.grey].map(l => {
               const n = summary[l.id];
@@ -437,7 +437,7 @@ export default function Fundamentals({ lang = "de" }) {
 
         {/* GRUPPEN-TABS */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 14 }}>
-          <button style={pill(group === "rating")} onClick={() => setGroup("rating")}>◆ RATING</button>
+          <button className="vsx-btn" style={pill(group === "rating")} onClick={() => setGroup("rating")}>◆ RATING</button>
           <div style={{ width: 1, height: 22, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)", margin: "0 3px" }} />
           {GROUPS.map(g => (
             <button key={g.id} style={pill(group === g.id)} onClick={() => setGroup(g.id)}>{catLabel(g)}</button>
@@ -445,13 +445,14 @@ export default function Fundamentals({ lang = "de" }) {
         </div>
 
         {/* TABELLE */}
-        <div className="vsx-fund-scroll" style={{ ...glass, padding: "16px 18px 14px", overflowX: "auto" }} className="vsx-scroll">
+        <div className="vsx-scroll" style={{ ...glass, padding: "0 0 6px", overflowX: "auto",
+          maxHeight: "min(72vh, 900px)", overflowY: "auto" }}>
           {rows.length === 0 && !loading ? (
             <div style={{ padding: 80, textAlign: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.3em", color: "#262626" }}>
               TICKER EINGEBEN
             </div>
           ) : (
-            <table className="vsx-fund-table" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
+            <table className="vsx-fund-table vsx-table" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
               <thead>
                 <tr style={{ ...tableHead }}>
                   {th("symbol", "Symbol", "left")}
@@ -544,17 +545,16 @@ export default function Fundamentals({ lang = "de" }) {
         </div>
 
         {/* DETAIL-PANEL */}
-        {detail && (
-          <div style={{ ...glass, marginTop: 16, padding: "20px 24px 18px" }}>
-            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
-              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 24, letterSpacing: "0.14em", color: "#fdfdfd" }}>{detail.symbol}</span>
-              <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 12, color: "#c9c9c9" }}>{detail.name}</span>
-              {detail.score != null && (
-                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: scoreColor(detail.score) }}>VSX SCORE {detail.score}</span>
-              )}
-              <button onClick={() => setDetail(null)}
-                style={{ marginLeft: "auto", background: "none", border: "none", color: "#444", cursor: "pointer", fontSize: 16 }}>✕</button>
-            </div>
+        <Modal open={Boolean(detail)} onClose={() => setDetail(null)}
+          title={detail?.symbol}
+          subtitle={detail?.name}
+          badge={detail?.score != null && (
+            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: scoreColor(detail.score),
+              border: `1px solid ${scoreColor(detail.score)}44`, borderRadius: 8, padding: "5px 11px", letterSpacing: "0.1em" }}>
+              VSX SCORE {detail.score}
+            </span>
+          )}>
+          {detail && (<>
             <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, color: "#666", letterSpacing: "0.1em", marginBottom: 16 }}>
               {[detail.sector, detail.industry, detail.currency, detail.recommendation?.toUpperCase()].filter(Boolean).join(" · ")}
               {detail.analystCount ? ` · ${detail.analystCount} ANALYSTS` : ""}
@@ -635,8 +635,8 @@ export default function Fundamentals({ lang = "de" }) {
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          </>)}
+        </Modal>
 
         {explain && GLOSSARY[explain] && (
           <div onClick={() => setExplain(null)}

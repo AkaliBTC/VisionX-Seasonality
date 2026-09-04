@@ -1169,7 +1169,7 @@ export default function RRG({ lang = "de" }) {
               </button>
             ))}
             <div style={divider} />
-            <button style={{ ...pill(false), fontSize: 9 }}
+            <button className="vsx-btn" style={{ ...pill(false), fontSize: 9 }}
               onClick={() => { setCountry(null); setDrill(null); setOffset(0); setPlaying(false); }}>
               ← {T.allCountries}
             </button>
@@ -1190,7 +1190,7 @@ export default function RRG({ lang = "de" }) {
         )}
 
         {/* CONTROLS */}
-        <div style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 11, padding: "11px 16px", marginBottom: 14 }}>
+        <div className="vsx-lift" style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 11, padding: "11px 16px", marginBottom: 14 }}>
           <button onClick={() => { if (playing) { setPlaying(false); } else { setOffset(o => o > 0 ? o : MAX_OFFSET); setPlaying(true); } }}
             style={{ ...pill(playing), display: "flex", alignItems: "center", gap: 8, background: playing ? "linear-gradient(135deg, rgba(212,175,55,0.2), rgba(212,175,55,0.09))" : "linear-gradient(135deg, #d4af37, #b8963c)", color: playing ? "#f8e49b" : "#0a0a0a", border: "1px solid rgba(212,175,55,0.6)" }}>
             {playing ? T.pause : T.animate}
@@ -1203,25 +1203,25 @@ export default function RRG({ lang = "de" }) {
             <span style={{ fontSize: 9.5, color: "#f8e49b", fontFamily: "'DM Mono', monospace", letterSpacing: "0.08em" }}>−{Math.round(offset)}{interval_ === "1wk" ? "W" : "D"}</span>
           )}
           <div style={divider} />
-          <button style={pill(interval_ === "1d")} onClick={() => { setInterval_("1d"); setOffset(0); setPlaying(false); }}>{T.daily}</button>
-          <button style={pill(interval_ === "1wk")} onClick={() => { setInterval_("1wk"); setOffset(0); setPlaying(false); }}>{T.weekly}</button>
+          <button className="vsx-btn" style={pill(interval_ === "1d")} onClick={() => { setInterval_("1d"); setOffset(0); setPlaying(false); }}>{T.daily}</button>
+          <button className="vsx-btn" style={pill(interval_ === "1wk")} onClick={() => { setInterval_("1wk"); setOffset(0); setPlaying(false); }}>{T.weekly}</button>
           <div style={divider} />
           <span style={{ fontSize: 9, letterSpacing: "0.2em", color: "#888", fontFamily: "'Montserrat', sans-serif", fontWeight: 700 }}>
             TAIL <span style={{ color: "#f8e49b" }}>{tailLen}</span>{interval_ === "1wk" ? "W" : "D"}
           </span>
           <input type="range" min={3} max={10} value={tailLen} onChange={e => setTailLen(+e.target.value)}
             style={{ width: 100, accentColor: GOLD }} />
-          <button style={pill(showTails)} onClick={() => setShowTails(v => !v)} title={T.tipTails}>{T.tails}</button>
+          <button className="vsx-btn" style={pill(showTails)} onClick={() => setShowTails(v => !v)} title={T.tipTails}>{T.tails}</button>
           <div style={divider} />
-          <button style={pill(scaleMode === "norm")} onClick={() => setScaleMode("norm")}
+          <button className="vsx-btn" style={pill(scaleMode === "norm")} onClick={() => setScaleMode("norm")}
             title={T.tipNorm}>{T.relative}</button>
-          <button style={pill(scaleMode === "abs")} onClick={() => setScaleMode("abs")}
+          <button className="vsx-btn" style={pill(scaleMode === "abs")} onClick={() => setScaleMode("abs")}
             title={T.tipAbs}>{T.absolute}</button>
           {drill && !market && (
             <>
               <div style={divider} />
-              <button style={pill(benchMode === "SECTOR")} onClick={() => setBenchMode("SECTOR")}>vs {drill}</button>
-              <button style={pill(benchMode === "TOP")} onClick={() => setBenchMode("TOP")}>vs {preset.bench}</button>
+              <button className="vsx-btn" style={pill(benchMode === "SECTOR")} onClick={() => setBenchMode("SECTOR")}>vs {drill}</button>
+              <button className="vsx-btn" style={pill(benchMode === "TOP")} onClick={() => setBenchMode("TOP")}>vs {preset.bench}</button>
             </>
           )}
           {(drill || preset.packKey) && (
@@ -1245,20 +1245,20 @@ export default function RRG({ lang = "de" }) {
             style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)", color: "#f8e49b", fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.12em", padding: "8px 14px", borderRadius: 10, outline: "none", width: 105, textTransform: "uppercase" }}
             onFocus={e => e.currentTarget.style.borderColor = "rgba(212,175,55,0.5)"}
             onBlur={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.09)"} />
-          <button style={{ ...pill(true), padding: "9px 15px" }} onClick={addSymbol}>{T.add}</button>
+          <button className="vsx-btn" style={{ ...pill(true), padding: "9px 15px" }} onClick={addSymbol}>{T.add}</button>
           {hasEdits && (
-            <button style={{ ...pill(false), color: "#777" }} onClick={resetView}>↺ {T.reset}</button>
+            <button className="vsx-btn" style={{ ...pill(false), color: "#777" }} onClick={resetView}>↺ {T.reset}</button>
           )}
           {loading && <span style={{ marginLeft: "auto", fontSize: 10, color: GOLD, fontFamily: "'DM Mono', monospace", letterSpacing: "0.14em" }}>LOADING…</span>}
         </div>
 
         {error && (
-          <div style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "14px 18px", marginBottom: 14, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#f87171" }}>
+          <div className="vsx-lift" style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "14px 18px", marginBottom: 14, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#f87171" }}>
             {error}
           </div>
         )}
         {cmcError && (
-          <div style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12,
+          <div className="vsx-lift" style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12,
             display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
             <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#facc15" }}>COINMARKETCAP</span>
             <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#8f8f8f" }}>{cmcError}</span>
@@ -1268,7 +1268,7 @@ export default function RRG({ lang = "de" }) {
           </div>
         )}
         {limited.length > 0 && !error && (
-          <div style={{ ...glass, borderColor: "rgba(250,204,21,0.30)", padding: "10px 16px", marginBottom: 12,
+          <div className="vsx-lift" style={{ ...glass, borderColor: "rgba(250,204,21,0.30)", padding: "10px 16px", marginBottom: 12,
             display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
             <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#facc15" }}>
               {T.rateLimited}
@@ -1276,7 +1276,7 @@ export default function RRG({ lang = "de" }) {
             <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#8f8f8f" }}>
               {items.length}/{universe.length} {T.loadedOf} · {limited.length}× 429
             </span>
-            <button style={{ ...pill(false), fontSize: 9 }} onClick={() => { cacheRef.current = {}; setRaw({}); setLimited([]); setReloadKey(k => k + 1); }}>
+            <button className="vsx-btn" style={{ ...pill(false), fontSize: 9 }} onClick={() => { cacheRef.current = {}; setRaw({}); setLimited([]); setReloadKey(k => k + 1); }}>
               ↻ RETRY
             </button>
           </div>
@@ -1289,7 +1289,7 @@ export default function RRG({ lang = "de" }) {
 
         {/* BENCH-CHART + RRG + RANKING */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "stretch", marginBottom: 16 }}>
-          <div style={{ ...glass, padding: "12px 14px 4px", flex: "1 1 760px", minWidth: 360 }}>
+          <div className="vsx-lift" style={{ ...glass, padding: "12px 14px 4px", flex: "1 1 760px", minWidth: 360 }}>
             {benchSeries && benchSeries.length > 10 && (
               <div style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", marginBottom: 6 }}>
                 <BenchChart series={benchSeries.slice(-Math.min(benchSeries.length, MAX_OFFSET + tailLen))}
@@ -1326,7 +1326,7 @@ export default function RRG({ lang = "de" }) {
           </div>
 
           {/* RANKING rechts */}
-          <div style={{ ...glass, padding: "16px 16px 12px", flex: "1 1 360px", minWidth: 320, maxWidth: 480, maxHeight: 760, display: "flex", flexDirection: "column" }}>
+          <div className="vsx-lift" style={{ ...glass, padding: "16px 16px 12px", flex: "1 1 360px", minWidth: 320, maxWidth: 480, maxHeight: 760, display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 11 }}>
               <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.2em", color: "#fdfdfd" }}>{T.ranking}</span>
               <span style={{ fontSize: 8, color: "#4a4a4a", letterSpacing: "0.16em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600 }}>{items.length} {T.titles}</span>
@@ -1378,7 +1378,7 @@ export default function RRG({ lang = "de" }) {
 
         {/* DETAIL-TABELLE (StockCharts-Style) */}
         {items.length > 0 && (
-          <div style={{ ...glass, padding: "18px 20px 14px" }}>
+          <div className="vsx-lift" style={{ ...glass, padding: "18px 20px 14px" }}>
             <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.2em", color: "#fdfdfd", marginBottom: 12 }}>
               {T.memberDetail}
             </div>

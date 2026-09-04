@@ -66,6 +66,8 @@ export const btnPrimary = {
   boxShadow: "0 4px 16px rgba(212,175,55,0.22)", transition: "all 0.2s",
 };
 
+// Hinweis: Buttons, die btnGhost nutzen, sollten zusätzlich className="vsx-btn"
+// tragen — dann greifen Lichtkante, Anheben und Fokusring aus SURFACE_CSS.
 export const btnGhost = (active = false) => ({
   padding: "9px 16px", borderRadius: 9, cursor: "pointer",
   background: active ? "rgba(212,175,55,0.1)" : "rgba(255,255,255,0.02)",
@@ -161,8 +163,55 @@ export const SURFACE_CSS = `
   .vsx-table tbody tr:nth-child(4n+1) { background: rgba(255,255,255,0.012); }
   .vsx-table tbody tr:nth-child(4n+1):hover { background: rgba(212,175,55,0.05); }
 
+
+  /* ── INTERAKTION ────────────────────────────────────────────────────────── */
+  /* Alles hier ist Hover- und Fokus-Rückmeldung. Keine Bewegung ohne Anlass:
+     nichts animiert von selbst, alles reagiert nur auf den Zeiger. */
+
+  /* Buttons: Lichtkante wandert einmal durch, wenn man draufgeht */
+  .vsx-btn { position: relative; overflow: hidden; transition:
+    border-color .22s ease, color .22s ease, background .22s ease,
+    transform .22s cubic-bezier(.22,1,.36,1), box-shadow .22s ease; }
+  .vsx-btn::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0;
+    background: linear-gradient(105deg, transparent 30%, rgba(248,228,155,0.16) 48%, transparent 66%);
+    background-size: 220% 100%; background-position: -60% 0;
+  }
+  .vsx-btn:hover::after { opacity: 1; transition: background-position .6s ease, opacity .2s ease; background-position: 160% 0; }
+  .vsx-btn:hover { transform: translateY(-1px); border-color: rgba(212,175,55,0.42); color: #f8e49b; }
+  .vsx-btn:active { transform: translateY(0) scale(0.985); }
+
+  /* Panels: heben sich beim Überfahren minimal an */
+  .vsx-lift { transition: transform .3s cubic-bezier(.22,1,.36,1), box-shadow .3s ease, border-color .3s ease; }
+  .vsx-lift:hover { transform: translateY(-2px);
+    box-shadow: 0 16px 44px rgba(0,0,0,0.45), 0 0 0 1px rgba(212,175,55,0.10) inset;
+    border-color: rgba(212,175,55,0.22); }
+
+  /* Zeilen: Zellen rücken beim Überfahren minimal nach rechts */
+  .vsx-table tbody tr td { transition: transform .18s cubic-bezier(.22,1,.36,1), color .18s ease; }
+  .vsx-table tbody tr:hover td:first-child { transform: translateX(3px); }
+  .vsx-table tbody tr { cursor: pointer; }
+
+  /* Anklickbare Kopfzellen zeigen das auch */
+  .vsx-table thead th { transition: color .2s ease; }
+  .vsx-table thead th:hover { color: #c9b26a; }
+
+  /* Werte, die sich gerade geändert haben, blitzen kurz auf */
+  @keyframes vsxTick { 0% { color: #f8e49b; text-shadow: 0 0 12px rgba(212,175,55,0.5); } 100% { } }
+  .vsx-tick { animation: vsxTick 0.9s ease-out; }
+
+  /* Fokus sichtbar halten — Tastaturbedienung soll nicht schlechter aussehen */
+  .vsx-btn:focus-visible, .vsx-table tbody tr:focus-visible {
+    outline: 1px solid rgba(212,175,55,0.55); outline-offset: 2px;
+  }
+
+  /* Kennzahlen: sanftes Aufleuchten beim Überfahren einer Kachel */
+  .vsx-kpi { transition: background .25s ease, border-color .25s ease; }
+  .vsx-kpi:hover { background: rgba(212,175,55,0.045); border-color: rgba(212,175,55,0.20); }
+
   @media (prefers-reduced-motion: reduce) {
-    .vsx-fade, .vsx-stagger > *, .vsx-shimmer { animation: none !important; }
+    .vsx-fade, .vsx-stagger > *, .vsx-shimmer, .vsx-tick { animation: none !important; }
+    .vsx-btn, .vsx-lift, .vsx-table tbody tr td { transition: none !important; transform: none !important; }
   }
 `;
 

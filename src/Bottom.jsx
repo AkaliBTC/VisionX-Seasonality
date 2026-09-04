@@ -578,7 +578,7 @@ export default function Bottom({ lang = "de" }) {
         <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11, color: "#b99c64", letterSpacing: "0.04em", marginBottom: 16 }}>{t.sub}</div>
 
         {/* EINGABE + PRESETS */}
-        <div style={{ ...glass, padding: "14px 18px 12px", marginBottom: 14 }}>
+        <div className="vsx-lift" style={{ ...glass, padding: "14px 18px 12px", marginBottom: 14 }}>
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
             <div style={{ position: "relative", flex: "1 1 280px" }}>
               <input value={input} onChange={e => setInput(e.target.value.toUpperCase())}
@@ -591,7 +591,7 @@ export default function Bottom({ lang = "de" }) {
                 onBlur={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.09)"; }} />
               <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", fontFamily: "'Montserrat', sans-serif", fontSize: 7.5, fontWeight: 700, letterSpacing: "0.16em", color: "#4a4a4a", pointerEvents: "none" }}>↵</span>
             </div>
-            <button style={pill(true)} onClick={addTickers}>{t.add}</button>
+            <button className="vsx-btn" style={pill(true)} onClick={addTickers}>{t.add}</button>
             <div style={{ width: 1, height: 22, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)" }} />
 
             {/* EIN Auswahlfeld für alles. Vorher standen hier vierzehn Buttons
@@ -606,7 +606,7 @@ export default function Bottom({ lang = "de" }) {
                 setCountry(null); setList([...(PRESETS[v] || [])]);
               }} />
 
-            <button style={pill(false)}
+            <button className="vsx-btn" style={pill(false)}
               onClick={() => { setList([]); setFailed([]); setDetail(null); setCountry(null); setUniverse(null); setSecFilter(null); }}>
               {t.clear}
             </button>
@@ -615,7 +615,7 @@ export default function Bottom({ lang = "de" }) {
 
         {/* FILTER */}
         {rows.length > 0 && (
-          <div style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 9, padding: "12px 18px", marginBottom: 14 }}>
+          <div className="vsx-lift" style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 9, padding: "12px 18px", marginBottom: 14 }}>
             <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#777" }}>{t.tf}</span>
             {[["combined", t.combined], ["d1", t.d1], ["d4", t.d4], ["w2", t.w2], ["m1", t.m1]].map(([id, lbl]) => (
               <button key={id} style={pill(tfView === id)} onClick={() => setTfView(id)}
@@ -623,7 +623,7 @@ export default function Bottom({ lang = "de" }) {
             ))}
             <div style={{ width: 1, height: 22, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)" }} />
             <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#777" }}>{t.filter}</span>
-            <button style={{ ...pill(!secFilter), padding: "6px 12px", fontSize: 8.5 }} onClick={() => setSecFilter(null)}>{t.allSectors}</button>
+            <button className="vsx-btn" style={{ ...pill(!secFilter), padding: "6px 12px", fontSize: 8.5 }} onClick={() => setSecFilter(null)}>{t.allSectors}</button>
             {presentSectors.map(e => (
               <button key={e} onClick={() => setSecFilter(s => s === e ? null : e)}
                 title={SECTORS[e]?.name}
@@ -631,7 +631,7 @@ export default function Bottom({ lang = "de" }) {
                   color: secFilter === e ? "#f8e49b" : `${SECTOR_COLORS[e]}aa` }}>{e}</button>
             ))}
             <div style={{ width: 1, height: 22, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)" }} />
-            <button style={{ ...pill(onlyTurning), color: onlyTurning ? "#22c55e" : "#777" }}
+            <button className="vsx-btn" style={{ ...pill(onlyTurning), color: onlyTurning ? "#22c55e" : "#777" }}
               onClick={() => setOnlyTurning(v => !v)}>▲ {t.onlyTurning}</button>
             <span style={{ marginLeft: "auto", fontFamily: "'DM Mono', monospace", fontSize: 9.5, color: "#5a5a5a", letterSpacing: "0.08em" }}>
               {filtered.length} / {rows.length}
@@ -640,10 +640,10 @@ export default function Bottom({ lang = "de" }) {
         )}
 
         {error && (
-          <div style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "13px 18px", marginBottom: 12, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#f87171" }}>{error}</div>
+          <div className="vsx-lift" style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "13px 18px", marginBottom: 12, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#f87171" }}>{error}</div>
         )}
         {cmcError && (
-          <div style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12,
+          <div className="vsx-lift" style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12,
             display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
             <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#facc15" }}>COINMARKETCAP</span>
             <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#8f8f8f" }}>{cmcError}</span>
@@ -652,7 +652,7 @@ export default function Bottom({ lang = "de" }) {
           </div>
         )}
         {failed.length > 0 && (
-          <div style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+          <div className="vsx-lift" style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
             <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#facc15" }}>{t.notFound}</span>
             <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#8f8f8f" }}>{failed.join(" · ")}</span>
             <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, color: "#5a5a5a" }}>{t.hint}</span>
@@ -662,7 +662,7 @@ export default function Bottom({ lang = "de" }) {
 
         {/* PHASEN-RESÜMEE */}
         {rows.length > 0 && (
-          <div style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 18, padding: "14px 20px", marginBottom: 14 }}>
+          <div className="vsx-lift" style={{ ...glass, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 18, padding: "14px 20px", marginBottom: 14 }}>
             <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: "0.2em", color: "#fdfdfd" }}>{t.summary}</span>
             {PHASES.map(p => (
               <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, opacity: summary[p.id] ? 1 : 0.3 }}>

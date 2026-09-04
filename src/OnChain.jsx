@@ -1305,13 +1305,13 @@ export default function OnChain({ lang = "de" }) {
         </div>
 
         {error && (
-          <div style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "14px 18px", marginBottom: 16,
+          <div className="vsx-lift" style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "14px 18px", marginBottom: 16,
             fontFamily: F.mono, fontSize: 11, color: "#f87171" }}>{error}</div>
         )}
 
         {/* LIVE-SNAPSHOT */}
         {snap && (
-          <div style={{ ...glass, padding: "14px 22px", marginBottom: 16, display: "flex", flexWrap: "wrap", alignItems: "stretch" }}>
+          <div className="vsx-lift" style={{ ...glass, padding: "14px 22px", marginBottom: 16, display: "flex", flexWrap: "wrap", alignItems: "stretch" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 9, paddingRight: 26 }}>
               <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.green,
                 boxShadow: `0 0 8px ${C.green}`, animation: "vsxpulse 2.4s infinite" }} />
@@ -1335,7 +1335,7 @@ export default function OnChain({ lang = "de" }) {
         )}
 
         {/* ANSICHTS-TOGGLE */}
-        <div style={{ ...glass, padding: "12px 16px", marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 7, alignItems: "center" }}>
+        <div className="vsx-lift" style={{ ...glass, padding: "12px 16px", marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 7, alignItems: "center" }}>
           {VIEWS.map(v => {
             const off = v.btcOnly && !isBtc(coin);
             return (
@@ -1358,14 +1358,14 @@ export default function OnChain({ lang = "de" }) {
         </div>
 
         {/* CHART */}
-        <div style={{ ...glass, padding: "12px 8px 4px", marginBottom: 16 }}>
+        <div className="vsx-lift" style={{ ...glass, padding: "12px 8px 4px", marginBottom: 16 }}>
           {blocked ? (
             <div style={{ height: 320, display: "flex", flexDirection: "column", gap: 12, alignItems: "center", justifyContent: "center" }}>
               <span style={badge("#facc15")}>{noData && isBtc(coin) ? T.noSource : T.btcOnly}</span>
               <span style={{ fontFamily: F.ui, fontSize: 11, color: C.textMute, textAlign: "center", maxWidth: 520, lineHeight: 1.6 }}>
                 {noData && isBtc(coin) ? T.noSourceNote : T.btcNote}
               </span>
-              {!isBtc(coin) && <button style={btnGhost(false)} onClick={() => setCoin("BTC-USD")}>→ BTC</button>}
+              {!isBtc(coin) && <button className="vsx-btn" style={btnGhost(false)} onClick={() => setCoin("BTC-USD")}>→ BTC</button>}
               {missing.length > 0 && (() => {
                 const codes = [...new Set(missing.map(m => bgStatus[m]).filter(Boolean))];
                 const hint = codes.includes(401) || codes.includes(403) ? T.hint401
@@ -1397,7 +1397,7 @@ export default function OnChain({ lang = "de" }) {
         </div>
 
         {/* BESCHREIBUNG */}
-        <div style={{ ...glass, padding: "16px 22px", marginBottom: 16 }}>
+        <div className="vsx-lift" style={{ ...glass, padding: "16px 22px", marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 9, flexWrap: "wrap" }}>
             <span style={overline(C.goldDim)}>{view.label}</span>
             <span style={badge(kindBadge(viewKind).color)}>{kindBadge(viewKind).text}</span>
