@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { apiFetch } from "./access";
-import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient, Dropdown } from "./ui";
+import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient, Dropdown, Modal } from "./ui";
 import {
   VSX_STOCKS, VSX_STOCK_SECTOR, VSX_CRYPTO,
   VSX_COMMODITY_SYMBOLS, VSX_FOREX_SYMBOLS, VSX_INDEX_SYMBOLS, VSX_ETFS, VSX_LABELS,
@@ -675,13 +675,14 @@ export default function Bottom({ lang = "de" }) {
         )}
 
         {/* TABELLE */}
-        <div className="vsx-bt-scroll" style={{ ...glass, padding: "16px 18px 14px", overflowX: "auto" }} className="vsx-scroll">
+        <div className="vsx-scroll" style={{ ...glass, padding: "0 0 6px", overflowX: "auto",
+          maxHeight: "min(72vh, 900px)", overflowY: "auto" }}>
           {rows.length === 0 && !loading ? (
             <div style={{ padding: 80, textAlign: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 17, letterSpacing: "0.3em", color: "#262626" }}>—</div>
           ) : (
-            <table className="vsx-bt" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
+            <table className="vsx-bt vsx-table" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
               <thead>
-                <tr style={{ ...tableHead }}>
+                <tr style={{ ...tableHead }} className="vsx-thead">
                   {th("symbol", "Symbol", "left")}
                   {th("sector", t.sector, "left")}
                   {th("score", t.score)}
@@ -798,22 +799,16 @@ export default function Bottom({ lang = "de" }) {
         </div>
 
         {/* DETAIL */}
-        {detail && (
-          <div style={{ ...glass, marginTop: 16, padding: "20px 24px 18px" }}>
-            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14, marginBottom: 14 }}>
-              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 24, letterSpacing: "0.14em", color: "#fdfdfd" }}>
-                {detail.name || detail.symbol.replace("-USD", "")}
-              </span>
-              {detail.name && (
-                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#6a6a6a", letterSpacing: "0.06em" }}>
-                  [{detail.symbol.replace("-USD", "")}]
-                </span>
-              )}
-              <span style={{ width: 14, height: 14, borderRadius: "50%", background: detail.phase?.color, boxShadow: `0 0 11px ${detail.phase?.color}` }} />
-              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, letterSpacing: "0.16em", color: detail.phase?.color }}>{detail.phase?.[lang].label}</span>
-              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 13, color: "#e8e8e8" }}>{detail.score}<span style={{ color: "#555", fontSize: 10 }}>/100</span></span>
-              <button onClick={() => setDetail(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: "#444", cursor: "pointer", fontSize: 16 }}>✕</button>
-            </div>
+        <Modal open={Boolean(detail)} onClose={() => setDetail(null)}
+          title={detail?.name || detail?.symbol.replace("-USD", "")}
+          subtitle={detail?.name ? `[${detail.symbol.replace("-USD", "")}]` : null}
+          badge={detail?.phase && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 9 }}>
+              <span style={{ width: 12, height: 12, borderRadius: "50%", background: detail.phase.color, boxShadow: `0 0 11px ${detail.phase.color}` }} />
+              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, letterSpacing: "0.16em", color: detail.phase.color }}>{detail.phase[lang].label}</span>
+            </span>
+          )}>
+          {detail && (<>
             <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11.5, color: "#9a9a9a", lineHeight: 1.7, marginBottom: 18 }}>
               {detail.phase?.[lang].desc}
             </div>
@@ -887,8 +882,8 @@ export default function Bottom({ lang = "de" }) {
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          </>)}
+        </Modal>
 
         <div style={{ marginTop: 16, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
           {t.footer}

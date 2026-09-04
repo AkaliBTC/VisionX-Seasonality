@@ -2088,11 +2088,11 @@ export default function App({ nav, lang = "de" }) {
   ];
 
   return (
-    <div style={{ minHeight: "100vh", background: "radial-gradient(1100px 700px at 85% -5%, rgba(212,175,55,0.07), transparent 60%), radial-gradient(800px 550px at 8% 110%, rgba(255,255,255,0.035), transparent 60%), #121212", backgroundAttachment: "fixed", color: "#e8e8e8", fontFamily: "'Montserrat', sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: "radial-gradient(1100px 700px at 85% -5%, rgba(212,175,55,0.055), transparent 60%), radial-gradient(800px 550px at 8% 110%, rgba(255,255,255,0.022), transparent 60%), #080808", backgroundAttachment: "fixed", color: "#e8e8e8", fontFamily: "'Montserrat', sans-serif" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Bebas+Neue&family=DM+Mono:wght@300;400;500&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #121212; }
+        /* kein body-Override mehr — sonst hellt dieses Modul die ganze App auf */
 
         /* Modulkopf — identisch zu den übrigen Tabs (overline + displayTitle) */
         .module-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 20px; padding: 26px 34px 0; max-width: 1880px; margin: 0 auto; }

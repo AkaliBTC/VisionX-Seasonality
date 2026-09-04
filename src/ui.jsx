@@ -139,6 +139,28 @@ export const SURFACE_CSS = `
     background-size: 200% 100%; animation: vsxSheen 1.8s linear infinite;
   }
 
+  /* ── TABELLEN · Terminal-Anmutung ───────────────────────────────────────── */
+  /* Zahlen mit gleicher Ziffernbreite: Spalten fluchten, das Auge kann
+     Größenordnungen vergleichen statt sie zu lesen. */
+  .vsx-table { font-variant-numeric: tabular-nums; }
+  .vsx-table thead th {
+    position: sticky; top: 0; z-index: 3; padding-top: 14px; padding-bottom: 10px;
+    background: linear-gradient(180deg, rgba(16,16,16,0.99), rgba(12,12,12,0.97));
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.07);
+  }
+  .vsx-table tbody tr { transition: background 0.14s ease; }
+  .vsx-table tbody tr:hover { background: rgba(212,175,55,0.05); }
+  /* Goldene Kante links beim Überfahren — markiert die Zeile, ohne sie zu färben */
+  .vsx-table tbody tr td:first-child { position: relative; }
+  .vsx-table tbody tr:hover td:first-child::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+    background: linear-gradient(180deg, transparent, #d4af37, transparent);
+  }
+  /* Alle vier Zeilen eine minimal hellere Bahn: hilft beim Verfolgen nach rechts */
+  .vsx-table tbody tr:nth-child(4n+1) { background: rgba(255,255,255,0.012); }
+  .vsx-table tbody tr:nth-child(4n+1):hover { background: rgba(212,175,55,0.05); }
+
   @media (prefers-reduced-motion: reduce) {
     .vsx-fade, .vsx-stagger > *, .vsx-shimmer { animation: none !important; }
   }
@@ -398,3 +420,60 @@ export function Dropdown({ value, options, onChange, placeholder, width = 230, s
     </>
   );
 }
+
+// ── MODAL ────────────────────────────────────────────────────────────────────
+// Detailansichten gehören nicht unter die Tabelle, wo man erst hinscrollen muss
+// und die Zeile aus dem Blick verliert. Overlay per Portal, damit kein
+// overflow eines Panels dazwischenfunkt.
+export function Modal({ open, onClose, title, subtitle, badge: badgeNode, children, width = 1180 }) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = e => { if (e.key === "Escape") onClose?.(); };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return createPortal(
+    <div onMouseDown={e => { if (e.target === e.currentTarget) onClose?.(); }}
+      style={{
+        position: "fixed", inset: 0, zIndex: 9998, display: "flex",
+        alignItems: "flex-start", justifyContent: "center", padding: "48px 24px",
+        background: "rgba(4,4,4,0.72)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)",
+        animation: "vsxFadeIn 0.18s ease both", overflowY: "auto",
+      }}>
+      <div className="vsx-scroll" style={{
+        width: "100%", maxWidth: width, background: "rgba(13,13,13,0.97)",
+        border: "1px solid rgba(212,175,55,0.20)", borderRadius: 18,
+        boxShadow: "0 40px 120px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.03) inset",
+        animation: "vsxRise 0.26s cubic-bezier(0.22,1,0.36,1) both",
+      }}>
+        <div style={{
+          position: "sticky", top: 0, zIndex: 2, display: "flex", flexWrap: "wrap",
+          alignItems: "center", gap: 14, padding: "18px 22px",
+          borderBottom: `1px solid ${C.lineSoft}`,
+          background: "linear-gradient(180deg, rgba(20,20,20,0.98), rgba(13,13,13,0.96))",
+          borderRadius: "18px 18px 0 0", backdropFilter: "blur(20px)",
+        }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 11, minWidth: 0 }}>
+            <span style={{ fontFamily: F.display, fontSize: 24, letterSpacing: "0.14em", color: "#fdfdfd",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
+            {subtitle && (
+              <span style={{ fontFamily: F.mono, fontSize: 11, color: C.textMute, letterSpacing: "0.06em" }}>{subtitle}</span>
+            )}
+          </div>
+          {badgeNode}
+          <button onClick={onClose} title="Esc"
+            style={{ marginLeft: "auto", background: "rgba(255,255,255,0.03)", border: `1px solid ${C.line}`,
+              borderRadius: 9, color: C.textMute, cursor: "pointer", padding: "7px 13px",
+              fontFamily: F.ui, fontSize: 9, fontWeight: 700, letterSpacing: "0.16em" }}
+            className="vsx-hover-gold">ESC ✕</button>
+        </div>
+        <div style={{ padding: "20px 22px 24px" }}>{children}</div>
+      </div>
+    </div>, document.body);
+}
+
