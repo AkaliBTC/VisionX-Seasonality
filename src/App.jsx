@@ -212,17 +212,19 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg }}>
+    <div className="vsx-app" style={{ minHeight: "100vh", background: C.bg, position: "relative" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Bebas+Neue&family=DM+Mono:wght@400;500&display=swap');
         body { margin: 0; background: ${C.bg}; }
         ${GLOBAL_CSS}
       `}</style>
 
-      <Header lang={lang} setLang={setLang} clock={clock} onSignOut={access.gated ? access.signOut : null} />
-      <ModuleNav active={active} setActive={setActive} />
+      <div style={{ position: "relative", zIndex: 2 }}>
+        <Header lang={lang} setLang={setLang} clock={clock} onSignOut={access.gated ? access.signOut : null} />
+        <ModuleNav active={active} setActive={setActive} />
+      </div>
 
-      <div key={active} className="vsx-fade">
+      <div key={active} className="vsx-fade" style={{ position: "relative", zIndex: 1 }}>
         <ModuleBoundary moduleId={active}>
           {active === "seasonality" ? <Seasonality nav={null} lang={lang} /> : <M lang={lang} />}
         </ModuleBoundary>

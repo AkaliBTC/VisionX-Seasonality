@@ -2094,13 +2094,13 @@ export default function App({ nav, lang = "de" }) {
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: #121212; }
 
-        .header { height: 76px; padding: 0 48px; display: flex; align-items: center; justify-content: space-between; background: rgba(18,18,18,0.55); backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%); border-bottom: 1px solid rgba(255,255,255,0.06); position: sticky; top: 0; z-index: 100; }
-        .logo-area { display: flex; align-items: center; gap: 14px; }
-        .logo-divider { width: 1px; height: 32px; background: linear-gradient(180deg, transparent, rgba(212,175,55,0.4), transparent); }
-        .logo-name { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 0.25em; background: linear-gradient(135deg,#fff,#e8e8e8); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
-        .logo-sub { font-size: 7px; letter-spacing: 0.4em; color: #b99c64; font-weight: 500; text-transform: uppercase; margin-top: 2px; }
+        /* Modulkopf — identisch zu den übrigen Tabs (overline + displayTitle) */
+        .module-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 20px; padding: 26px 34px 0; max-width: 1880px; margin: 0 auto; }
+        .mh-overline { font-family: 'Montserrat', sans-serif; font-size: 8px; font-weight: 700; letter-spacing: 0.3em; text-transform: uppercase; color: #8a7440; margin-bottom: 7px; }
+        .mh-title { font-family: 'Bebas Neue', sans-serif; font-size: 31px; letter-spacing: 0.12em; color: #fdfdfd; }
+        .mh-meta { margin-left: auto; font-family: 'DM Mono', monospace; font-size: 10.5px; color: #555; letter-spacing: 0.08em; }
 
-        .toolbar { display: flex; align-items: center; gap: 10px; padding: 32px 48px 24px; flex-wrap: wrap; }
+        .toolbar { display: flex; align-items: center; gap: 10px; padding: 18px 34px 24px; flex-wrap: wrap; max-width: 1880px; margin: 0 auto; }
         .ticker-inp { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); color: #f8e49b; font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 0.15em; padding: 11px 18px; border-radius: 14px; outline: none; width: 180px; text-transform: uppercase; transition: all 0.25s; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
         .ticker-inp:focus { border-color: rgba(212,175,55,0.55); box-shadow: 0 0 0 3px rgba(212,175,55,0.10), 0 8px 32px rgba(212,175,55,0.08); }
         .ticker-inp::placeholder { color: #2f333b; }
@@ -2162,19 +2162,19 @@ export default function App({ nav, lang = "de" }) {
         .ind-field input:focus { border-color: rgba(212,175,55,0.6); }
       `}</style>
 
-      {/* HEADER */}
-      <div className="header">
-        <div className="logo-area">
-          <VSXLogo />
-          <div className="logo-divider" />
-          <div>
-            <div className="logo-name">VISIONX</div>
-            {nav || <div className="logo-sub">Seasonality</div>}
-          </div>
+      {/* MODULKOPF
+          Vorher stand hier ein zweites Logo-Band mit Wortmarke — direkt unter
+          dem globalen Kopf der App, also doppelt. Jetzt derselbe Aufbau wie in
+          allen anderen Modulen: Overline, Titel, Statuszeile rechts. */}
+      <div className="module-head">
+        <div>
+          <div className="mh-overline">VisionX Analytics</div>
+          <div className="mh-title">SEASONALITY</div>
         </div>
         {candles.length > 0 && (
-          <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#444" }}>
-            {candles.length.toLocaleString()} candles · {availableYears[0]}–{availableYears[availableYears.length - 1]}
+          <div className="mh-meta">
+            {ticker ? `${ticker} · ` : ""}{candles.length.toLocaleString()} candles ·{" "}
+            {availableYears[0]}–{availableYears[availableYears.length - 1]}
           </div>
         )}
       </div>

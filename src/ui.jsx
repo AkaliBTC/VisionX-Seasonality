@@ -100,7 +100,51 @@ export const cell = { padding: "11px 12px", fontFamily: F.mono, fontSize: 11.5, 
 export const rowBorder = `1px solid ${C.lineSoft}`;
 
 // ── GLOBALE STYLES ───────────────────────────────────────────────────────────
-export const GLOBAL_CSS = `
+// Gemeinsame Textur- und Bewegungsschicht. Liegt im globalen CSS, damit jeder
+// Tab dieselbe Anmutung hat, ohne dass jedes Modul sie neu erfindet.
+export const SURFACE_CSS = `
+  /* Feines Rauschen über der ganzen Fläche — nimmt dem Schwarz das Flache,
+     ohne sichtbares Muster. Rein dekorativ, fängt keine Klicks ab. */
+  .vsx-app::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    opacity: 0.035; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  /* Warmer Lichtabfall von oben, damit die Kopfzeile nicht auf Schwarz klebt */
+  .vsx-app::after {
+    content: ""; position: fixed; inset: 0 0 auto 0; height: 420px;
+    pointer-events: none; z-index: 0;
+    background: radial-gradient(120% 100% at 50% -30%, rgba(212,175,55,0.055), transparent 70%);
+  }
+
+  @keyframes vsxRise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  @keyframes vsxFadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes vsxSheen { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+
+  .vsx-fade { animation: vsxRise 0.42s cubic-bezier(0.22,1,0.36,1) both; }
+  .vsx-stagger > * { animation: vsxRise 0.4s cubic-bezier(0.22,1,0.36,1) both; }
+  .vsx-stagger > *:nth-child(1) { animation-delay: 0.02s; }
+  .vsx-stagger > *:nth-child(2) { animation-delay: 0.06s; }
+  .vsx-stagger > *:nth-child(3) { animation-delay: 0.10s; }
+  .vsx-stagger > *:nth-child(4) { animation-delay: 0.14s; }
+  .vsx-stagger > *:nth-child(5) { animation-delay: 0.18s; }
+
+  /* Panels: ruhiger Hover, kein Springen */
+  .vsx-panel { transition: border-color 0.3s ease, background 0.3s ease, transform 0.3s cubic-bezier(0.22,1,0.36,1); }
+  .vsx-panel:hover { border-color: rgba(212,175,55,0.18); }
+
+  /* Ladeschimmer für Platzhalter */
+  .vsx-shimmer {
+    background: linear-gradient(90deg, rgba(255,255,255,0.02) 25%, rgba(212,175,55,0.07) 50%, rgba(255,255,255,0.02) 75%);
+    background-size: 200% 100%; animation: vsxSheen 1.8s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .vsx-fade, .vsx-stagger > *, .vsx-shimmer { animation: none !important; }
+  }
+`;
+
+export const GLOBAL_CSS = SURFACE_CSS + `
   @keyframes vsxpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.22; } }
   @keyframes vsxfade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   .vsx-fade { animation: vsxfade 0.35s cubic-bezier(0.22,1,0.36,1); }
