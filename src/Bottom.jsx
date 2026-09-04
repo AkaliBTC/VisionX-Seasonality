@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { apiFetch } from "./access";
-import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient, Dropdown, Modal } from "./ui";
+import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient, Dropdown } from "./ui";
 import {
   VSX_STOCKS, VSX_STOCK_SECTOR, VSX_CRYPTO,
   VSX_COMMODITY_SYMBOLS, VSX_FOREX_SYMBOLS, VSX_INDEX_SYMBOLS, VSX_ETFS, VSX_LABELS,
@@ -547,6 +547,94 @@ export default function Bottom({ lang = "de" }) {
 
   const sigColor = v => v == null ? "#555" : v >= 70 ? "#22c55e" : v >= 45 ? "#facc15" : "#6b7280";
 
+  // Ausklapp-Inhalt einer Zeile. Bewusst kein Overlay: die Zeile bleibt im
+  // Blick, die Tabelle bricht an genau der Stelle auf, an der man geklickt hat.
+  const renderDetail = (detail) => (
+    <>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 13, marginBottom: 14 }}>
+        <span style={{ width: 11, height: 11, borderRadius: "50%", background: detail.phase?.color, boxShadow: `0 0 11px ${detail.phase?.color}` }} />
+        <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 19, letterSpacing: "0.16em", color: detail.phase?.color }}>
+          {detail.phase?.[lang].label}
+        </span>
+        <button className="vsx-btn" onClick={e => { e.stopPropagation(); setDetail(null); }}
+          style={{ ...pill(false), marginLeft: "auto", padding: "5px 12px", fontSize: 8.5 }}>✕</button>
+      </div>
+            <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11.5, color: "#9a9a9a", lineHeight: 1.7, marginBottom: 18 }}>
+              {detail.phase?.[lang].desc}
+            </div>
+            {(detail.d1 || detail.d4 || detail.w2 || detail.m1) && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
+                {[["d1", t.d1], ["d4", t.d4], ["w2", t.w2], ["m1", t.m1]].map(([k, lbl]) => {
+                  const w = TF_WEIGHT[k];
+                  const v = detail[k];
+                  const ph = v?.score != null ? phaseFor(v.score) : null;
+                  return (
+                    <div key={k} style={{ flex: "1 1 180px", padding: "12px 15px", borderRadius: 12,
+                      background: "rgba(255,255,255,0.025)", border: `1px solid ${ph?.color || "#333"}33` }}>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.16em", color: "#e8e8e8" }}>{lbl}</span>
+                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7.5, letterSpacing: "0.14em", color: "#4a4a4a" }}>{Math.round(w * 100)}%</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 9 }}>
+                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 20, fontWeight: 700, color: ph?.color || "#555" }}>{v?.score ?? "—"}</span>
+                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", color: ph?.color || "#4a4a4a" }}>{ph?.[lang].label || ""}</span>
+                      </div>
+                      <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#6a6a6a", marginTop: 7 }}>
+                        RSI {fmtNum(v?.rsi9)} · DD {fmtPct(v?.drawdown, 0)}
+                      </div>
+                    </div>
+                  );
+                })}
+                {detail.align != null && (
+                  <div style={{ flex: "1 1 150px", padding: "12px 15px", borderRadius: 12, background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                    <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, letterSpacing: "0.14em", color: "#777", marginBottom: 8 }}>{t.align}</div>
+                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 20, fontWeight: 700,
+                      color: detail.align >= 75 ? "#22c55e" : detail.align >= 50 ? "#facc15" : "#6b7280" }}>{Math.round(detail.align)}</span>
+                    <div style={{ height: 4, borderRadius: 2, background: "rgba(255,255,255,0.06)", marginTop: 9, overflow: "hidden" }}>
+                      <div style={{ width: `${detail.align}%`, height: "100%", background: detail.align >= 75 ? "#22c55e" : "#facc15", opacity: 0.8 }} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {detail.adx && (
+              <div style={{ marginBottom: 18, padding: "14px 16px", borderRadius: 12,
+                background: "rgba(255,255,255,0.025)", border: `1px solid ${detail.adx.regime.color}33` }}>
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14, marginBottom: 8 }}>
+                  <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.2em", color: "#b99c64" }}>VSX-ADX</span>
+                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 19, fontWeight: 700, color: detail.adx.regime.color }}>{detail.adx.adx.toFixed(1)}</span>
+                  <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.14em", color: detail.adx.regime.color }}>{detail.adx.regime[lang]}</span>
+                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#2DD4A7" }}>+DI {detail.adx.plusDI.toFixed(1)}</span>
+                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#F0506E" }}>−DI {detail.adx.minusDI.toFixed(1)}</span>
+                  {detail.adx.rollover && (
+                    <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.14em",
+                      color: "#F0506E", background: "rgba(240,80,110,0.12)", border: "1px solid rgba(240,80,110,0.35)", padding: "3px 9px", borderRadius: 20 }}>
+                      ▽ {t.rollover}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, color: "#6a6a6a", lineHeight: 1.6 }}>{t.adxHint}</div>
+              </div>
+            )}
+
+            <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.2em", color: "#b99c64", marginBottom: 10 }}>{t.signals}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12 }}>
+              {Object.entries(detail.sig).map(([k, v]) => (
+                <div key={k} style={{ padding: "11px 14px", borderRadius: 12, background: "rgba(255,255,255,0.025)", border: `1px solid ${sigColor(v)}33` }}>
+                  <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, color: "#777", marginBottom: 7 }}>{t.sigNames[k]}</div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 17, color: sigColor(v), fontWeight: 700 }}>{v == null ? "—" : Math.round(v)}</span>
+                  </div>
+                  <div style={{ height: 4, borderRadius: 2, background: "rgba(255,255,255,0.06)", marginTop: 8, overflow: "hidden" }}>
+                    <div style={{ width: `${v ?? 0}%`, height: "100%", background: sigColor(v), opacity: 0.8 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+    </>
+  );
+
   return (
     <div style={{ position: "relative", overflow: "hidden", minHeight: "calc(100vh - 76px)" }}>
       <style>{`
@@ -707,7 +795,10 @@ export default function Bottom({ lang = "de" }) {
               </thead>
               <tbody>
                 {sorted.map(d => (
-                  <tr key={d.symbol} onClick={() => setDetail(d)} style={{ borderTop: "1px solid rgba(255,255,255,0.05)", cursor: "pointer" }}>
+                  <Fragment key={d.symbol}>
+                  <tr onClick={() => setDetail(cur => cur?.symbol === d.symbol ? null : d)}
+                    className={detail?.symbol === d.symbol ? "vsx-row-open" : ""}
+                    style={{ borderTop: "1px solid rgba(255,255,255,0.05)", cursor: "pointer" }}>
                     <td style={{ padding: "9px 10px", color: "#f8e49b", fontWeight: 700, whiteSpace: "nowrap" }}>
                       {d.name ? (
                         <span style={{ display: "inline-flex", alignItems: "baseline", gap: 7 }}>
@@ -792,98 +883,20 @@ export default function Bottom({ lang = "de" }) {
                         onMouseLeave={e => e.currentTarget.style.color = "#3a3a3a"}>✕</button>
                     </td>
                   </tr>
+                  {detail?.symbol === d.symbol && (
+                    <tr className="vsx-expand">
+                      <td colSpan={99} style={{ padding: 0 }}>
+                        <div className="vsx-expand-inner">{renderDetail(d)}</div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
           )}
         </div>
 
-        {/* DETAIL */}
-        <Modal open={Boolean(detail)} onClose={() => setDetail(null)}
-          title={detail?.name || detail?.symbol.replace("-USD", "")}
-          subtitle={detail?.name ? `[${detail.symbol.replace("-USD", "")}]` : null}
-          badge={detail?.phase && (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 9 }}>
-              <span style={{ width: 12, height: 12, borderRadius: "50%", background: detail.phase.color, boxShadow: `0 0 11px ${detail.phase.color}` }} />
-              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, letterSpacing: "0.16em", color: detail.phase.color }}>{detail.phase[lang].label}</span>
-            </span>
-          )}>
-          {detail && (<>
-            <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 11.5, color: "#9a9a9a", lineHeight: 1.7, marginBottom: 18 }}>
-              {detail.phase?.[lang].desc}
-            </div>
-            {(detail.d1 || detail.d4 || detail.w2 || detail.m1) && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
-                {[["d1", t.d1], ["d4", t.d4], ["w2", t.w2], ["m1", t.m1]].map(([k, lbl]) => {
-                  const w = TF_WEIGHT[k];
-                  const v = detail[k];
-                  const ph = v?.score != null ? phaseFor(v.score) : null;
-                  return (
-                    <div key={k} style={{ flex: "1 1 180px", padding: "12px 15px", borderRadius: 12,
-                      background: "rgba(255,255,255,0.025)", border: `1px solid ${ph?.color || "#333"}33` }}>
-                      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
-                        <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: "0.16em", color: "#e8e8e8" }}>{lbl}</span>
-                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7.5, letterSpacing: "0.14em", color: "#4a4a4a" }}>{Math.round(w * 100)}%</span>
-                      </div>
-                      <div style={{ display: "flex", alignItems: "baseline", gap: 9 }}>
-                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 20, fontWeight: 700, color: ph?.color || "#555" }}>{v?.score ?? "—"}</span>
-                        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", color: ph?.color || "#4a4a4a" }}>{ph?.[lang].label || ""}</span>
-                      </div>
-                      <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#6a6a6a", marginTop: 7 }}>
-                        RSI {fmtNum(v?.rsi9)} · DD {fmtPct(v?.drawdown, 0)}
-                      </div>
-                    </div>
-                  );
-                })}
-                {detail.align != null && (
-                  <div style={{ flex: "1 1 150px", padding: "12px 15px", borderRadius: 12, background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)" }}>
-                    <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, letterSpacing: "0.14em", color: "#777", marginBottom: 8 }}>{t.align}</div>
-                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 20, fontWeight: 700,
-                      color: detail.align >= 75 ? "#22c55e" : detail.align >= 50 ? "#facc15" : "#6b7280" }}>{Math.round(detail.align)}</span>
-                    <div style={{ height: 4, borderRadius: 2, background: "rgba(255,255,255,0.06)", marginTop: 9, overflow: "hidden" }}>
-                      <div style={{ width: `${detail.align}%`, height: "100%", background: detail.align >= 75 ? "#22c55e" : "#facc15", opacity: 0.8 }} />
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {detail.adx && (
-              <div style={{ marginBottom: 18, padding: "14px 16px", borderRadius: 12,
-                background: "rgba(255,255,255,0.025)", border: `1px solid ${detail.adx.regime.color}33` }}>
-                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14, marginBottom: 8 }}>
-                  <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.2em", color: "#b99c64" }}>VSX-ADX</span>
-                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 19, fontWeight: 700, color: detail.adx.regime.color }}>{detail.adx.adx.toFixed(1)}</span>
-                  <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.14em", color: detail.adx.regime.color }}>{detail.adx.regime[lang]}</span>
-                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#2DD4A7" }}>+DI {detail.adx.plusDI.toFixed(1)}</span>
-                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#F0506E" }}>−DI {detail.adx.minusDI.toFixed(1)}</span>
-                  {detail.adx.rollover && (
-                    <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.14em",
-                      color: "#F0506E", background: "rgba(240,80,110,0.12)", border: "1px solid rgba(240,80,110,0.35)", padding: "3px 9px", borderRadius: 20 }}>
-                      ▽ {t.rollover}
-                    </span>
-                  )}
-                </div>
-                <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, color: "#6a6a6a", lineHeight: 1.6 }}>{t.adxHint}</div>
-              </div>
-            )}
-
-            <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.2em", color: "#b99c64", marginBottom: 10 }}>{t.signals}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12 }}>
-              {Object.entries(detail.sig).map(([k, v]) => (
-                <div key={k} style={{ padding: "11px 14px", borderRadius: 12, background: "rgba(255,255,255,0.025)", border: `1px solid ${sigColor(v)}33` }}>
-                  <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, color: "#777", marginBottom: 7 }}>{t.sigNames[k]}</div>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 17, color: sigColor(v), fontWeight: 700 }}>{v == null ? "—" : Math.round(v)}</span>
-                  </div>
-                  <div style={{ height: 4, borderRadius: 2, background: "rgba(255,255,255,0.06)", marginTop: 8, overflow: "hidden" }}>
-                    <div style={{ width: `${v ?? 0}%`, height: "100%", background: sigColor(v), opacity: 0.8 }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>)}
-        </Modal>
 
         <div style={{ marginTop: 16, fontSize: 8.5, color: "#3a3a3a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.06em", lineHeight: 1.9 }}>
           {t.footer}

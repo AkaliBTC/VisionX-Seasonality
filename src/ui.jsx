@@ -209,8 +209,37 @@ export const SURFACE_CSS = `
   .vsx-kpi { transition: background .25s ease, border-color .25s ease; }
   .vsx-kpi:hover { background: rgba(212,175,55,0.045); border-color: rgba(212,175,55,0.20); }
 
+
+  /* ── AUSKLAPPZEILE ──────────────────────────────────────────────────────── */
+  /* Die Tabelle bricht an der geklickten Zeile auf, statt die Ansicht woanders
+     hin zu verlagern. Die Zeile darüber bleibt markiert, damit klar ist,
+     wozu der Block gehört. */
+  .vsx-table tbody tr.vsx-row-open {
+    background: rgba(212,175,55,0.07) !important;
+    box-shadow: inset 2px 0 0 #d4af37;
+  }
+  .vsx-table tbody tr.vsx-row-open td { color: #f0e2b8; }
+  .vsx-table tbody tr.vsx-expand { background: transparent !important; cursor: default; }
+  .vsx-table tbody tr.vsx-expand:hover { background: transparent !important; }
+  .vsx-table tbody tr.vsx-expand td::before { display: none !important; }
+  .vsx-table tbody tr.vsx-expand td { transform: none !important; }
+
+  .vsx-expand-inner {
+    padding: 20px 24px 22px;
+    border-top: 1px solid rgba(212,175,55,0.20);
+    border-bottom: 1px solid rgba(212,175,55,0.12);
+    background:
+      linear-gradient(180deg, rgba(212,175,55,0.05), transparent 120px),
+      rgba(255,255,255,0.018);
+    animation: vsxExpand 0.28s cubic-bezier(.22,1,.36,1) both;
+  }
+  @keyframes vsxExpand {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: none; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    .vsx-fade, .vsx-stagger > *, .vsx-shimmer, .vsx-tick { animation: none !important; }
+    .vsx-fade, .vsx-stagger > *, .vsx-shimmer, .vsx-tick, .vsx-expand-inner { animation: none !important; }
     .vsx-btn, .vsx-lift, .vsx-table tbody tr td { transition: none !important; transform: none !important; }
   }
 `;

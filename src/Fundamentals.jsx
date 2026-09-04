@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { apiFetch } from "./access";
-import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient, Modal } from "./ui";
+import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
 import { evaluate, lightFor, LIGHTS, CATEGORY_LIST, benchFor } from "./scoring";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -297,6 +297,105 @@ export default function Fundamentals({ lang = "de" }) {
 
   const scoreColor = s => s == null ? "#555" : s >= 65 ? "#22c55e" : s >= 40 ? "#facc15" : "#ef4444";
 
+  // Ausklapp-Inhalt einer Zeile — bricht die Tabelle an der geklickten
+  // Stelle auf, statt die Ansicht in ein Overlay zu verlagern.
+  const renderDetail = (detail) => (
+    <>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 12, marginBottom: 12 }}>
+        <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 21, letterSpacing: "0.14em", color: "#fdfdfd" }}>{detail.symbol}</span>
+        <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 12, color: "#c9c9c9" }}>{detail.name}</span>
+        {detail.score != null && (
+          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: scoreColor(detail.score),
+            border: `1px solid ${scoreColor(detail.score)}44`, borderRadius: 7, padding: "3px 9px", letterSpacing: "0.1em" }}>
+            VSX SCORE {detail.score}
+          </span>
+        )}
+        <button className="vsx-btn" onClick={e => { e.stopPropagation(); setDetail(null); }}
+          style={{ ...pill(false), marginLeft: "auto", padding: "5px 12px", fontSize: 8.5 }}>✕</button>
+      </div>
+            <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, color: "#666", letterSpacing: "0.1em", marginBottom: 16 }}>
+              {[detail.sector, detail.industry, detail.currency, detail.recommendation?.toUpperCase()].filter(Boolean).join(" · ")}
+              {detail.analystCount ? ` · ${detail.analystCount} ANALYSTS` : ""}
+            </div>
+            {/* AMPEL-URTEIL */}
+            {(() => {
+              const ev = evaluate(detail);
+              return (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14, padding: "14px 18px", borderRadius: 14,
+                    background: `${ev.light.color}0f`, border: `1px solid ${ev.light.color}44`, marginBottom: 14 }}>
+                    <span style={{ width: 16, height: 16, borderRadius: "50%", background: ev.light.color, boxShadow: `0 0 12px ${ev.light.color}` }} />
+                    <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 20, letterSpacing: "0.16em", color: ev.light.color }}>{ev.light.label}</span>
+                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 13, color: "#e8e8e8" }}>{ev.overall ?? "—"}<span style={{ color: "#555", fontSize: 10 }}>/100</span></span>
+                    <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 10.5, color: "#9a9a9a" }}>{lang === "en" && ev.light.verdictEn ? ev.light.verdictEn : ev.light.verdict}</span>
+                    <span style={{ marginLeft: "auto", fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, color: "#5a5a5a", letterSpacing: "0.12em" }}>
+                      {L.benchmark}: {ev.benchSource.toUpperCase()}
+                    </span>
+                  </div>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: ev.flags.length ? 14 : 0 }}>
+                    {CATEGORY_LIST.map(c => {
+                      const v = ev.cats[c.id];
+                      const col = v == null ? "#555" : lightFor(v).color;
+                      return (
+                        <div key={c.id} style={{ flex: "1 1 150px", padding: "11px 14px", borderRadius: 12,
+                          background: "rgba(255,255,255,0.025)", border: `1px solid ${col}33` }}>
+                          <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#777", marginBottom: 7 }}>{catLabel(c)}</div>
+                          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 17, color: col, fontWeight: 700 }}>{v ?? "—"}</span>
+                            <span style={{ fontSize: 8, color: "#4a4a4a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.1em" }}>{v == null ? "" : lightFor(v).label}</span>
+                          </div>
+                          <div style={{ height: 4, borderRadius: 2, background: "rgba(255,255,255,0.06)", marginTop: 8, overflow: "hidden" }}>
+                            <div style={{ width: `${v ?? 0}%`, height: "100%", background: col, opacity: 0.8 }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {ev.flags.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+                      {ev.flags.map((f, i) => {
+                        const col = f.t === "warn" ? "#ef4444" : f.t === "good" ? "#22c55e" : "#facc15";
+                        return (
+                          <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "5px 12px", borderRadius: 9,
+                            background: `${col}0f`, border: `1px solid ${col}33`, fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, color: "#c9c9c9" }}>
+                            <span style={{ color: col, fontWeight: 700 }}>{f.t === "warn" ? "!" : f.t === "good" ? "+" : "i"}</span>
+                            {lang === "en" && f.mEn ? f.mEn : f.m}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 18 }}>
+              {GROUPS.map(g => (
+                <div key={g.id}>
+                  <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.2em", color: "#b99c64", marginBottom: 8 }}>{catLabel(g)}</div>
+                  {g.metrics.map(m => {
+                    const v = valueOf(detail, m);
+                    return (
+                      <div key={m.key} onClick={() => GLOSSARY[m.key] && setExplain(m.key)}
+                        title={GLOSSARY[m.key] ? GLOSSARY[m.key][lang][0] : ""}
+                        style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderTop: "1px solid rgba(255,255,255,0.05)", fontSize: 10.5, fontFamily: "'DM Mono', monospace", cursor: GLOSSARY[m.key] ? "pointer" : "default", borderRadius: 5, transition: "background 0.15s" }}
+                        onMouseEnter={e => { if (GLOSSARY[m.key]) e.currentTarget.style.background = "rgba(212,175,55,0.06)"; }}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <span style={{ color: "#777" }}>
+                          {m.label}{GLOSSARY[m.key] && <span style={{ color: "#3a3a3a", marginLeft: 5, fontSize: 8 }}>ⓘ</span>}
+                        </span>
+                        <span style={{ color: colorFor(m, v) }}>{m.fmt(v)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+    </>
+  );
+
   return (
     <div style={{ position: "relative", overflow: "hidden", minHeight: "calc(100vh - 76px)" }}>
       <Ambient tint="rgba(99,182,255,0.03)" />
@@ -481,7 +580,9 @@ export default function Fundamentals({ lang = "de" }) {
               </thead>
               <tbody>
                 {sorted.map(d => (
-                  <tr key={d.symbol} onClick={() => setDetail(d)}
+                  <Fragment key={d.symbol}>
+                  <tr onClick={() => setDetail(cur => cur?.symbol === d.symbol ? null : d)}
+                    className={detail?.symbol === d.symbol ? "vsx-row-open" : ""}
                     style={{ borderTop: "1px solid rgba(255,255,255,0.05)", cursor: "pointer", transition: "background 0.15s" }}
 >
                     <td style={{ padding: "9px 10px", color: "#f8e49b", fontWeight: 700, whiteSpace: "nowrap" }}>
@@ -538,105 +639,20 @@ export default function Fundamentals({ lang = "de" }) {
                         onMouseLeave={e => e.currentTarget.style.color = "#3a3a3a"}>✕</button>
                     </td>
                   </tr>
+                  {detail?.symbol === d.symbol && (
+                    <tr className="vsx-expand">
+                      <td colSpan={99} style={{ padding: 0 }}>
+                        <div className="vsx-expand-inner">{renderDetail(d)}</div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
           )}
         </div>
 
-        {/* DETAIL-PANEL */}
-        <Modal open={Boolean(detail)} onClose={() => setDetail(null)}
-          title={detail?.symbol}
-          subtitle={detail?.name}
-          badge={detail?.score != null && (
-            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: scoreColor(detail.score),
-              border: `1px solid ${scoreColor(detail.score)}44`, borderRadius: 8, padding: "5px 11px", letterSpacing: "0.1em" }}>
-              VSX SCORE {detail.score}
-            </span>
-          )}>
-          {detail && (<>
-            <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, color: "#666", letterSpacing: "0.1em", marginBottom: 16 }}>
-              {[detail.sector, detail.industry, detail.currency, detail.recommendation?.toUpperCase()].filter(Boolean).join(" · ")}
-              {detail.analystCount ? ` · ${detail.analystCount} ANALYSTS` : ""}
-            </div>
-            {/* AMPEL-URTEIL */}
-            {(() => {
-              const ev = evaluate(detail);
-              return (
-                <div style={{ marginBottom: 20 }}>
-                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14, padding: "14px 18px", borderRadius: 14,
-                    background: `${ev.light.color}0f`, border: `1px solid ${ev.light.color}44`, marginBottom: 14 }}>
-                    <span style={{ width: 16, height: 16, borderRadius: "50%", background: ev.light.color, boxShadow: `0 0 12px ${ev.light.color}` }} />
-                    <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 20, letterSpacing: "0.16em", color: ev.light.color }}>{ev.light.label}</span>
-                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 13, color: "#e8e8e8" }}>{ev.overall ?? "—"}<span style={{ color: "#555", fontSize: 10 }}>/100</span></span>
-                    <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 10.5, color: "#9a9a9a" }}>{lang === "en" && ev.light.verdictEn ? ev.light.verdictEn : ev.light.verdict}</span>
-                    <span style={{ marginLeft: "auto", fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, color: "#5a5a5a", letterSpacing: "0.12em" }}>
-                      {L.benchmark}: {ev.benchSource.toUpperCase()}
-                    </span>
-                  </div>
-
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: ev.flags.length ? 14 : 0 }}>
-                    {CATEGORY_LIST.map(c => {
-                      const v = ev.cats[c.id];
-                      const col = v == null ? "#555" : lightFor(v).color;
-                      return (
-                        <div key={c.id} style={{ flex: "1 1 150px", padding: "11px 14px", borderRadius: 12,
-                          background: "rgba(255,255,255,0.025)", border: `1px solid ${col}33` }}>
-                          <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#777", marginBottom: 7 }}>{catLabel(c)}</div>
-                          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 17, color: col, fontWeight: 700 }}>{v ?? "—"}</span>
-                            <span style={{ fontSize: 8, color: "#4a4a4a", fontFamily: "'Montserrat', sans-serif", letterSpacing: "0.1em" }}>{v == null ? "" : lightFor(v).label}</span>
-                          </div>
-                          <div style={{ height: 4, borderRadius: 2, background: "rgba(255,255,255,0.06)", marginTop: 8, overflow: "hidden" }}>
-                            <div style={{ width: `${v ?? 0}%`, height: "100%", background: col, opacity: 0.8 }} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {ev.flags.length > 0 && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
-                      {ev.flags.map((f, i) => {
-                        const col = f.t === "warn" ? "#ef4444" : f.t === "good" ? "#22c55e" : "#facc15";
-                        return (
-                          <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "5px 12px", borderRadius: 9,
-                            background: `${col}0f`, border: `1px solid ${col}33`, fontFamily: "'Montserrat', sans-serif", fontSize: 9.5, color: "#c9c9c9" }}>
-                            <span style={{ color: col, fontWeight: 700 }}>{f.t === "warn" ? "!" : f.t === "good" ? "+" : "i"}</span>
-                            {lang === "en" && f.mEn ? f.mEn : f.m}
-                          </span>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 18 }}>
-              {GROUPS.map(g => (
-                <div key={g.id}>
-                  <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8.5, fontWeight: 700, letterSpacing: "0.2em", color: "#b99c64", marginBottom: 8 }}>{catLabel(g)}</div>
-                  {g.metrics.map(m => {
-                    const v = valueOf(detail, m);
-                    return (
-                      <div key={m.key} onClick={() => GLOSSARY[m.key] && setExplain(m.key)}
-                        title={GLOSSARY[m.key] ? GLOSSARY[m.key][lang][0] : ""}
-                        style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderTop: "1px solid rgba(255,255,255,0.05)", fontSize: 10.5, fontFamily: "'DM Mono', monospace", cursor: GLOSSARY[m.key] ? "pointer" : "default", borderRadius: 5, transition: "background 0.15s" }}
-                        onMouseEnter={e => { if (GLOSSARY[m.key]) e.currentTarget.style.background = "rgba(212,175,55,0.06)"; }}
-                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                        <span style={{ color: "#777" }}>
-                          {m.label}{GLOSSARY[m.key] && <span style={{ color: "#3a3a3a", marginLeft: 5, fontSize: 8 }}>ⓘ</span>}
-                        </span>
-                        <span style={{ color: colorFor(m, v) }}>{m.fmt(v)}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          </>)}
-        </Modal>
 
         {explain && GLOSSARY[explain] && (
           <div onClick={() => setExplain(null)}
