@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { apiFetch } from "./access";
 import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient } from "./ui";
+import { SPX_BY_SECTOR } from "./constituents";
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · MARKET BREADTH
@@ -11,20 +12,18 @@ import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, table
 
 const GOLD = "#d4af37";
 
-// ── UNIVERSUM: S&P-100-nahe Large Caps über alle 11 Sektoren ────────────────
-const UNIVERSE = {
-  XLK:  ["MSFT","AAPL","NVDA","AVGO","CRM","ORCL","AMD","ADBE","CSCO","ACN","INTC","TXN","QCOM","NOW","INTU","AMAT","MU","LRCX","ADI","KLAC"],
-  XLF:  ["BRK-B","JPM","V","MA","BAC","WFC","GS","MS","SPGI","AXP","BLK","C","SCHW","CB","PGR","MMC","ICE","CME","AON","USB"],
-  XLV:  ["LLY","UNH","JNJ","ABBV","MRK","TMO","ABT","AMGN","ISRG","PFE","DHR","BMY","GILD","CVS","MDT","VRTX","REGN","ZTS","BSX","SYK"],
-  XLY:  ["AMZN","TSLA","HD","MCD","BKNG","LOW","TJX","NKE","SBUX","CMG","ORLY","MAR","GM","F","DHI","ROST","AZO","YUM","LEN","EBAY"],
-  XLP:  ["PG","COST","WMT","KO","PEP","PM","MDLZ","MO","CL","TGT","KMB","GIS","STZ","SYY","KHC","HSY","K","ADM","DG","EL"],
-  XLE:  ["XOM","CVX","COP","WMB","EOG","SLB","PSX","MPC","KMI","OKE","VLO","HAL","BKR","OXY","DVN","FANG","HES","TRGP","EQT","CTRA"],
-  XLI:  ["GE","CAT","UBER","RTX","HON","UNP","ETN","BA","DE","LMT","ADP","UPS","CSX","NOC","EMR","GD","FDX","NSC","WM","ITW"],
-  XLB:  ["LIN","SHW","APD","ECL","FCX","NEM","CTVA","DD","DOW","PPG","NUE","VMC","MLM","ALB","IFF","STLD","PKG","AMCR","CF","MOS"],
-  XLRE: ["PLD","AMT","EQIX","WELL","SPG","PSA","O","CCI","DLR","VICI","EXR","AVB","IRM","SBAC","EQR","INVH","MAA","ESS","ARE","KIM"],
-  XLU:  ["NEE","SO","DUK","CEG","SRE","AEP","D","PCG","EXC","XEL","ED","PEG","WEC","ES","AWK","DTE","PPL","FE","AEE","CMS"],
-  XLC:  ["META","GOOGL","NFLX","DIS","CMCSA","T","VZ","TMUS","EA","WBD","OMC","TTWO","LYV","MTCH","NWSA","CHTR","PARA","FOXA","IPG","NWS"],
-};
+// ── UNIVERSUM ────────────────────────────────────────────────────────────────
+// Vorher standen hier elf handgepflegte Listen mit je 20 Schwergewichten. Für
+// Marktbreite ist das die falsche Grundlage: Beteiligung misst man an der
+// Breite, nicht an den größten Namen. Zwanzig Mega Caps pro Sektor zeigen genau
+// das, was Breadth eigentlich widerlegen soll.
+//
+// Jetzt die vollständige S&P-500-Gliederung aus constituents.js — dieselbe
+// Quelle, die RRG und Bottom Radar nutzen. Damit stimmen die Sektorgrenzen
+// modulübergreifend überein und Indexänderungen werden nur an einer Stelle
+// gepflegt.
+const UNIVERSE = SPX_BY_SECTOR;
+
 const ALL = [...new Set(Object.values(UNIVERSE).flat())];
 const SECTOR_OF = {};
 Object.entries(UNIVERSE).forEach(([s, arr]) => arr.forEach(t => { if (!SECTOR_OF[t]) SECTOR_OF[t] = s; }));
@@ -349,16 +348,28 @@ export default function Breadth({ lang = "de" }) {
     let alive = true;
     (async () => {
       try {
-        for (let i = 0; i < ALL.length; i += 25) {
-          const chunk = ALL.slice(i, i + 25);
-          const res = await apiFetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=2y`);
-          if (!res.ok) throw new Error(`API ${res.status}`);
-          const json = await res.json();
-          if (!alive) return;
-          Object.assign(cacheRef.current, json.data || {});
-          setProgress(Math.min(100, Math.round(((i + 25) / ALL.length) * 100)));
+        // 30 Symbole pro Anfrage (Obergrenze der API), und ein fehlgeschlagener
+        // Block bricht nicht mehr den ganzen Lauf ab — bei 470 Titeln wäre das
+        // sonst ein Totalausfall wegen eines einzigen Aussetzers.
+        const CH = 30;
+        let hardFail = null;
+        for (let i = 0; i < ALL.length; i += CH) {
+          const chunk = ALL.slice(i, i + CH);
+          try {
+            const res = await apiFetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=2y`);
+            if (!res.ok) throw new Error(`API ${res.status}`);
+            const json = await res.json();
+            if (!alive) return;
+            Object.assign(cacheRef.current, json.data || {});
+          } catch (e) {
+            hardFail = e.message;
+            if (!alive) return;
+          }
+          setProgress(Math.min(100, Math.round(((i + CH) / ALL.length) * 100)));
           setData({ ...cacheRef.current });
         }
+        // Nur melden, wenn wirklich nichts ankam
+        if (alive && hardFail && !Object.keys(cacheRef.current).length) setError(hardFail);
       } catch (e) { if (alive) setError(e.message); }
       finally { if (alive) setLoading(false); }
     })();
