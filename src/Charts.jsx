@@ -975,6 +975,9 @@ const detectCyclesSpectral = (candles, maxCycles = 20, opts = {}) => {
     }
     const rawSkew = cnt ? sum / cnt : 0.5;
     c.skew = Math.min(0.85, Math.max(0.15, 0.5 + (rawSkew - 0.5) * 1.5));
+    // Eigene Zyklen: reine, symmetrische Sinuswelle (Top genau in der Mitte
+    // zwischen zwei Böden). Die gemessene Schiefe bleibt nur als Info erhalten.
+    if (c.custom) { c.skewMeasured = c.skew; c.skew = 0.5; }
 
     // ACCURACY = phase stability (Bartels) × bottom-timing regularity
     c.acc = c.bartels * (0.6 + 0.4 * spacingCons);
