@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 // ── BINANCE HISTORY ───────────────────────────────────────────────────────────
 const fetchBinanceHistory = async (ticker, interval) => {
@@ -536,7 +536,9 @@ const scanPatterns = (candles, years) => {
 // this, cycle #1 masks everything else — secondary cycles test against a signal
 // still full of #1's energy and score "dead". With it, each cycle is measured
 // on a cleaned residual, so genuine secondary cycles surface with real scores.
-const detectCyclesSpectral = (candles, maxCycles = 20) => {
+// opts.custom: eigene Perioden (Bars), die immer gemessen und gelistet werden
+// opts.customOnly: nur diese messen, keine automatische Suche
+const detectCyclesSpectral = (candles, maxCycles = 20, opts = {}) => {
   const n = candles.length;
   if (n < 80) return { cycles: [], trend: null, spectrum: [] };
 
@@ -557,38 +559,47 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   const minP = 8;
   const maxP = Math.min(Math.floor(n / 5), 500);
   if (maxP <= minP) return { cycles: [], trend: null, spectrum: [] };
+  // Eigene Zyklen: 8 Bars bis n/3 (mind. drei Durchläufe für echte Böden)
+  const customPs = [...new Set((opts.custom || []).map(p => Math.round(p)))]
+    .filter(p => p >= minP && p <= Math.floor(n / 3));
 
   // HIGH-PASS detrend: subtract a centered moving average (window ≈ 1.2×maxP).
   // A linear detrend leaves the multi-year trend wiggle in the residual, which
   // then masquerades as huge phantom "cycles". The high-pass removes everything
   // slower than the analysis band while leaving phase intact (centered window).
-  const L = Math.min(n - 1, (Math.round(maxP * 1.2) | 1));
-  const halfL = Math.floor(L / 2);
-  const ps = new Float64Array(n + 1);
-  for (let i = 0; i < n; i++) ps[i + 1] = ps[i] + y[i];
-  const smooth = new Float64Array(n);
-  for (let i = 0; i < n; i++) {
-    const lo = Math.max(0, i - halfL), hi = Math.min(n - 1, i + halfL);
-    smooth[i] = (ps[hi + 1] - ps[lo]) / (hi - lo + 1);
-  }
-  // Right-edge fix: the centered window shrinks near the end and bends the
-  // trend estimate exactly where the phase refit anchors. Extrapolate the last
-  // clean stretch of the smooth linearly instead.
-  const eEnd = n - halfL;
-  if (eEnd > 60) {
-    const fitLen = Math.min(300, eEnd - 1);
-    let fx = 0, fy = 0, fxx = 0, fxy = 0;
-    for (let j = 0; j < fitLen; j++) {
-      const idx = eEnd - fitLen + j;
-      fx += j; fy += smooth[idx]; fxx += j * j; fxy += j * smooth[idx];
+  // Als Funktion: eigene Zyklen oberhalb des Suchbands brauchen einen
+  // Hochpass, der ihre Periode nicht selbst herausfiltert
+  const residualFor = (band) => {
+    const L = Math.min(n - 1, (Math.round(band * 1.2) | 1));
+    const halfL = Math.floor(L / 2);
+    const ps = new Float64Array(n + 1);
+    for (let i = 0; i < n; i++) ps[i + 1] = ps[i] + y[i];
+    const smooth = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const lo = Math.max(0, i - halfL), hi = Math.min(n - 1, i + halfL);
+      smooth[i] = (ps[hi + 1] - ps[lo]) / (hi - lo + 1);
     }
-    const fden = fitLen * fxx - fx * fx;
-    const fsl = fden ? (fitLen * fxy - fx * fy) / fden : 0;
-    const fic = (fy - fsl * fx) / fitLen;
-    for (let i = eEnd; i < n; i++) smooth[i] = fic + fsl * (i - (eEnd - fitLen));
-  }
-  const r = new Float64Array(n);
-  for (let i = 0; i < n; i++) r[i] = y[i] - smooth[i];
+    // Right-edge fix: the centered window shrinks near the end and bends the
+    // trend estimate exactly where the phase refit anchors. Extrapolate the last
+    // clean stretch of the smooth linearly instead.
+    const eEnd = n - halfL;
+    if (eEnd > 60) {
+      const fitLen = Math.min(300, eEnd - 1);
+      let fx = 0, fy = 0, fxx = 0, fxy = 0;
+      for (let j = 0; j < fitLen; j++) {
+        const idx = eEnd - fitLen + j;
+        fx += j; fy += smooth[idx]; fxx += j * j; fxy += j * smooth[idx];
+      }
+      const fden = fitLen * fxx - fx * fx;
+      const fsl = fden ? (fitLen * fxy - fx * fy) / fden : 0;
+      const fic = (fy - fsl * fx) / fitLen;
+      for (let i = eEnd; i < n; i++) smooth[i] = fic + fsl * (i - (eEnd - fitLen));
+    }
+    const r = new Float64Array(n);
+    for (let i = 0; i < n; i++) r[i] = y[i] - smooth[i];
+    return r;
+  };
+  const r = residualFor(maxP);
 
   // Amplitude spectrum of an arbitrary series
   const scanSpectrum = (arr) => {
@@ -669,7 +680,7 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   const found = [];
   let refAmp = null;
 
-  for (let iter = 0; iter < Math.min(maxCycles, 12); iter++) {
+  for (let iter = 0; iter < (opts.customOnly ? 0 : Math.min(maxCycles, 12)); iter++) {
     const spec = iter === 0 ? firstSpec : scanSpectrum(work);
     const peaks = [];
     for (let i = 1; i < spec.length - 1; i++) {
@@ -717,8 +728,40 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   const rSd = Math.sqrt(rVar / n) || 1e-9;
   found.forEach(f => { f.strg = Math.min(10, (f.amp / Math.SQRT2 / rSd) * 10); });
 
+  // EIGENE ZYKLEN: gleiche Messung wie die automatischen (Phase, Bartels,
+  // Surrogat-Test, Stärke), aber ohne Auswahlfilter — sie stehen immer in
+  // der Liste. Perioden über dem Suchband bekommen einen eigenen Hochpass.
+  const makeSmooth = (arr) => {
+    const p = new Float64Array(n + 1);
+    for (let i = 0; i < n; i++) p[i + 1] = p[i] + arr[i];
+    return (i, h) => {
+      const lo = Math.max(0, i - h), hi = Math.min(n - 1, i + h);
+      return (p[hi + 1] - p[lo]) / (hi - lo + 1);
+    };
+  };
+  for (const P of customPs) {
+    const arr = P > maxP ? residualFor(P) : r;
+    const w = (2 * Math.PI) / P;
+    let ca = 0, sb = 0, mu = 0;
+    for (let i = 0; i < n; i++) { ca += arr[i] * Math.cos(w * i); sb += arr[i] * Math.sin(w * i); mu += arr[i]; }
+    mu /= n;
+    let v = 0;
+    for (let i = 0; i < n; i++) v += (arr[i] - mu) ** 2;
+    const sd = Math.sqrt(v / n) || 1e-9;
+    const a = (2 * ca) / n, b = (2 * sb) / n, amp = Math.hypot(a, b);
+    const bt = bartelsOn(arr, P);
+    // Surrogate stammen aus dem Standard-Residuum — oberhalb des Bands nicht aussagekräftig
+    const sig = P <= maxP ? significanceOf(arr, P, bt) : null;
+    found.push({
+      period: P, a, b, amp, bartels: bt, sig,
+      score: bt * (0.3 + 0.7 * (sig ?? 0.5)),
+      strg: Math.min(10, (amp / Math.SQRT2 / sd) * 10),
+      custom: true, _sm: P > maxP ? makeSmooth(arr) : null,
+    });
+  }
+
   // Drop phase-unstable candidates entirely unless that leaves too few
-  let kept = found.filter(f => f.bartels >= 0.3);
+  let kept = found.filter(f => f.custom || f.bartels >= 0.3);
   if (kept.length < 3) kept = found;
 
   // NOTE: no joint least-squares refit here. With several long cycles the
@@ -764,7 +807,8 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     // window P has zero gain at period P, so subtracting it removes all slower
     // leakage (which shifts minima) while passing this cycle untouched.
     const hLong = Math.max(4, Math.round(P / 2));
-    const bandAt = (i, hs) => smoothAt(i, hs) - smoothAt(i, hLong);
+    const sm = c._sm || smoothAt;
+    const bandAt = (i, hs) => sm(i, hs) - sm(i, hLong);
     // Locate the ACTUAL bottoms: search ±P/4 around each phase-predicted trough
     // for the true minimum of the smoothed residual (last 5 cycles)
     // Find the bottoms as a CHAIN: locate the most recent confirmed bottom
@@ -782,7 +826,19 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
       if (best > n - 1 - h) return null;
       // Snap to the actual swing low (wick) near the band minimum — tight
       // radius, otherwise a random deep wick nearby wins over the pivot
-      return snapToLow(best, Math.min(7, Math.max(2, Math.round(P / 40))));
+      const b = snapToLow(best, Math.min(7, Math.max(2, Math.round(P / 40))));
+      return reversed(b) ? b : null;
+    };
+    // REVERSAL-BESTÄTIGUNG: Ein Tief ist erst ein Boden, wenn sich der Kurs
+    // davon gelöst hat — mindestens eine typische Halbschwingung dieses
+    // Zyklus (halbe Amplitude in Log-Einheiten), nie weniger als 3 %. Zeit allein
+    // reicht nicht: Seitwärts nach einem Crash kann genauso die Flagge vor dem
+    // nächsten Leg sein. Bis dahin bleibt die Welle am vorherigen Boden.
+    const minRally = Math.max(0.03, 0.5 * (c.amp || 0));
+    const reversed = (b) => {
+      let mx = -Infinity;
+      for (let i = b + 1; i < n; i++) if (rawHi[i] > mx) mx = rawHi[i];
+      return mx > 0 && rawLo[b] > 0 && Math.log(mx / rawLo[b]) >= minRally;
     };
     const bottoms = [];
     let seed = null;
@@ -808,6 +864,10 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
       if (d > P * 0.7 && d < P * 1.3) spacings.push(d);
     }
     let spacingCons = 0.75; // unknown regularity → mild penalty
+    // TIMING-TOLERANZ (±Bars) für die Projektion: gemessene Streuung der
+    // Boden-zu-Boden-Abstände, nie enger als 8 % der Periode. Ohne genug
+    // Abstände pauschal ±15 %.
+    c.tol = Math.round(P * 0.15);
     if (spacings.length >= 1) {
       const mean = spacings.reduce((x, z) => x + z, 0) / spacings.length;
       const trust = spacings.length >= 3 ? 0.85 : spacings.length === 2 ? 0.65 : 0.5;
@@ -815,8 +875,10 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
       if (spacings.length >= 2) {
         const sd = Math.sqrt(spacings.reduce((x, z) => x + (z - mean) ** 2, 0) / spacings.length);
         spacingCons = Math.max(0, Math.min(1, 1 - (sd / mean) * 2));
+        c.tol = Math.round(Math.min(P * 0.25, Math.max(sd, P * 0.08)));
       }
     } else c.pf = P;
+    if (c.custom) c.pf = P; // eigene Periode bleibt exakt, wie eingegeben
 
     // ── PHASENVERANKERUNG AM ECHTEN KURS ────────────────────────────────
     // Die Tiefs oben stammen aus dem entrendeten Residuum. Gezeichnet wird die
@@ -860,7 +922,37 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
       // Anker in die Nähe des letzten echten Tiefs legen (gleiche Phase)
       let anc = bestPhase;
       while (anc + Pf < n) anc += Pf;
-      c.anchor = anc;
+      // Die Projektion startet am LETZTEN BESTÄTIGTEN BODEN dieses Zyklus,
+      // nicht an einer über die ganze Historie gemittelten Phase. Die Phase
+      // driftet über die Jahre; der Durchschnitt kann das jüngste Tal um
+      // Wochen neben das echte Tief legen — genau dort, wo die Projektion
+      // beginnt. Ein älterer bestätigter Boden schlägt jede ungeprüfte Phase;
+      // die Durchschnittsphase ist nur Fallback, wenn es gar keinen gibt.
+      let lastB = bottoms.length ? bottoms[bottoms.length - 1] : null;
+      // FRISCHER BODEN am rechten Rand: das geglättete Bodensignal braucht
+      // ~P/2 Bars Vorlauf und erkennt ein junges Tief zu spät. Direkt am
+      // echten Kurs prüfen: das tiefste Tief der letzten halben Periode gilt
+      // als neuer Boden, wenn es nach dem bisherigen liegt, nicht am
+      // Fensterrand klebt und per Reversal bestätigt ist.
+      {
+        const lo = Math.max(0, n - Math.round(Pf / 2));
+        let f = lo;
+        for (let i = lo; i < n; i++) if (rawLo[i] < rawLo[f]) f = i;
+        const isNew = lastB == null || f - lastB > Pf * 0.3;
+        if (isNew && f > lo + 1 && f < n - 2 && reversed(f)) lastB = f;
+      }
+      // Präziser Anker: das geglättete Bodensignal hinkt nach — im Umkreis
+      // von ±P/8 auf das tatsächlich tiefste Tief einrasten, sofern auch das
+      // per Reversal bestätigt ist (sonst ist es ein frisches, offenes Tief)
+      if (lastB != null) {
+        const s = snapToLow(lastB, Math.max(2, Math.round(Pf / 8)));
+        if (s !== lastB && reversed(s)) lastB = s;
+      }
+      // Ohne bestätigten Boden: Durchschnittsphase, aber nie in den
+      // unbestätigten Randbereich — dort wäre es ein Tal ohne Beleg
+      while (anc > n - 1 - Math.max(2, Math.round(Pf / 12))) anc -= Pf;
+      c.anchor = lastB != null ? lastB : anc;
+      c.anchoredOnBottom = c.anchor === lastB;
       c.phaseFit = 1 - bestScore;   // 1 = Täler exakt auf den tiefsten Kursen
     }
 
@@ -897,12 +989,23 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   // Gestufter Gate: erst streng, dann gelockert. Eine leere Liste ist nie das
   // Ergebnis — sie sagt dem Nutzer nichts. Stattdessen die beste verfügbare
   // Rangfolge mit ehrlicher Signifikanzangabe je Zeile.
+  // Eigene Zyklen sind vom Gate ausgenommen und stehen oben
+  const customKept = kept.filter(c => c.custom);
+  kept = kept.filter(c => !c.custom);
   const strict = kept.filter(c => (c.nBottoms ?? 0) >= 3 && (c.nSpacings ?? 0) >= 2);
   const loose = kept.filter(c => (c.nBottoms ?? 0) >= 2);
   kept = strict.length >= 2 ? strict : loose.length ? loose : kept;
   // Sort by accuracy, top-down
   kept.sort((a, b) => (b.acc ?? 0) - (a.acc ?? 0) || b.score - a.score);
+  // FAST-DUPLIKATE: Perioden näher als 12 % (z. B. 283/308) beschreiben
+  // dieselbe Schwingung, schweben zusammen gezeichnet und verdrängen echte
+  // Alternativen aus der Liste. Der genauere bleibt.
+  kept = kept.filter((c, i) => !kept.slice(0, i).some(o =>
+    Math.abs((o.pf || o.period) - (c.pf || c.period)) / Math.max(o.pf || o.period, c.pf || c.period) < 0.12));
+  // Automatische Zyklen, die praktisch einem eigenen entsprechen (< 5 %), entfallen
+  kept = kept.filter(c => !customKept.some(k => Math.abs(k.period - c.period) / Math.max(k.period, c.period) < 0.05));
   const maxStr = kept.length ? Math.max(...kept.map(f => f.score)) : 1;
+  kept = [...customKept, ...kept];
 
   const cycles = kept.map(s => ({
     period: s.period, pf: s.pf, a: s.a, b: s.b, amp: s.amp, bartels: s.bartels,
@@ -911,14 +1014,14 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
     // die rohe Amplitude ist das über Märkte und Zeiträume hinweg vergleichbar.
     strg: s.strg,
     // SIG: Anteil der Surrogate dieses Charts, die der Zyklus schlägt (0–1)
-    sig: s.sig, sigPct: (s.sig ?? 0) * 100,
+    sig: s.sig, sigPct: s.sig == null ? null : s.sig * 100, custom: !!s.custom,
     // PHASE-FIT: wie gut die Wellentäler auf den echten Kurstiefs sitzen (0–1)
     phaseFit: s.phaseFit,
-    anchor: s.anchor, skew: s.skew,
+    anchor: s.anchor, skew: s.skew, tol: s.tol, anchoredOnBottom: s.anchoredOnBottom,
     acc: s.acc, accPct: (s.acc ?? s.bartels) * 100, spacingCons: s.spacingCons,
     nBottoms: s.nBottoms,
     strength: s.score,
-    strengthPct: maxStr > 0 ? (s.score / maxStr) * 100 : 0,
+    strengthPct: s.custom ? Math.min(100, (s.strg ?? 0) * 10) : maxStr > 0 ? (s.score / maxStr) * 100 : 0,
     bartelsPct: s.bartels * 100,
   }));
 
@@ -933,6 +1036,75 @@ const detectCyclesSpectral = (candles, maxCycles = 20) => {
   }
 
   return { cycles, trend: { slope, icept }, spectrum };
+};
+
+// ── AUTO-AUSWAHL: der große, stabile Zyklus ──────────────────────────────────
+// Erkennt in allen Standardfenstern (ALL / 2000 / 1200 Bars) und bildet
+// Familien aus Zyklen ähnlicher Rohperiode (±15 %). Gewählt wird die Familie,
+// die in den meisten Fenstern auftaucht, danach die mit dem größten Anteil an
+// der Kursbewegung (strg) — die Climax-Böden/Tops, nicht das Kleinklein.
+// Aus der Familie wird EIN Konsens-Zyklus gebaut:
+//   Periode / Schiefe = Median der Fenster
+//   Anker             = jüngster bestätigter Boden
+//   Toleranz          = gemessene Boden-Streuung + Uneinigkeit der Fenster
+// Damit liefert Auto unabhängig vom gewählten Fenster dieselbe Projektion.
+const AUTO_WINDOWS = [0, 2000, 1200];
+const median = (a) => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+const detectAuto = (candles, analysisWin) => {
+  const runs = new Map(); // Fensterlänge → Ergebnis (kurze Historie: Fenster fallen zusammen)
+  const run = (win) => {
+    const src = win && candles.length > win ? candles.slice(candles.length - win) : candles;
+    if (runs.has(src.length)) return runs.get(src.length);
+    const offset = candles.length - src.length;
+    const res = detectCyclesSpectral(src, 20);
+    if (offset) res.cycles = res.cycles.map(c => ({ ...c, anchor: (c.anchor ?? 0) + offset }));
+    runs.set(src.length, res);
+    return res;
+  };
+  // Standardfenster zuerst und fest sortiert — die Familienwahl darf nicht
+  // davon abhängen, welches Fenster gerade angezeigt wird
+  AUTO_WINDOWS.forEach(run);
+  const main = run(analysisWin);
+  const all = [...runs.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .flatMap(([len, res]) => res.cycles.map(c => ({ c, len })));
+  if (!all.length) return { res: main, pick: null };
+
+  const near = (p, q) => Math.abs(p - q) / Math.max(p, q) < 0.15;
+  let fam = null, best = -Infinity;
+  for (const { c } of all) {
+    const members = all.filter(m => near(m.c.period, c.period));
+    // pro Fenster nur das beste Mitglied
+    const byWin = new Map();
+    for (const m of members) {
+      const q = (m.c.strg ?? 0) * (0.5 + (m.c.acc ?? 0));
+      if (!byWin.has(m.len) || q > byWin.get(m.len).q) byWin.set(m.len, { ...m, q });
+    }
+    const mem = [...byWin.values()];
+    const score = mem.length * 100 + Math.max(...mem.map(m => m.q));
+    if (score > best + 1e-9) { best = score; fam = mem; }
+  }
+
+  const pfs = fam.map(m => m.c.pf || m.c.period);
+  const pf = median(pfs);
+  const anchor = Math.max(...fam.map(m => m.c.anchor ?? 0));
+  const tolBase = median(fam.map(m => m.c.tol ?? Math.round(pf * 0.15)));
+  const spread = (Math.max(...pfs) - Math.min(...pfs)) / 2;
+  const tol = Math.round(Math.min(pf * 0.3, Math.max(tolBase, spread)));
+  const ref = fam.reduce((a, b) => (b.q > a.q ? b : a));
+  const consensus = {
+    ...ref.c, pf, anchor, tol,
+    skew: median(fam.map(m => m.c.skew ?? 0.5)),
+    nWindows: fam.length, auto: true,
+  };
+  // Im angezeigten Fenster das passende Mitglied durch den Konsens ersetzen
+  // (oder ergänzen, falls dieses Fenster die Familie nicht gefunden hat)
+  const idx = main.cycles.findIndex(c => near(c.period, consensus.period));
+  const cycles = [...main.cycles];
+  if (idx >= 0) cycles[idx] = { ...cycles[idx], pf, anchor, tol, skew: consensus.skew, nWindows: fam.length, auto: true };
+  else cycles.unshift(consensus);
+  const pick = idx >= 0 ? cycles[idx] : consensus;
+  return { res: { ...main, cycles }, pick };
 };
 
 // Composite oscillator: each selected cycle contributes with UNIT amplitude
@@ -1183,7 +1355,7 @@ const DEFAULT_SETTINGS = {
 };
 
 // ── PRICE CHART (zoom/pan) ────────────────────────────────────────────────────
-function PriceChart({ candles, interval, activeIndicators, indSettings, compositeWave, majorWave, waveDirect, pickingAnchor, onAnchorPick }) {
+function PriceChart({ candles, interval, activeIndicators, indSettings, compositeWave, majorWave, waveDirect, turnTol, pickingAnchor, onAnchorPick }) {
   const svgRef = useRef(null);
   const viewRef = useRef({ startIdx: 0, endIdx: Math.max(0, candles.length - 1) });
   const [viewVersion, setViewVersion] = useState(0); // trigger re-render
@@ -1617,7 +1789,8 @@ function PriceChart({ candles, interval, activeIndicators, indSettings, composit
                 {showLbl && (
                   <text x={x} y={yLbl} textAnchor="middle"
                     fill={clr} fontSize="9" fontFamily="'DM Mono', monospace" fontWeight="600">
-                    {type === "low" ? "▲ " : "▼ "}{fmtLabel(ts)}
+                    {type === "low" ? "▲ " : "▼ "}{turnTol ? "≈ " : ""}{fmtLabel(ts)}
+                    {turnTol ? ` ±${interval === "1d" ? `${turnTol}d` : `${turnTol}w`}` : ""}
                   </text>
                 )}
               </g>
@@ -1882,6 +2055,9 @@ export default function App({ nav, lang = "de" }) {
   const [spectralShift, setSpectralShift] = useState(0); // phase nudge in bars (vT's "p" param)
   const [ampMode, setAmpMode] = useState("equal");       // 'equal' | 'true' amplitude weighting
   const [analysisWin, setAnalysisWin] = useState(0);     // 0 = full history, else last N bars
+  const [customPeriods, setCustomPeriods] = useState([]); // eigene Zyklen (Bars)
+  const [customInput, setCustomInput] = useState("");
+  const [customErr, setCustomErr] = useState("");
   // Seasonal pattern (Seasonax-style)
   const [seasonSel, setSeasonSel] = useState(null); // {startKey, endKey}
   const [showCurYear, setShowCurYear] = useState(true);
@@ -2022,21 +2198,54 @@ export default function App({ nav, lang = "de" }) {
   // Periods closer than ~1.35:1 beat against each other → ugly, meaningless wave
   const beats = (p, q) => Math.max(p, q) / Math.min(p, q) < 1.35;
 
+  // Eigene Zyklen: im gewählten Fenster gemessen, bei neuen Daten oder
+  // Fensterwechsel automatisch neu verankert
+  const customCycles = useMemo(() => {
+    if (!customPeriods.length || candles.length < 80) return [];
+    const src = analysisWin && candles.length > analysisWin ? candles.slice(candles.length - analysisWin) : candles;
+    const offset = candles.length - src.length;
+    const res = detectCyclesSpectral(src, 0, { custom: customPeriods, customOnly: true });
+    return res.cycles.filter(c => c.custom).map(c => ({ ...c, anchor: (c.anchor ?? 0) + offset }));
+  }, [candles, analysisWin, customPeriods]);
+  // Gemeinsame Liste: eigene Zyklen oben, danach die automatisch erkannten
+  const spectralList = [
+    ...customCycles,
+    ...(spectral ? spectral.cycles.filter(c => !customCycles.some(k => k.period === c.period)) : []),
+  ];
+  const customWinLen = analysisWin && candles.length > analysisWin ? analysisWin : candles.length;
+  const customMax = Math.floor(customWinLen / 3);
+  const addCustomCycle = () => {
+    const P = Math.round(parseFloat(String(customInput).replace(",", ".")));
+    const unit = interval === "1d" ? "d" : "w";
+    if (!Number.isFinite(P) || P < 8 || P > customMax) {
+      setCustomErr(customMax >= 8 ? `Periode zwischen 8 und ${customMax}${unit}` : "Zu wenig Historie für eigene Zyklen");
+      return;
+    }
+    setCustomErr("");
+    setCustomInput("");
+    setCustomPeriods(prev => (prev.includes(P) ? prev : [...prev, P]));
+    setSelectedSpectral(prev => new Set(prev).add(P));
+    setShowCycles(true);
+  };
+  const removeCustomCycle = (P) => {
+    setCustomPeriods(prev => prev.filter(x => x !== P));
+    setSelectedSpectral(prev => { const nx = new Set(prev); nx.delete(P); return nx; });
+  };
+
   const runSpectralDetect = () => {
     if (candles.length < 80 || detecting) return;
     setDetecting(true);
     setTimeout(() => {
       // In-sample window (vT-style maxbars): detect on the last N bars only,
-      // then remap anchors back to absolute indices in the full history
-      const src = analysisWin && candles.length > analysisWin ? candles.slice(candles.length - analysisWin) : candles;
-      const offset = candles.length - src.length;
-      const res = detectCyclesSpectral(src, 20);
-      if (offset) res.cycles = res.cycles.map(c => ({ ...c, anchor: (c.anchor ?? 0) + offset }));
+      // anchors are remapped to absolute indices in the full history.
+      // Auto-pick = the big cycle that is stable across windows (detectAuto).
+      const { res, pick } = detectAuto(candles, analysisWin);
       setSpectral(res);
       setSpectralShift(0);
-      // Select only the single most accurate cycle — the user composes the
-      // rest manually, guided by the ♪ harmonic hints
-      setSelectedSpectral(new Set(res.cycles.length ? [res.cycles[0].period] : []));
+      // Select only that one cycle — the user composes the rest manually,
+      // guided by the ♪ harmonic hints
+      // Gewählte eigene Zyklen bleiben ausgewählt
+      setSelectedSpectral(new Set([...(pick ? [pick.period] : []), ...customPeriods.filter(p => selectedSpectral.has(p))]));
       setShowCycles(true);
       setDetecting(false);
     }, 30);
@@ -2052,7 +2261,7 @@ export default function App({ nav, lang = "de" }) {
   };
 
   const selectedCycleObjs = cycles.filter(c => selectedCycles.has(c.period));
-  const selectedSpectralObjs = spectral ? spectral.cycles.filter(c => selectedSpectral.has(c.period)) : [];
+  const selectedSpectralObjs = spectralList.filter(c => selectedSpectral.has(c.period));
   const compositeWave = !showCycles ? []
     : cycleMode === "spectral"
       ? (selectedSpectralObjs.length > 0 ? buildSpectralComposite(candles, selectedSpectralObjs, spectralShift, ampMode) : [])
@@ -2071,6 +2280,12 @@ export default function App({ nav, lang = "de" }) {
     const major = selectedCycleObjs.reduce((a, b) => (b.period > a.period ? b : a));
     return buildComposite(candles, [major], cycleTweaks, cycleAnchorIdx, cycleSlopeMult);
   })();
+
+  // Timing-Toleranz für die Wendepunkt-Labels: die des größten gewählten
+  // Spektral-Zyklus (gemessene Streuung seiner Boden-Abstände)
+  const turnTol = cycleMode === "spectral" && selectedSpectralObjs.length
+    ? selectedSpectralObjs.reduce((a, b) => ((b.pf || b.period) > (a.pf || a.period) ? b : a)).tol || null
+    : null;
 
   const toggleIndicator = (id) => setActiveIndicators(prev => {
     const next = new Set(prev);
@@ -2291,6 +2506,7 @@ export default function App({ nav, lang = "de" }) {
                 <div className="section-body" style={{ padding: "12px 8px 4px" }}>
                   <PriceChart candles={candles} interval={interval} activeIndicators={activeIndicators} indSettings={indSettings} compositeWave={compositeWave}
                     majorWave={majorWave}
+                    turnTol={turnTol}
                     pickingAnchor={pickingAnchor}
                     onAnchorPick={(idx) => {
                       setCycleAnchorIdx(idx);
@@ -2397,7 +2613,7 @@ export default function App({ nav, lang = "de" }) {
                           {detecting ? "ANALYZING…" : spectral ? "↻ RE-DETECT CYCLES" : "⚡ DETECT DOMINANT CYCLES"}
                         </button>
                         <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#333", marginTop: 6, lineHeight: 1.5 }}>
-                          Each candidate is tested against 28 surrogates built from this chart\u2019s own data — only cycles that hold their phase where surrogates cannot are kept · ≥3 confirmed swing lows · ♪ = harmonic
+                          Each candidate is tested against 28 surrogates built from this chart’s own data — only cycles that hold their phase where surrogates cannot are kept · ≥3 confirmed swing lows · ♪ = harmonic
                         </div>
                       </div>
                       {/* In-sample window (vT maxbars) */}
@@ -2411,8 +2627,26 @@ export default function App({ nav, lang = "de" }) {
                         ))}
                         <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 7, color: "#333" }}>bars</span>
                       </div>
+                      {/* Eigene Zyklen */}
+                      <div style={{ padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Custom</span>
+                          <input type="number" min="8" max={customMax} step="1" inputMode="numeric"
+                            placeholder={interval === "1d" ? "z. B. 90" : "z. B. 13"}
+                            value={customInput}
+                            onChange={e => { setCustomInput(e.target.value); setCustomErr(""); }}
+                            onKeyDown={e => { if (e.key === "Enter") addCustomCycle(); }}
+                            style={{ flex: 1, minWidth: 0, background: "transparent", border: `1px solid ${customErr ? "rgba(239,68,68,0.5)" : "rgba(255,255,255,0.10)"}`, borderRadius: 4, color: "#f8e49b", fontFamily: "'DM Mono', monospace", fontSize: 10, padding: "4px 8px", outline: "none" }} />
+                          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#333" }}>{interval === "1d" ? "d" : "w"}</span>
+                          <button onClick={addCustomCycle}
+                            style={{ background: "transparent", border: "1px solid rgba(212,175,55,0.55)", color: "#f8e49b", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", padding: "5px 10px", borderRadius: 999, cursor: "pointer", textTransform: "uppercase" }}>+ Add</button>
+                        </div>
+                        {customErr && (
+                          <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#ef4444", marginTop: 5 }}>{customErr}</div>
+                        )}
+                      </div>
                       {/* Amplitude weighting: equal (clean wave) vs true (vT precision) */}
-                      {spectral && spectral.cycles.length > 0 && (
+                      {spectralList.length > 0 && (
                         <div style={{ padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 8 }}>
                           <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Amplitude</span>
                           {[["equal", "EQUAL"], ["true", "TRUE"]].map(([m, lbl]) => (
@@ -2424,8 +2658,8 @@ export default function App({ nav, lang = "de" }) {
                         </div>
                       )}
                       {/* Phase shift (vT's p parameter) */}
-                      {spectral && spectral.cycles.length > 0 && (() => {
-                        const maxSelP = Math.max(60, ...spectral.cycles.filter(c => selectedSpectral.has(c.period)).map(c => Math.round((c.pf || c.period) / 2)));
+                      {spectralList.length > 0 && (() => {
+                        const maxSelP = Math.max(60, ...spectralList.filter(c => selectedSpectral.has(c.period)).map(c => Math.round((c.pf || c.period) / 2)));
                         return (
                         <div style={{ padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 10 }}>
                           <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Phase</span>
@@ -2438,10 +2672,10 @@ export default function App({ nav, lang = "de" }) {
                         );
                       })()}
                       {/* Cycle Consensus Index */}
-                      {spectral && spectral.cycles.length > 0 && (() => {
+                      {spectralList.length > 0 && (() => {
                         const nAll = candles.length;
                         let bull = 0, bear = 0;
-                        for (const c of spectral.cycles) {
+                        for (const c of spectralList) {
                           const P = c.pf || c.period, split = c.skew ?? 0.5, anchor = c.anchor ?? 0;
                           const val = (t) => {
                             const ph = (((t - anchor) % P) + P) % P / P;
@@ -2480,7 +2714,7 @@ export default function App({ nav, lang = "de" }) {
                           <div style={{ padding: "8px 16px 4px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                             <svg viewBox={`0 0 ${sw} ${sh}`} style={{ width: "100%", height: "auto", display: "block" }}>
                               {sp.map((s, i) => {
-                                const isSel = spectral.cycles.some(c => Math.abs(c.period - s.period) / c.period < 0.05 && selectedSpectral.has(c.period));
+                                const isSel = spectralList.some(c => Math.abs(c.period - s.period) / c.period < 0.05 && selectedSpectral.has(c.period));
                                 const h = Math.max((s.amp / maxAmp) * (sh - 6), 1);
                                 return <rect key={i} x={i * bw + 0.5} y={sh - h} width={Math.max(bw - 1, 0.8)} height={h}
                                   fill={isSel ? "#d4af37" : "#2a2a2a"} opacity={isSel ? 0.95 : 0.8} />;
@@ -2495,8 +2729,8 @@ export default function App({ nav, lang = "de" }) {
                         );
                       })()}
                       {/* Beat warning: selected periods too close together */}
-                      {spectral && (() => {
-                        const sel = spectral.cycles.filter(c => selectedSpectral.has(c.period));
+                      {spectralList.length > 0 && (() => {
+                        const sel = spectralList.filter(c => selectedSpectral.has(c.period));
                         for (let a = 0; a < sel.length; a++) for (let b = a + 1; b < sel.length; b++) {
                           if (beats(sel[a].period, sel[b].period)) return (
                             <div style={{ padding: "7px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", fontFamily: "'DM Mono', monospace", fontSize: 8.5, color: "#f59e0b", lineHeight: 1.5, background: "rgba(245,158,11,0.05)" }}>
@@ -2514,23 +2748,23 @@ export default function App({ nav, lang = "de" }) {
                       </div>
                       {/* Spectral cycle rows */}
                       <div style={{ overflowY: "auto", flex: 1, maxHeight: 300 }}>
-                        {!spectral && !detecting && (
+                        {!spectral && !customCycles.length && !detecting && (
                           <div style={{ padding: "20px 16px", fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#333", textAlign: "center", lineHeight: 1.6 }}>
                             Run detection to extract the dominant cycles automatically
                           </div>
                         )}
-                        {spectral && spectral.cycles.length === 0 && (
+                        {spectral && spectralList.length === 0 && (
                           <div style={{ padding: "20px 16px", fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#333", textAlign: "center", lineHeight: 1.6 }}>
                             Not enough data for a cycle scan — load more history or switch the interval
                           </div>
                         )}
-                        {spectral && spectral.cycles.map((cyc, i) => {
+                        {spectralList.map((cyc, i) => {
                           const isOn = selectedSpectral.has(cyc.period);
                           // Rule of harmony: flag unselected cycles in 2:1 / 3:1 / 3:2
                           // relation to the selection; warn on beat-danger picks
                           let harm = null, clash = false;
                           if (selectedSpectral.size >= 1 && selectedSpectral.size <= 3) {
-                            for (const sp of spectral.cycles) {
+                            for (const sp of spectralList) {
                               if (!selectedSpectral.has(sp.period) || sp.period === cyc.period) continue;
                               if (!isOn && !harm) {
                                 const m = harmonicRatio(cyc.period, sp.period);
@@ -2544,9 +2778,15 @@ export default function App({ nav, lang = "de" }) {
                             <div key={cyc.period} onClick={() => toggleSpectral(cyc.period)}
                               title={harm ? `Harmonic: ${harm}` : clash && !isOn ? "Too close to a selected period — would beat against it" : undefined}
                               style={{ display: "grid", gridTemplateColumns: "20px 48px 1fr 34px 40px 22px", alignItems: "center", gap: 0, padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.04)", borderLeft: harm ? "2px solid rgba(212,175,55,0.55)" : "2px solid transparent", cursor: "pointer", opacity: clash && !isOn ? 0.4 : 1, background: isOn ? "rgba(212,175,55,0.05)" : harm ? "rgba(212,175,55,0.03)" : "transparent", transition: "background 0.15s, opacity 0.15s" }}>
-                              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#2a2a2a" }}>{i + 1}</span>
+                              {cyc.custom ? (
+                                <span title="Eigenen Zyklus entfernen" onClick={e => { e.stopPropagation(); removeCustomCycle(cyc.period); }}
+                                  style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#8a7440", cursor: "pointer" }}>✕</span>
+                              ) : (
+                                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "#2a2a2a" }}>{i + 1 - customCycles.length}</span>
+                              )}
                               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: isOn ? "#f8e49b" : harm ? "#d4af37" : "#555", fontWeight: isOn ? 600 : 400 }}>
                                 {cyc.period}{interval === "1d" ? "d" : "w"}{harm ? " ♪" : clash && !isOn ? " ≈" : ""}
+                                {cyc.custom && <span title="Eigener Zyklus" style={{ fontSize: 7, color: "#8a7440", marginLeft: 3, letterSpacing: "0.1em" }}>C</span>}
                               </span>
                               <div style={{ display: "flex", alignItems: "center", gap: 6, paddingRight: 6 }}>
                                 <div style={{ flex: 1, height: 2, background: "#1a1a1a", borderRadius: 2 }}>
