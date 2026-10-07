@@ -4,6 +4,7 @@ import { MARKETS, hasMarket, marketSectors, marketMembers, buildComposite, compo
 import { C, F, panel, overline, displayTitle, btnGhost, btnPrimary, badge, tableHead, GLOBAL_CSS, Ambient, Dropdown } from "./ui";
 import { createPortal } from "react-dom";
 import { SPX_BY_SECTOR } from "./constituents";
+import { CRYPTO_SECTORS, SECTOR_BY_KEY, cryptoSectorsOf } from "./cryptoSectors";
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · RELATIVE ROTATION GRAPH v4
@@ -66,6 +67,10 @@ const PRESETS = [
   {
     id: "cmc100", label: "CMC TOP 100", bench: "BTC-USD", drillable: false, cryptoSuffix: true,
     packKey: "CRYPTO", cmcLimit: 100, members: [],
+  },
+  {
+    id: "cmc200", label: "CMC TOP 200", bench: "BTC-USD", drillable: false, cryptoSuffix: true,
+    packKey: "CRYPTO", cmcLimit: 200, members: [],
   },
   {
     id: "crypto", label: "CRYPTO", bench: "BTC-USD", drillable: false, cryptoSuffix: true, packKey: "CRYPTO",
@@ -763,6 +768,8 @@ export default function RRG({ lang = "de" }) {
   const [cmcUniverse, setCmcUniverse] = useState({});   // presetId → [{symbol,label,rank}]
   const [cmcMeta, setCmcMeta] = useState({});           // SYMBOL → CMC-Kennzahlen
   const [cmcError, setCmcError] = useState("");
+  const [cryptoSector, setCryptoSector] = useState(null); // Krypto-Sektorfilter (null = alle)
+  const [cryptoView, setCryptoView] = useState("sectors"); // "sectors" = Sektor-RRG, "coins" = Einzelcoins
   const cacheRef = useRef({});
 
   // Universum von CoinMarketCap laden, sobald ein CMC-Preset gewählt wird
@@ -942,7 +949,36 @@ export default function RRG({ lang = "de" }) {
   // Volle Serien je Symbol
   // Composites aus den geladenen Mitgliedskursen rechnen und wie normale
   // Reihen behandeln. Ab hier weiß der Rest des Moduls nichts mehr davon.
+  const isCrypto = !!preset.cryptoSuffix && !drill && !market;
+  const sectorsOf = useCallback(sym => cryptoSectorsOf(sym, cmcMeta[sym]?.tags), [cmcMeta]);
+  const sectorView = isCrypto && cryptoView === "sectors";
+
+  // ── KRYPTO-SEKTOREN ALS RRG-PUNKTE ──────────────────────────────────────
+  // Jeder Sektor ist ein gleichgewichteter Index seiner Coins (tägliche
+  // Durchschnittsrendite, wie bei den Länder-Sektoren) und läuft gegen BTC.
+  // Mind. 2 Coins je Sektor, sonst ist es kein Sektor, sondern ein Einzelwert.
+  const sectorUniverse = useMemo(() => {
+    if (!sectorView) return null;
+    const rm = new Set(removed[viewKey] || []);
+    return CRYPTO_SECTORS.map(sec => {
+      const members = universe.filter(u => sectorsOf(u.symbol).includes(sec.key)).map(u => u.symbol);
+      if (members.length < 2) return null;
+      return {
+        symbol: compositeId("CRYPTO", sec.key), label: sec.label.toUpperCase(), sectorKey: sec.key,
+        name: `${sec.label} · ${members.length} Coins, gleichgewichtet`, composite: true, members, color: sec.color, vsx: false,
+      };
+    }).filter(u => u && !rm.has(u.symbol));
+  }, [sectorView, universe, sectorsOf, removed, viewKey]);
+
   const rawPlus = useMemo(() => {
+    if (sectorUniverse) {
+      const out = { ...raw };
+      for (const u of sectorUniverse) {
+        const series = buildComposite(u.members, raw);
+        if (series) out[u.symbol] = series;
+      }
+      return out;
+    }
     if (!market) return raw;
     const out = { ...raw };
     for (const sec of countrySectors) {
@@ -950,19 +986,34 @@ export default function RRG({ lang = "de" }) {
       if (series) out[compositeId(country, sec.key)] = series;
     }
     return out;
-  }, [raw, market, country, countrySectors]);
+  }, [raw, market, country, countrySectors, sectorUniverse]);
 
-  const fullItems = useMemo(() => {
+  const allFullItems = useMemo(() => {
     if (!benchSeries) return [];
     const prep = s => interval_ === "1wk" ? toWeekly(s) : s;
-    return universe.map((u, i) => {
+    return (sectorUniverse || universe).map((u, i) => {
       if (!rawPlus[u.symbol]) return null;
       const full = computeFull(prep(rawPlus[u.symbol]), benchSeries, params);
       if (!full) return null;
-      const color = u.vsx ? GOLD : (SECTOR_COLORS[u.symbol] || PALETTE[i % PALETTE.length]);
+      const color = u.color || (u.vsx ? GOLD : (SECTOR_COLORS[u.symbol] || PALETTE[i % PALETTE.length]));
       return { ...u, color, full };
     }).filter(Boolean);
-  }, [rawPlus, universe, interval_, benchSeries, params.window, params.momWindow]);
+  }, [rawPlus, universe, sectorUniverse, interval_, benchSeries, params.window, params.momWindow]);
+
+  // Sektorfilter: die Normierung ("Relativ") misst dann innerhalb des Sektors
+  const fullItems = useMemo(
+    () => (isCrypto && !sectorView && cryptoSector ? allFullItems.filter(it => sectorsOf(it.symbol).includes(cryptoSector)) : allFullItems),
+    [allFullItems, isCrypto, sectorView, cryptoSector, sectorsOf]
+  );
+
+  // Sektor-Zählung über das geladene Universum (für die Filter-Pills)
+  const sectorCounts = useMemo(() => {
+    if (!isCrypto) return {};
+    const out = {};
+    for (const u of universe) for (const k of sectorsOf(u.symbol)) out[k] = (out[k] || 0) + 1;
+    return out;
+  }, [isCrypto, universe, sectorsOf]);
+
 
   // ── SKALIERUNG ───────────────────────────────────────────────────────────
   // "abs":  rohe RS-Performance (100 = Basiswert geschlagen) — nachrechenbar,
@@ -1050,9 +1101,12 @@ export default function RRG({ lang = "de" }) {
       const s = [...a].sort((u, v) => u - v);
       return s[Math.min(s.length - 1, Math.floor(p * s.length))];
     };
+    // Bei wenigen Punkten (z. B. Krypto-Sektoren) ist jeder einzelne wichtig —
+    // dann das volle Maximum, sonst klebt ein Sektor am Rand
+    const q = scaledItems.length < 15 ? 1 : 0.96;
     return {
-      x: Math.max(1.5, pct(dx, 0.96)) * 1.15,
-      y: Math.max(1.5, pct(dy, 0.96)) * 1.15,
+      x: Math.max(1.5, pct(dx, q)) * 1.15,
+      y: Math.max(1.5, pct(dy, q)) * 1.15,
     };
   }, [scaledItems, tailLen]);
 
@@ -1119,7 +1173,10 @@ export default function RRG({ lang = "de" }) {
           <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.28em", color: "#b99c64", textTransform: "uppercase" }}>
             {market
               ? `${market.code} · ${drill ? `${drill} · ${SECTOR_LABELS[drill]}` : (lang === "en" ? market.nameEn : market.name)}`
-              : drill ? `${drill} · ${drillSector.name}` : preset.label}
+              : drill ? `${drill} · ${drillSector.name}`
+              : sectorView ? `${preset.label} · SEKTOREN`
+              : isCrypto && cryptoSector ? `${preset.label} · ${SECTOR_BY_KEY[cryptoSector]?.label || cryptoSector}`
+              : preset.label}
           </div>
           {headDate && (
             <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5, color: "#555", letterSpacing: "0.1em" }}>
@@ -1145,7 +1202,7 @@ export default function RRG({ lang = "de" }) {
               })),
             ]}
             onChange={v => {
-              setDrill(null); setHovered(null); setOffset(0); setPlaying(false);
+              setDrill(null); setHovered(null); setOffset(0); setPlaying(false); setCryptoSector(null); setCryptoView("sectors");
               if (v && v.startsWith("c:")) { setPresetId("countries"); setCountry(v.slice(2)); }
               else { setPresetId(v); setCountry(null); }
             }} />
@@ -1173,6 +1230,30 @@ export default function RRG({ lang = "de" }) {
               onClick={() => { setCountry(null); setDrill(null); setOffset(0); setPlaying(false); }}>
               ← {T.allCountries}
             </button>
+          </div>
+        )}
+
+        {isCrypto && Object.keys(sectorCounts).length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 10 }}>
+            <button className="vsx-btn" style={{ ...pill(sectorView), padding: "6.5px 12px", fontSize: 9, letterSpacing: "0.12em", display: "flex", alignItems: "center", gap: 6 }}
+              title="Sektoren als gleichgewichtete Indizes gegen BTC"
+              onClick={() => { setCryptoView("sectors"); setCryptoSector(null); setHovered(null); }}>
+              <span style={{ fontSize: 8 }}>◆</span> SEKTOREN
+            </button>
+            <div style={divider} />
+            <button className="vsx-btn" style={{ ...pill(!sectorView && !cryptoSector), padding: "6.5px 12px", fontSize: 9, letterSpacing: "0.12em" }}
+              onClick={() => { setCryptoView("coins"); setCryptoSector(null); setHovered(null); }}>
+              ALLE COINS <span style={{ fontFamily: F.mono, fontSize: 8, color: "#666", marginLeft: 4 }}>{universe.length}</span>
+            </button>
+            {CRYPTO_SECTORS.filter(sec => sectorCounts[sec.key]).map(sec => (
+              <button key={sec.key} className="vsx-btn" title={`${sec.label}: Coins des Sektors`}
+                style={{ ...pill(!sectorView && cryptoSector === sec.key), padding: "6.5px 12px", fontSize: 9, letterSpacing: "0.12em",
+                  color: !sectorView && cryptoSector === sec.key ? "#f8e49b" : `${sec.color}cc` }}
+                onClick={() => { setCryptoView("coins"); setCryptoSector(c => (!sectorView && c === sec.key ? null : sec.key)); setHovered(null); }}>
+                {sec.label}
+                <span style={{ fontFamily: F.mono, fontSize: 8, color: "#666", marginLeft: 5 }}>{sectorCounts[sec.key]}</span>
+              </button>
+            ))}
           </div>
         )}
 
@@ -1302,8 +1383,10 @@ export default function RRG({ lang = "de" }) {
                 xLabel={scaleMode === "norm" ? "RELATIVE STRENGTH · 1 YEAR (PEER-NORMALISED) →" : "RS vs BASIS · 1 YEAR →"}
                 yLabel={scaleMode === "norm" ? "RELATIVE STRENGTH · 1 QUARTER (PEER-NORMALISED) →" : "RS vs BASIS · 1 QUARTER →"}
                 onNodeClick={
+                  sectorView
+                    ? (it) => { setCryptoView("coins"); setCryptoSector(it.sectorKey); setHovered(null); setOffset(0); setPlaying(false); }
                   // Länderpfad: erst ins Land, dann in den Sektor
-                  preset.country && !country
+                  : preset.country && !country
                     ? (it) => { if (!hasMarket(it.symbol)) return;
                         setCountry(it.symbol); setDrill(null); setHovered(null); setOffset(0); setPlaying(false); }
                   : preset.country && country && !drill
@@ -1317,7 +1400,12 @@ export default function RRG({ lang = "de" }) {
             ) : (
               <div style={{ padding: 110, textAlign: "center", fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.22em", color: "#3d3d3d" }}>{T.fetching} {neededSymbols.length} {T.symbols}…</div>
             )}
-            {items.length > 0 && (preset.country ? (country ? !drill : true) : (preset.drillable && !drill)) && (
+            {items.length > 0 && sectorView && (
+              <div style={{ textAlign: "center", fontSize: 8.5, color: "#4d4d4d", letterSpacing: "0.2em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600, textTransform: "uppercase", padding: "4px 0 8px" }}>
+                Klick auf einen Sektor → seine Coins · Sektor = gleichgewichteter Index vs {benchLabel} · {T.scrollZoom}
+              </div>
+            )}
+            {items.length > 0 && !sectorView && (preset.country ? (country ? !drill : true) : (preset.drillable && !drill)) && (
               <div style={{ textAlign: "center", fontSize: 8.5, color: "#4d4d4d", letterSpacing: "0.2em", fontFamily: "'Montserrat', sans-serif", fontWeight: 600, textTransform: "uppercase", padding: "4px 0 8px" }}>
                 {preset.country ? (country ? T.drillHintSector : T.drillHintCountry) : T.drillHint}
                 {!preset.country && <> <span style={{ color: GOLD }}>VSX Pack</span></>} · {T.scrollZoom}
@@ -1417,7 +1505,7 @@ export default function RRG({ lang = "de" }) {
                         {it.vsx && <span style={{ marginLeft: 6, fontSize: 6.5, color: "#8a7440", letterSpacing: "0.12em" }}>◆ VSX</span>}
                       </td>
                       <td style={{ padding: "8px 9px", color: "#8f8f8f", fontFamily: "'Montserrat', sans-serif", fontSize: 10.5, maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {names[it.symbol] || NAME_DEFAULTS[it.symbol] || "—"}
+                        {names[it.symbol] || NAME_DEFAULTS[it.symbol] || it.name || "—"}
                       </td>
                       <td style={{ padding: "8px 9px" }}>
                         <span style={{ fontSize: 8, letterSpacing: "0.12em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700, color: QUAD_COLOR[q], background: `${QUAD_COLOR[q]}14`, border: `1px solid ${QUAD_COLOR[q]}30`, padding: "2.5px 9px", borderRadius: 20 }}>{q}</span>
