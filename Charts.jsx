@@ -2613,7 +2613,7 @@ export default function App({ nav, lang = "de" }) {
                           {detecting ? "ANALYZING…" : spectral ? "↻ RE-DETECT CYCLES" : "⚡ DETECT DOMINANT CYCLES"}
                         </button>
                         <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#333", marginTop: 6, lineHeight: 1.5 }}>
-                          Each candidate is tested against 28 surrogates built from this chart\u2019s own data — only cycles that hold their phase where surrogates cannot are kept · ≥3 confirmed swing lows · ♪ = harmonic
+                          Each candidate is tested against 28 surrogates built from this chart’s own data — only cycles that hold their phase where surrogates cannot are kept · ≥3 confirmed swing lows · ♪ = harmonic
                         </div>
                       </div>
                       {/* In-sample window (vT maxbars) */}
