@@ -1,7 +1,7 @@
 import { guard, useQuota, quotaLeft } from "./_guard.js";
 
 // ── VISIONX ANALYTICS · COINMARKETCAP PROXY ──────────────────────────────────
-// GET /api/cmc?action=listings&limit=50           → Top-Coins nach Marktkapitalisierung
+// GET /api/cmc?action=listings&limit=50           → Top-Coins nach Marktkapitalisierung (inkl. Tags)
 // GET /api/cmc?action=quotes&symbols=BTC,ETH      → aktuelle Kennzahlen je Coin
 // GET /api/cmc?action=global                      → BTC-Dominanz, Total Market Cap
 // GET /api/cmc?action=ohlcv&symbol=BTC&count=400  → Tageshistorie (nur ab Hobbyist-Plan)
@@ -71,6 +71,9 @@ export default async function handler(req, res) {
           change90d: c.quote?.USD?.percent_change_90d ?? null,
           dominance: c.quote?.USD?.market_cap_dominance ?? null,
           supplyRatio: c.max_supply ? c.circulating_supply / c.max_supply : null,
+          // Tag-Slugs (z. B. "ai-big-data", "gaming", "memes") — Basis für die
+          // Sektor-Zuordnung im RRG. Kommen im Standard-aux von listings mit.
+          tags: Array.isArray(c.tags) ? c.tags.map(t => (typeof t === "string" ? t : t?.slug)).filter(Boolean) : [],
         }));
       res.setHeader("Cache-Control", "public, s-maxage=1800, stale-while-revalidate=7200");
       return res.status(200).json({ asOf: Date.now(), count: data.length, data, quotaLeft: quotaLeft("cmc") });
