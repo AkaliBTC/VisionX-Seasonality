@@ -33,7 +33,8 @@ const call = async (path, params = {}) => {
 const EXCLUDE = new Set([
   "USDT", "USDC", "DAI", "FDUSD", "TUSD", "USDE", "PYUSD", "USDS", "BUSD",
   "WBTC", "WETH", "WBETH", "STETH", "WSTETH", "WEETH", "RETH", "CBBTC", "SOLVBTC",
-  "BSC-USD", "USDT0",
+  "BSC-USD", "USDT0", "USDY", "USD1", "RLUSD", "USDTB", "SUSDE", "SUSDS", "USDD",
+  "USDG", "BFUSD", "USDF", "USDX", "USYC", "BUIDL", "OUSG", "XAUT0",
 ]);
 
 export default async function handler(req, res) {

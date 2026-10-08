@@ -4,6 +4,7 @@ import { guard, useQuota, quotaLeft } from "./_guard.js";
 // GET /api/history?symbols=XLK,XLF,SPY&interval=1d&range=2y
 //
 // Quelle 1: Yahoo Finance chart API (server-side → kein CORS, kein Key)
+// Krypto (-USD): Binance-Spot → USDT-Paar bei Gate/KuCoin/MEXC/OKX/Bitget/Bybit → Yahoo
 // Quelle 2: Twelve Data Fallback (Key aus Vercel Env: TD_KEY — NICHT hardcoden!)
 //
 // Cache-Strategie: Vercel CDN cached jede Symbol-Kombination 12h
@@ -87,6 +88,127 @@ const fetchBinance = async (symbol, interval, ohlc = false, full = false) => {
   } catch { return null; }
 };
 
+// ── USDT-FALLBACK: weitere Börsen ────────────────────────────────────────────
+// Viele Coins (HYPE, PI, SPX, MELANIA, …) haben kein Binance-Spot-Paar und
+// bei Yahoo einen anderen Ticker. Dann wird das ‹BASE›/USDT-Paar der Reihe
+// nach bei Gate, KuCoin, MEXC, OKX, Bitget und Bybit gesucht — zuerst die
+// Börsen, deren API auch aus US-Regionen (Vercel iad1) antwortet.
+// Alle liefern Tageskerzen; Wochenkerzen werden daraus zusammengesetzt.
+const DAY = 86400000;
+const FALLBACK_DAYS = 1500;                       // ~4 Jahre reichen für RRG/Bottom
+
+const getJson = async (url, ms = 6000) => {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: ctl.signal, headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" } });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; } finally { clearTimeout(timer); }
+};
+
+// Jede Quelle liefert [t(ms), o, h, l, c, vol] — Reihenfolge egal, wird sortiert
+const USDT_SOURCES = [
+  {
+    name: "gate",
+    load: async (b) => {
+      const j = await getJson(`https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=${b}_USDT&interval=1d&limit=1000`);
+      // [t(s), quoteVol, close, high, low, open, baseVol, closed]
+      return Array.isArray(j) ? j.map(r => [r[0] * 1000, +r[5], +r[3], +r[4], +r[2], +r[6] || 0]) : null;
+    },
+  },
+  {
+    name: "kucoin",
+    load: async (b) => {
+      const end = Math.floor(Date.now() / 1000), start = end - FALLBACK_DAYS * 86400;
+      const j = await getJson(`https://api.kucoin.com/api/v1/market/candles?type=1day&symbol=${b}-USDT&startAt=${start}&endAt=${end}`);
+      // [t(s), open, close, high, low, volume, turnover]
+      return Array.isArray(j?.data) ? j.data.map(r => [r[0] * 1000, +r[1], +r[3], +r[4], +r[2], +r[5] || 0]) : null;
+    },
+  },
+  {
+    name: "mexc",
+    load: async (b) => {
+      const j = await getJson(`https://api.mexc.com/api/v3/klines?symbol=${b}USDT&interval=1d&limit=1000`);
+      // Binance-Format
+      return Array.isArray(j) ? j.map(r => [r[0], +r[1], +r[2], +r[3], +r[4], +r[5] || 0]) : null;
+    },
+  },
+  {
+    name: "okx",
+    load: async (b) => {
+      // 100 Kerzen je Seite, rückwärts blättern
+      let rows = [], after = "";
+      for (let page = 0; page < 10; page++) {
+        const j = await getJson(`https://www.okx.com/api/v5/market/history-candles?instId=${b}-USDT&bar=1Dutc&limit=100${after}`);
+        const d = j?.data;
+        if (!Array.isArray(d) || !d.length) break;
+        rows = rows.concat(d.map(r => [+r[0], +r[1], +r[2], +r[3], +r[4], +r[5] || 0]));
+        if (d.length < 100) break;
+        after = `&after=${d[d.length - 1][0]}`;
+      }
+      return rows.length ? rows : null;
+    },
+  },
+  {
+    name: "bitget",
+    load: async (b) => {
+      const j = await getJson(`https://api.bitget.com/api/v2/spot/market/candles?symbol=${b}USDT&granularity=1day&limit=1000`);
+      // [t(ms), open, high, low, close, baseVol, usdtVol, quoteVol]
+      return Array.isArray(j?.data) ? j.data.map(r => [+r[0], +r[1], +r[2], +r[3], +r[4], +r[5] || 0]) : null;
+    },
+  },
+  {
+    name: "bybit",
+    load: async (b) => {
+      const j = await getJson(`https://api.bybit.com/v5/market/kline?category=spot&symbol=${b}USDT&interval=D&limit=1000`);
+      // [start(ms), open, high, low, close, volume, turnover]
+      const l = j?.result?.list;
+      return Array.isArray(l) ? l.map(r => [+r[0], +r[1], +r[2], +r[3], +r[4], +r[5] || 0]) : null;
+    },
+  },
+];
+
+// Tageskerzen → Wochenkerzen (Woche ab Montag, UTC)
+const toWeeklyOhlc = (rows) => {
+  const out = [];
+  let key = null;
+  for (const r of rows) {
+    const d = new Date(r[0]);
+    const monday = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+    if (monday !== key) { out.push([monday, r[1], r[2], r[3], r[4], r[5]]); key = monday; }
+    else {
+      const w = out[out.length - 1];
+      w[2] = Math.max(w[2], r[2]); w[3] = Math.min(w[3], r[3]); w[4] = r[4]; w[5] += r[5];
+    }
+  }
+  return out;
+};
+
+const fetchUsdtFallback = async (symbol, interval, ohlc = false) => {
+  if (!/-USD$/.test(symbol)) return null;
+  const base = symbol.replace(/-USD$/, "");
+  if (!/^[A-Z0-9]{1,15}$/.test(base)) return null;
+  const t0 = Date.now();
+  for (const src of USDT_SOURCES) {
+    if (Date.now() - t0 > 14000) break;           // Zeitbudget je Symbol
+    const raw = await src.load(base).catch(() => null);
+    if (!raw) continue;
+    const seen = new Set();
+    let rows = raw
+      .filter(r => r.slice(0, 5).every(Number.isFinite) && r[4] > 0)
+      .sort((a, b) => a[0] - b[0])
+      .filter(r => (seen.has(r[0]) ? false : seen.add(r[0])));
+    // Nur aktive Paare: letzte Kerze höchstens 5 Tage alt
+    if (rows.length < 30 || Date.now() - rows[rows.length - 1][0] > 5 * DAY) continue;
+    if (interval === "1wk") rows = toWeeklyOhlc(rows);
+    const out = rows.map(r => (ohlc ? r : [r[0], r[4]]));
+    out.source = `${src.name}:${base}USDT`;
+    return out;
+  }
+  return null;
+};
+
 // Letzter Fallback für Krypto ohne Binance-Paar: CoinMarketCap (nur mit bezahltem Plan)
 const fetchCmc = async (symbol, ohlc) => {
   const key = process.env.CMC_KEY;
@@ -146,17 +268,20 @@ export default async function handler(req, res) {
   const data = {};
   const names = {};
   const failed = [];
+  const sources = {};                         // Symbol → Börse/Paar beim USDT-Fallback
 
   // Batches à 6 parallel — schnell genug, ohne Yahoo zu triggern
   for (let i = 0; i < symbols.length; i += 6) {
     await Promise.all(symbols.slice(i, i + 6).map(async sym => {
       let series = null;
       if (/-USD$/.test(sym)) series = await fetchBinance(sym, interval, ohlc, full);
+      if (!series && /-USD$/.test(sym)) series = await fetchUsdtFallback(sym, interval, ohlc);
       if (!series) series = await fetchYahoo(sym, range, interval, ohlc);
       if (!series) series = await fetchTwelveData(sym, interval, ohlc);
       if (!series) series = await fetchCmc(sym, ohlc);
       if (series) {
         if (series.name) names[sym] = series.name;
+        if (series.source) sources[sym] = series.source;
         data[sym] = Array.from(series);          // Namens-Property nicht mitserialisieren
       } else failed.push(sym);
     }));
@@ -164,6 +289,6 @@ export default async function handler(req, res) {
 
   res.setHeader("Cache-Control", "public, s-maxage=43200, stale-while-revalidate=86400");
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.status(200).json({ interval, range, ohlc, asOf: Date.now(), failed, names, data,
+  res.status(200).json({ interval, range, ohlc, asOf: Date.now(), failed, names, sources, data,
     quota: { td: quotaLeft("td"), cmc: quotaLeft("cmc") } });
 }
