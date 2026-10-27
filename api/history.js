@@ -185,13 +185,14 @@ const toWeeklyOhlc = (rows) => {
   return out;
 };
 
-const fetchUsdtFallback = async (symbol, interval, ohlc = false) => {
+const fetchUsdtFallback = async (symbol, interval, ohlc = false, deadline = Infinity) => {
   if (!/-USD$/.test(symbol)) return null;
+  if (Date.now() > deadline) return null;          // Request-Budget aufgebraucht
   const base = symbol.replace(/-USD$/, "");
   if (!/^[A-Z0-9]{1,15}$/.test(base)) return null;
   const t0 = Date.now();
   for (const src of USDT_SOURCES) {
-    if (Date.now() - t0 > 14000) break;           // Zeitbudget je Symbol
+    if (Date.now() - t0 > 14000 || Date.now() > deadline) break;   // Zeitbudget je Symbol / Request
     const raw = await src.load(base).catch(() => null);
     if (!raw) continue;
     const seen = new Set();
@@ -269,13 +270,16 @@ export default async function handler(req, res) {
   const names = {};
   const failed = [];
   const sources = {};                         // Symbol → Börse/Paar beim USDT-Fallback
+  // Fallback-Suche nur bis 40 s nach Start — danach landen Reste in "failed",
+  // statt dass der ganze Request in den Vercel-Timeout läuft (504)
+  const deadline = Date.now() + 40000;
 
   // Batches à 6 parallel — schnell genug, ohne Yahoo zu triggern
   for (let i = 0; i < symbols.length; i += 6) {
     await Promise.all(symbols.slice(i, i + 6).map(async sym => {
       let series = null;
       if (/-USD$/.test(sym)) series = await fetchBinance(sym, interval, ohlc, full);
-      if (!series && /-USD$/.test(sym)) series = await fetchUsdtFallback(sym, interval, ohlc);
+      if (!series && /-USD$/.test(sym)) series = await fetchUsdtFallback(sym, interval, ohlc, deadline);
       if (!series) series = await fetchYahoo(sym, range, interval, ohlc);
       if (!series) series = await fetchTwelveData(sym, interval, ohlc);
       if (!series) series = await fetchCmc(sym, ohlc);
