@@ -7,6 +7,8 @@ import {
 } from "./vsxTickers";
 import { SPX_BY_SECTOR, SPX_ALL, SPX_SECTOR_OF, DAX40, MDAX, DE_ALL, DE_SECTOR_OF } from "./constituents";
 import { MARKETS, marketMembers, marketSectors } from "./markets";
+import { PACK_STORAGE_KEY, VSX_PACK_DEFAULTS } from "./RRG";
+import { CRYPTO_SECTORS, SECTOR_BY_KEY, cryptoSectorsOf } from "./cryptoSectors";
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  VISIONX ANALYTICS · BOTTOM RADAR
@@ -42,13 +44,14 @@ const PRESETS = {
 };
 
 // Von CoinMarketCap geladene Universen (Top N nach Marktkapitalisierung)
-const CMC_PRESETS = { "CMC TOP 25": 25, "CMC TOP 50": 50, "CMC TOP 100": 100 };
+const CMC_PRESETS = { "CMC TOP 25": 25, "CMC TOP 50": 50, "CMC TOP 100": 100, "CMC TOP 200": 200 };
 
 // Alle wählbaren Universen in einer Liste, nach Gruppen sortiert.
 // Präfixe: "c:" Ländermarkt · "cmc:" Live von CoinMarketCap · sonst Preset
 const UNIVERSE_OPTIONS = (t, lang) => [
   { value: null, label: t.universe, group: "" },
-  ...Object.keys(PRESETS).map(name => ({ value: name, label: name, group: t.grpCore })),
+  ...Object.keys(PRESETS).map(name => ({ value: name, label: name, group: t.grpCore,
+    hint: name === "VSX STOCKS" || name === "VSX CRYPTO" ? "RRG PACK" : undefined })),
   ...Object.entries(MARKETS).map(([etf, m]) => ({
     value: `c:${etf}`, code: m.code,
     label: lang === "en" ? m.nameEn : m.name,
@@ -59,6 +62,28 @@ const UNIVERSE_OPTIONS = (t, lang) => [
     value: `cmc:${lim}`, label: name, group: t.grpCrypto,
   })),
 ];
+
+// ── VSX PACK AUS DEM RRG ─────────────────────────────────────────────────────
+// "VSX STOCKS" und "VSX CRYPTO" sind die Pack-Liste aus dem RRG-Pack-Manager —
+// so wie dort gespeichert (localStorage), sonst die RRG-Standardliste.
+// Bei Aktien bestimmt die Pack-Gruppe (XLK, XLF, …) den Sektor im Filter.
+const PACK_STOCK_KEYS = Object.keys(VSX_PACK_DEFAULTS).filter(k => k !== "CRYPTO" && k !== "COUNTRIES");
+const readPack = () => {
+  try {
+    const raw = localStorage.getItem(PACK_STORAGE_KEY);
+    if (raw) return { ...VSX_PACK_DEFAULTS, ...JSON.parse(raw) };
+  } catch { /* private mode / kaputter Eintrag */ }
+  return VSX_PACK_DEFAULTS;
+};
+const packStocks = () => {
+  const pack = readPack();
+  const out = [], sec = {};
+  for (const k of PACK_STOCK_KEYS) for (const s of pack[k] || []) {
+    if (!sec[s]) { sec[s] = k; out.push(s); }
+  }
+  return { list: out, sec };
+};
+const packCrypto = () => [...new Set(readPack().CRYPTO || [])];
 
 // Symbol → Sektor (für Filter und Anzeige)
 const SECTOR_OF = {};
@@ -418,6 +443,8 @@ export default function Bottom({ lang = "de" }) {
   const [cmcMeta, setCmcMeta] = useState({});
   const [cmcError, setCmcError] = useState("");
   const [cmcLoading, setCmcLoading] = useState(false);
+  const [packSector, setPackSector] = useState({});      // Pack-Gruppe je Aktie (Sektorfilter)
+  const [softErr, setSoftErr] = useState("");            // Teilfehler beim Laden — Rest läuft weiter
   const cacheRef = useRef({});
 
   // Universum von CoinMarketCap ziehen und als Liste setzen
@@ -448,15 +475,52 @@ export default function Bottom({ lang = "de" }) {
     const missing = list.filter(s => !cacheRef.current[s]);
     if (!missing.length) { setRaw({ ...cacheRef.current }); return; }
     let alive = true;
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setSoftErr("");
     (async () => {
+      // Kleine Pakete; bei Rate-Limit warten und wiederholen, bei Timeout/5xx
+      // das Paket halbieren. Ein fehlerhaftes Paket stoppt nie den Rest.
+      const queue = [];
+      for (let i = 0; i < missing.length; i += 10) queue.push({ syms: missing.slice(i, i + 10), tries: 0 });
+      let loaded = 0, lastErr = "";
       try {
-        for (let i = 0; i < missing.length; i += 20) {
-          const chunk = missing.slice(i, i + 20);
-          const res = await apiFetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=2y&ohlc=1`);
-          if (!res.ok) throw new Error(`API ${res.status}`);
+        while (queue.length) {
+          const job = queue.shift();
+          const chunk = job.syms;
+          let res;
+          try {
+            res = await apiFetch(`/api/history?symbols=${chunk.join(",")}&interval=1d&range=2y&ohlc=1`);
+          } catch (e) {
+            const msg = String(e?.message || e);
+            if (msg === "ACCESS_REQUIRED") throw e;
+            const m = /^RATE_LIMITED:(\d+)/.exec(msg);
+            if (m && job.tries < 3) {
+              await new Promise(r => setTimeout(r, (Number(m[1]) + 1) * 1000));
+              if (!alive) return;
+              queue.unshift({ ...job, tries: job.tries + 1 });
+              continue;
+            }
+            if (!m && chunk.length > 1) {                 // Netzwerkfehler → aufteilen
+              const h = Math.ceil(chunk.length / 2);
+              queue.unshift({ syms: chunk.slice(0, h), tries: 0 }, { syms: chunk.slice(h), tries: 0 });
+              continue;
+            }
+            lastErr = m ? "Rate-Limit erreicht" : msg;
+            setFailed(f => [...new Set([...f, ...chunk])]);
+            continue;
+          }
+          if (!res.ok) {
+            if (res.status >= 500 && chunk.length > 1) {   // Timeout/Serverfehler → halbieren
+              const h = Math.ceil(chunk.length / 2);
+              queue.unshift({ syms: chunk.slice(0, h), tries: 0 }, { syms: chunk.slice(h), tries: 0 });
+              continue;
+            }
+            lastErr = `API ${res.status}`;
+            setFailed(f => [...new Set([...f, ...chunk])]);
+            continue;
+          }
           const json = await res.json();
           if (!alive) return;
+          loaded += Object.keys(json.data || {}).length;
           Object.assign(cacheRef.current, json.data || {});
           setRaw({ ...cacheRef.current });
           // Klarnamen übernehmen — bei numerischen Tickern (Japan, Korea,
@@ -474,6 +538,10 @@ export default function Bottom({ lang = "de" }) {
             setList(l => l.filter(s => !bad.includes(s)));
           }
         }
+        if (alive && lastErr) {
+          if (!loaded && !Object.keys(cacheRef.current).length) setError(lastErr);
+          else setSoftErr(lastErr);
+        }
       } catch (e) { if (alive) setError(e.message); }
       finally { if (alive) setLoading(false); }
     })();
@@ -486,12 +554,25 @@ export default function Bottom({ lang = "de" }) {
     // Anzeige folgt der gewählten Zeitebene
     const view = tfView === "combined" ? a : (a[tfView] || a);
     const score = tfView === "combined" ? a.score : (view.score ?? a.score);
-    return { symbol: s, name: names[s] || cmcMeta[s]?.name || null, ...a, ...view, score, phase: phaseFor(score), sector: SECTOR_OF[s] || null, cmc: cmcMeta[s] || null, adxVal: view.adx?.adx ?? null };
-  }).filter(Boolean), [list, raw, tfView, cmcMeta]);
+    return { symbol: s, name: names[s] || cmcMeta[s]?.name || null, ...a, ...view, score, phase: phaseFor(score), sector: packSector[s] || SECTOR_OF[s] || null,
+      cryptoSectors: /-USD$/.test(s) ? cryptoSectorsOf(s, cmcMeta[s]?.tags) : [],
+      cmc: cmcMeta[s] || null, adxVal: view.adx?.adx ?? null };
+  }).filter(Boolean), [list, raw, tfView, cmcMeta, packSector, names]);
 
+  // secFilter: SPDR-Kürzel (XLK …) oder "c:AI" für Krypto-Sektoren
+  const matchSec = (r) => !secFilter || (secFilter.startsWith("c:")
+    ? r.cryptoSectors.includes(secFilter.slice(2))
+    : r.sector === secFilter);
   const filtered = useMemo(() => rows.filter(r =>
-    (!secFilter || r.sector === secFilter) && (!onlyTurning || r.turning)
+    matchSec(r) && (!onlyTurning || r.turning)
   ), [rows, secFilter, onlyTurning]);
+
+  // Krypto-Sektoren, die in der aktuellen Liste vorkommen (mit Anzahl)
+  const presentCrypto = useMemo(() => {
+    const n = {};
+    rows.forEach(r => r.cryptoSectors.forEach(k => { n[k] = (n[k] || 0) + 1; }));
+    return CRYPTO_SECTORS.filter(s => n[s.key]).map(s => ({ ...s, n: n[s.key] }));
+  }, [rows]);
 
   // Sektoren, die in der aktuellen Liste vorkommen
   const presentSectors = useMemo(
@@ -691,7 +772,10 @@ export default function Bottom({ lang = "de" }) {
                 if (!v) { setList([]); setCountry(null); return; }
                 if (v.startsWith("cmc:")) { setCountry(null); loadCmc(+v.slice(4)); return; }
                 if (v.startsWith("c:")) { const etf = v.slice(2); setCountry(etf); setList(marketMembers(etf)); return; }
-                setCountry(null); setList([...(PRESETS[v] || [])]);
+                setCountry(null);
+                if (v === "VSX STOCKS") { const p = packStocks(); setPackSector(p.sec); setList(p.list); return; }
+                if (v === "VSX CRYPTO") { setList(packCrypto()); return; }
+                setList([...(PRESETS[v] || [])]);
               }} />
 
             <button className="vsx-btn" style={pill(false)}
@@ -718,6 +802,14 @@ export default function Bottom({ lang = "de" }) {
                 style={{ ...pill(secFilter === e), padding: "6px 11px", fontSize: 8.5, letterSpacing: "0.1em",
                   color: secFilter === e ? "#f8e49b" : `${SECTOR_COLORS[e]}aa` }}>{e}</button>
             ))}
+            {presentCrypto.map(s => (
+              <button key={s.key} className="vsx-btn" onClick={() => setSecFilter(f => f === `c:${s.key}` ? null : `c:${s.key}`)}
+                title={`${s.label} · ${s.n}`}
+                style={{ ...pill(secFilter === `c:${s.key}`), padding: "6px 11px", fontSize: 8.5, letterSpacing: "0.1em",
+                  color: secFilter === `c:${s.key}` ? "#f8e49b" : `${s.color}cc` }}>
+                {s.label}<span style={{ fontFamily: "'DM Mono', monospace", fontSize: 7.5, color: "#5a5a5a", marginLeft: 5 }}>{s.n}</span>
+              </button>
+            ))}
             <div style={{ width: 1, height: 22, background: "linear-gradient(180deg, transparent, rgba(212,175,55,0.35), transparent)" }} />
             <button className="vsx-btn" style={{ ...pill(onlyTurning), color: onlyTurning ? "#22c55e" : "#777" }}
               onClick={() => setOnlyTurning(v => !v)}>▲ {t.onlyTurning}</button>
@@ -729,6 +821,13 @@ export default function Bottom({ lang = "de" }) {
 
         {error && (
           <div className="vsx-lift" style={{ ...glass, borderColor: "rgba(239,68,68,0.35)", padding: "13px 18px", marginBottom: 12, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#f87171" }}>{error}</div>
+        )}
+        {!error && softErr && (
+          <div className="vsx-lift" style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.18em", color: "#facc15" }}>TEILWEISE GELADEN</span>
+            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#8f8f8f" }}>{softErr} · Rest ist da, fehlende Titel stehen unten</span>
+            <button onClick={() => setSoftErr("")} style={{ marginLeft: "auto", background: "none", border: "none", color: "#4a4a4a", cursor: "pointer", fontSize: 12 }}>✕</button>
+          </div>
         )}
         {cmcError && (
           <div className="vsx-lift" style={{ ...glass, borderColor: "rgba(250,204,21,0.25)", padding: "10px 16px", marginBottom: 12,
@@ -820,7 +919,16 @@ export default function Bottom({ lang = "de" }) {
                           color: GOLD, background: "rgba(212,175,55,0.1)", border: "1px solid rgba(212,175,55,0.3)", padding: "2.5px 8px", borderRadius: 20 }}>
                           #{d.cmc.rank}
                         </span>
-                      ) : d.sector ? (
+                      ) : null}
+                      {d.cryptoSectors[0] && (
+                        <span title={d.cryptoSectors.map(k => SECTOR_BY_KEY[k]?.label).join(" · ")}
+                          style={{ marginLeft: d.cmc ? 5 : 0, fontSize: 8, letterSpacing: "0.1em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700,
+                            color: SECTOR_BY_KEY[d.cryptoSectors[0]].color, background: `${SECTOR_BY_KEY[d.cryptoSectors[0]].color}12`,
+                            border: `1px solid ${SECTOR_BY_KEY[d.cryptoSectors[0]].color}30`, padding: "2.5px 8px", borderRadius: 20 }}>
+                          {SECTOR_BY_KEY[d.cryptoSectors[0]].label.toUpperCase()}
+                        </span>
+                      )}
+                      {d.cmc || d.cryptoSectors[0] ? null : d.sector ? (
                         <span style={{ fontSize: 8, letterSpacing: "0.1em", fontFamily: "'Montserrat', sans-serif", fontWeight: 700,
                           color: SECTOR_COLORS[d.sector], background: `${SECTOR_COLORS[d.sector]}12`,
                           border: `1px solid ${SECTOR_COLORS[d.sector]}30`, padding: "2.5px 8px", borderRadius: 20 }}>{d.sector}</span>

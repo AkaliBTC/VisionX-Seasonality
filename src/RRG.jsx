@@ -14,7 +14,7 @@ import { CRYPTO_SECTORS, SECTOR_BY_KEY, cryptoSectorsOf } from "./cryptoSectors"
 // ═════════════════════════════════════════════════════════════════════════════
 
 const GOLD = "#d4af37";
-const PACK_STORAGE_KEY = "vsx_rrg_pack_v2";
+export const PACK_STORAGE_KEY = "vsx_rrg_pack_v2";
 
 // ── SEKTOR-KONFIG ────────────────────────────────────────────────────────────
 const SECTOR_META = [
@@ -79,7 +79,7 @@ const PRESETS = [
 ];
 
 // ── VSX PACK DEFAULTS · im Pack Manager editierbar (Sektoren + Crypto + Countries)
-const VSX_PACK_DEFAULTS = {
+export const VSX_PACK_DEFAULTS = {
   XLK:  ["ADBE","AMD","AAPL","INTC","MSFT","NVDA","PLTR","QBTS","RGTI","SNDK","WDAY","TSM","1810.HK"],
   XLF:  ["AXP","BRK-B","CRCL","COIN","FIS","FI","GS","JPM"],
   XLV:  ["BAYN.DE","HIMS","ILMN","JNJ","MRNA","MOH","NOVO-B.CO","UNH"],

@@ -2630,22 +2630,22 @@ export default function App({ nav, lang = "de" }) {
                         ))}
                         <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 7, color: "#333" }}>bars</span>
                       </div>
-                      {/* Eigene Zyklen */}
+                      {/* Eigene Zyklen — gleiche Pill-Optik wie Window / Amplitude */}
                       <div style={{ padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <span style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 7, fontWeight: 700, letterSpacing: "0.15em", color: "#333", textTransform: "uppercase", whiteSpace: "nowrap" }}>Custom</span>
-                          <input type="number" min="8" max={customMax} step="1" inputMode="numeric"
-                            placeholder={interval === "1d" ? "z. B. 90" : "z. B. 13"}
+                          <input type="text" inputMode="numeric" maxLength={5}
+                            placeholder={interval === "1d" ? "90" : "13"}
                             value={customInput}
-                            onChange={e => { setCustomInput(e.target.value); setCustomErr(""); }}
+                            onChange={e => { setCustomInput(e.target.value.replace(/[^0-9]/g, "")); setCustomErr(""); }}
                             onKeyDown={e => { if (e.key === "Enter") addCustomCycle(); }}
-                            style={{ flex: 1, minWidth: 0, background: "transparent", border: `1px solid ${customErr ? "rgba(239,68,68,0.5)" : "rgba(255,255,255,0.10)"}`, borderRadius: 4, color: "#f8e49b", fontFamily: "'DM Mono', monospace", fontSize: 10, padding: "4px 8px", outline: "none" }} />
-                          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#333" }}>{interval === "1d" ? "d" : "w"}</span>
-                          <button onClick={addCustomCycle}
-                            style={{ background: "transparent", border: "1px solid rgba(212,175,55,0.55)", color: "#f8e49b", fontFamily: "'Montserrat', sans-serif", fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", padding: "5px 10px", borderRadius: 999, cursor: "pointer", textTransform: "uppercase" }}>+ Add</button>
+                            style={{ flex: 1, minWidth: 0, background: "transparent", border: `1px solid ${customErr ? "rgba(239,68,68,0.45)" : customInput ? "rgba(212,175,55,0.55)" : "rgba(255,255,255,0.08)"}`, borderRadius: 999, color: "#f8e49b", fontFamily: "'DM Mono', monospace", fontSize: 8, padding: "4px 10px", textAlign: "center", outline: "none", transition: "border-color 0.2s" }} />
+                          <button onClick={addCustomCycle} disabled={!customInput}
+                            style={{ flex: 1, background: customInput ? "rgba(212,175,55,0.10)" : "transparent", border: `1px solid ${customInput ? "rgba(212,175,55,0.55)" : "rgba(255,255,255,0.08)"}`, color: customInput ? "#f8e49b" : "#555", fontFamily: "'DM Mono', monospace", fontSize: 8, padding: "4px 0", borderRadius: 999, cursor: customInput ? "pointer" : "default", transition: "all 0.2s" }}>+ ADD</button>
+                          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 7, color: "#333" }}>{interval === "1d" ? "days" : "weeks"}</span>
                         </div>
                         {customErr && (
-                          <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "#ef4444", marginTop: 5 }}>{customErr}</div>
+                          <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 7, color: "#ef4444", marginTop: 5, opacity: 0.85 }}>{customErr}</div>
                         )}
                       </div>
                       {/* Amplitude weighting: equal (clean wave) vs true (vT precision) */}
